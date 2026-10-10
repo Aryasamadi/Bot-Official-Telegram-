@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import ast, glob, json, logging, os, shutil, sqlite3, sys, tempfile, time, unittest
+import ast, glob, json, logging, os, shutil, sqlite3, sys, tempfile, threading, time, unittest
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT); sys.path.insert(0, HERE)
 import d1sync
@@ -180,6 +180,31 @@ class TestReplication(Base):
         with self.assertRaises(D1Unavailable): self.s.barrier(1.0)
         self.assertFalse(self.s.barrier(0.5, strict=False))
         self.fake.faults.clear(); self.assertTrue(self.s.barrier(8.0))
+
+    def test_volatile_settings_not_replicated_but_real_settings_are(self):
+        c = self.c
+        for i in range(20):
+            c.execute("INSERT OR REPLACE INTO settings VALUES('heartbeat',?)", (f'"{i}"',)); c.execute("INSERT OR REPLACE INTO settings VALUES('load_due',?)", (str(i),))
+        c.execute("INSERT OR REPLACE INTO settings VALUES('automation_enabled','false')"); c.commit()
+        self.fake.stmts.clear(); self.s.rep.ship_once()
+        shipped = [x for x in self.fake.stmts if "settings" in x[0]]
+        self.assertEqual(len(shipped), 1); self.assertEqual(shipped[0][1][0], "automation_enabled")
+        self.assertEqual(self.s.rep.pending(), 0)
+
+    def test_write_burst_from_many_threads_replicates_exactly_without_lock_errors(self):
+        self.s.start(); errs = []
+        def writer(n):
+            try:
+                c = sqlite3.connect(self.local_path, timeout=30)
+                for i in range(100):
+                    c.execute("INSERT INTO articles(admin_id,channel_id,hash,url,title,status) VALUES(222,1,?,?,?,?)", (f"w{n}-{i}", f"https://e/{n}/{i}", f"t{n}-{i}", "ready")); c.commit()
+                c.close()
+            except Exception as e: errs.append(repr(e))
+        ts = [threading.Thread(target=writer, args=(n,)) for n in range(20)]; t0 = time.time()
+        [t.start() for t in ts]; [t.join() for t in ts]
+        self.assertEqual(errs, []); self.assertTrue(self.s.barrier(60.0), "all 2000 rows must be confirmed by D1")
+        self.assertEqual(dump(self.c), dump(self.remote())); self.assertEqual(self.s.rep.pending(), 0); self.assertEqual(self.s.rep.dead(), 0)
+        n_art = len([x for x in self.fake.stmts if "articles" in x[0]]); self.assertLessEqual(n_art, 2100)
 
     def test_graceful_stop_flushes_pending(self):
         s = self.mk(instance="A2", D1_SYNC_INTERVAL="30"); s.cfg.interval = 30; s.rep.interval = 30

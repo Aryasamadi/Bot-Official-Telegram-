@@ -15,6 +15,8 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 load_dotenv()
 import d1sync   # لایهٔ Cloudflare D1 (منبع حقیقتِ دائمی) — فایل کنار bot.py
+from decimal import Decimal, ROUND_HALF_UP
+from zoneinfo import ZoneInfo
 #  ============================================================
 # تنظیمات محیطی
 BOT_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -67,6 +69,9 @@ BOT_FULL_MAX = 20000         # سقف کاراکتر محتوای کامل دا�
 BOT_FULL_HARD_MAX = int(os.getenv("BOT_FULL_HARD_MAX", "60000"))   # سقف سخت ذخیره‌سازی؛ بسیار بالاتر از خروجی واقعی مدل
 LANGS = ("fa", "en")
 # ---- محافظت در برابر فشار (قابل تنظیم با متغیر محیطی)
+MEDIA_MAX_TRIES = int(os.getenv("MEDIA_MAX_TRIES", "3"))           # خطای موقت دریافت رسانه: چند بار انتشار به تعویق می‌افتد، بعد صریحاً بدون رسانه
+RETRY_MAX_ATTEMPTS = int(os.getenv("RETRY_MAX_ATTEMPTS", "6"))     # خطای موقت (AI/شبکه/استخراج): تعداد کل تلاش پیش از failed صریح
+RETRY_BASE_SEC = int(os.getenv("RETRY_BASE_SEC", "300"))           # backoff نمایی: ۵، ۱۰، ۲۰، ۴۰، ۸۰ دقیقه (+jitter)
 AI_CONCURRENCY = int(os.getenv("AI_CONCURRENCY", "3"))          # درخواست هم‌زمان به مدل‌ها
 FETCH_CONCURRENCY = int(os.getenv("FETCH_CONCURRENCY", "8"))    # دانلود هم‌زمان صفحات/فیدها
 CYCLE_CONCURRENCY = int(os.getenv("CYCLE_CONCURRENCY", "2"))    # چرخه‌ی هم‌زمان کانال‌ها
@@ -82,8 +87,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("core")
 # ============================================================
 # ابزار زمان (فقط بر پایه‌ی آفست UTC)
-TZ_ZONES = [("tehran", 3.5), ("istanbul", 3), ("dubai", 4), ("kabul", 4.5), ("karachi", 5), ("delhi", 5.5), ("moscow", 3), ("berlin", 1), ("london", 0),
-            ("beijing", 8), ("tokyo", 9), ("sydney", 10), ("newyork", -5), ("losangeles", -8), ("saopaulo", -3), ("utc", 0)]
+# منطقه‌های زمانی IANA (DST خودکار). «مسکو» حذف شد: همان UTC+3 ثابتِ استانبول است (تکرارِ بی‌معنا).
+TZ_ZONES = [("tehran", "Asia/Tehran"), ("istanbul", "Europe/Istanbul"), ("dubai", "Asia/Dubai"), ("kabul", "Asia/Kabul"), ("karachi", "Asia/Karachi"), ("delhi", "Asia/Kolkata"),
+            ("berlin", "Europe/Berlin"), ("london", "Europe/London"), ("beijing", "Asia/Shanghai"), ("tokyo", "Asia/Tokyo"), ("sydney", "Australia/Sydney"),
+            ("newyork", "America/New_York"), ("losangeles", "America/Los_Angeles"), ("saopaulo", "America/Sao_Paulo"), ("utc", "UTC")]
 def now_utc(): return datetime.now(UTC)
 def now_iso(): return now_utc().isoformat()
 def parse_dt(s):
@@ -94,7 +101,7 @@ def parse_dt(s):
     try:
         d = datetime.fromisoformat(t.replace("Z", "+00:00"))
         return d if d.tzinfo else d.replace(tzinfo=UTC)
-    except Exception: pass
+    except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S %Z", "%a, %d %b %Y %H:%M %z",
                 "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M",
                 "%d %b %Y %H:%M:%S %z", "%d %b %Y %H:%M:%S", "%d.%m.%Y %H:%M", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
@@ -106,9 +113,45 @@ def parse_dt(s):
         d = parsedate_to_datetime(t)
         return d if d.tzinfo else d.replace(tzinfo=UTC)
     except Exception: return None
-def tz_of(off):
-    try: return timezone(timedelta(hours=float(off)))
+_ZI = {}
+def _zi(name):
+    """ZoneInfo یا None. نام نامعتبر/خراب هرگز استثنا نمی‌دهد (مقدار از تنظیمات کانال می‌آید)."""
+    if not isinstance(name, str) or not name.strip(): return None
+    name = name.strip()
+    if name not in _ZI:
+        try: _ZI[name] = ZoneInfo(name)
+        except Exception: _ZI[name] = None
+    return _ZI[name]
+def tz_of(spec):
+    """spec: نام IANA (DST درست) یا آفست عددیِ ثابت (سازگاری با تنظیمات قدیمی)."""
+    z = _zi(spec) if isinstance(spec, str) else None
+    if z: return z
+    try: return timezone(timedelta(hours=float(spec)))
     except Exception: return timezone(timedelta(hours=DEFAULT_UTC_OFFSET))
+def _offset_now(name):
+    z = _zi(name); return (datetime.now(z).utcoffset().total_seconds() / 3600) if z else None
+def _guess_tz(off):
+    """کانال‌های قدیمی فقط آفست دارند: به منطقه‌ای که همین حالا همان آفست را دارد نگاشت می‌شود (بدون تغییر رفتار)؛ وگرنه None = آفست ثابت."""
+    try: off = float(off)
+    except (TypeError, ValueError): return None
+    for _, name in TZ_ZONES:
+        o = _offset_now(name)
+        if o is not None and abs(o - off) < 0.01: return name
+    return None
+DEFAULT_TZ_ENV = os.getenv("DEFAULT_TZ", "").strip()
+DEFAULT_TZ = DEFAULT_TZ_ENV if _zi(DEFAULT_TZ_ENV) else _guess_tz(DEFAULT_UTC_OFFSET)
+def _tz_spec(raw):
+    """از JSON تنظیمات کانال: نام IANA معتبر، وگرنه آفست عددی."""
+    try: d = json.loads(raw) if raw else {}
+    except Exception: d = {}
+    if not isinstance(d, dict): d = {}
+    if _zi(d.get("tz")): return d["tz"]
+    if "tz" not in d and d.get("utc_offset") is not None:
+        g = _guess_tz(d.get("utc_offset"))
+        if g: return g
+    if d.get("utc_offset") is None and "tz" not in d: return DEFAULT_TZ or DEFAULT_UTC_OFFSET
+    try: return float(d.get("utc_offset", DEFAULT_UTC_OFFSET))
+    except (TypeError, ValueError): return DEFAULT_UTC_OFFSET
 def off_label(off):
     try: off = float(off)
     except Exception: off = DEFAULT_UTC_OFFSET
@@ -184,6 +227,10 @@ CREATE TABLE IF NOT EXISTS dedup(channel_id INTEGER, fp TEXT, ts TEXT, PRIMARY K
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS support(user_id INTEGER PRIMARY KEY, open INTEGER DEFAULT 0, opened_at TEXT);
 CREATE TABLE IF NOT EXISTS support_map(msg_id INTEGER PRIMARY KEY, user_id INTEGER, ts TEXT);
+CREATE TABLE IF NOT EXISTS referrals(id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER NOT NULL, referred_id INTEGER NOT NULL UNIQUE, created_at TEXT NOT NULL, CHECK(referrer_id<>referred_id));
+CREATE TABLE IF NOT EXISTS referral_rewards(id INTEGER PRIMARY KEY AUTOINCREMENT, referral_id INTEGER NOT NULL, pay_id INTEGER NOT NULL UNIQUE, referrer_id INTEGER NOT NULL, amount REAL NOT NULL, basis TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id);
+CREATE INDEX IF NOT EXISTS idx_rewards_referrer ON referral_rewards(referrer_id);
 CREATE TABLE IF NOT EXISTS plan_changes(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, from_plan INTEGER, kind TEXT, credit_used REAL DEFAULT 0, surplus REAL DEFAULT 0, paid REAL, rem_days REAL, ts TEXT);
 CREATE TABLE IF NOT EXISTS pay_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, status TEXT DEFAULT 'pending', created_at TEXT, receipt_chat INTEGER, receipt_msg INTEGER, note TEXT, decided_at TEXT, discount TEXT, final_price TEXT);
 CREATE INDEX IF NOT EXISTS idx_art_ch_status ON articles(channel_id, status);
@@ -212,14 +259,16 @@ MIGRATIONS = [("users", "next_plan_id", "INTEGER"), ("users", "next_plan_days", 
               ("ai_models", "temperature", "REAL DEFAULT 0.5"), ("ai_models", "max_tokens", "INTEGER DEFAULT 2500"), ("ai_models", "owner_id", "INTEGER"),
               ("ai_models", "fail_count", "INTEGER DEFAULT 0"), ("ai_models", "next_try_after", "TEXT DEFAULT ''"),
               ("plans", "daily_tests", "INTEGER DEFAULT 2"), ("plans", "price_num", "REAL DEFAULT 0"), ("sources", "found_total", "INTEGER DEFAULT 0"), ("sources", "title", "TEXT DEFAULT ''")
-              , ("sources", "fail_count", "INTEGER DEFAULT 0"), ("sources", "next_try_after", "TEXT DEFAULT \'\'")]
+              , ("sources", "fail_count", "INTEGER DEFAULT 0"), ("sources", "next_try_after", "TEXT DEFAULT \'\'"),
+               ("articles", "attempts", "INTEGER DEFAULT 0"), ("articles", "retry_at", "TEXT"),
+               ("ai_models", "verified_at", "TEXT"), ("articles", "media_tries", "INTEGER DEFAULT 0")]
 def _init_conn():
     """یک کانکشن SQLite تازه برای ترد جاری (WAL + busy_timeout)."""
     conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
     for pr in ("PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=15000", "PRAGMA cache_size=-16000", "PRAGMA temp_store=MEMORY"):
         try: conn.execute(pr)
-        except sqlite3.OperationalError: pass
+        except sqlite3.OperationalError as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     return conn
 
 def _ensure_unique_indexes(conn):
@@ -248,7 +297,7 @@ def _ensure_schema(conn):
     with _lock:
         if _SCHEMA_READY: return
         try: os.chmod(DB_FILE, 0o600)   # کلیدهای API متن ساده در این فایل‌اند؛ دسترسی فقط برای مالک
-        except Exception: pass
+        except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
         conn.executescript(SCHEMA + "\n" + DB_INDEXES)
         conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
         _sv = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()      # نسخهٔ اسکیمای ثبت‌شده در دیتابیس (اگر وجود داشته باشد)
@@ -301,7 +350,7 @@ def q(sql, params=(), one=False, commit=False):
             try:
                 _c = getattr(_tls, "conn", None)
                 if _c is not None: _c.rollback()
-            except Exception: pass
+            except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
             if attempt == 4 or ("locked" not in msg and "busy" not in msg): raise
             time.sleep(0.02 * (2 ** attempt))   # ۲۰/۴۰/۸۰/۱۶۰ms — کوتاه، چون q() داخل حلقهٔ رویداد هم اجرا می‌شود
         except sqlite3.Error:
@@ -310,7 +359,7 @@ def q(sql, params=(), one=False, commit=False):
             try:
                 _c = getattr(_tls, "conn", None)
                 if _c is not None: _c.rollback()
-            except Exception: pass
+            except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
             raise
 _COLS = {}
 def _safe_fields(table, f):
@@ -406,23 +455,24 @@ def update_plan(pid, **f):
 def delete_plan(pid): q("DELETE FROM plans WHERE id=?", (pid,), commit=True)
 def assign_plan(uid, pid, days=None):
     """
-    زنجیره‌ای: بدون پلن فعال → همین حالا · همان پلن فعال → روزها اضافه می‌شود · پلن متفاوت فعال → «پلن بعدی» (ارتقا از رایگان فوری است).
-    خروجی: (تاریخ انقضا/شروع, queued)
+    بدون پلن فعال → همین حالا · همان پلن فعال → روزها به انتهای دوره اضافه می‌شود (تمدید) · پلن متفاوت فعال → پلن و سهمیه فوراً عوض می‌شود و تاریخ پایان دست‌نخورده می‌ماند.
+    ارتقا از رایگان به پولی فوری است و مصرفِ امروزِ پلن رایگان از سهمیهٔ پلن پولی کم نمی‌شود. خروجی: (تاریخ انقضا, queued=False)
     """
     p = get_plan(pid)
     if not p: return None, False
     u = get_user(uid); d = int(days if days is not None else p["days"]); now = now_utc()
+    prev = get_plan(u["plan_id"]) if u and u["plan_id"] else None
     cur = parse_dt(u["plan_expires"]) if u else None; active = bool(cur and cur > now and u["plan_id"])
-    if active and not p["is_free"] and (get_plan(u["plan_id"]) or {"is_free": 0})["is_free"]: active = False
+    if active and not p["is_free"] and (prev or {"is_free": 0})["is_free"]: active = False
     if active and u["plan_id"] != pid:
-        # تغییر پلن: تاریخ پایان دست‌نخورده می‌ماند و فقط پلن و سهمیه‌ها عوض می‌شوند
-        # (مبلغ طبق upgrade_quote فقط برای روزهای باقی‌مانده محاسبه شده است).
-        q("UPDATE users SET plan_id=?, next_plan_id=NULL, next_plan_days=NULL, remind_key=NULL, role=CASE WHEN role='user' THEN 'admin' ELSE role END WHERE id=?",
+        q("UPDATE users SET plan_id=?, remind_key=NULL, role=CASE WHEN role='user' THEN 'admin' ELSE role END WHERE id=?",
           (pid, uid), commit=True)
         admin_limits_invalidate(uid)
         return cur, False
     exp = (cur if active else now) + timedelta(days=d)
     q("UPDATE users SET plan_id=?, plan_expires=?, remind_key=NULL, role=CASE WHEN role='user' THEN 'admin' ELSE role END, free_used=CASE WHEN ?=1 THEN 1 ELSE free_used END WHERE id=?", (pid, exp.isoformat(), p["is_free"], uid), commit=True)
+    if prev and prev["is_free"] and not p["is_free"]:      # Free → Paid: وضعیتِ Free نباید سهمیهٔ امروزِ Paid را خراب کند
+        q("UPDATE usage SET posts=0, tests=0 WHERE admin_id=? AND day=?", (uid, today_str(admin_offset(uid))), commit=True)
     admin_limits_invalidate(uid)   # وگرنه تا ۶۰ ثانیه سهمیهٔ کهنه اعمال می‌شود
     return exp, False
 def proration_remaining_days(uid):
@@ -441,7 +491,7 @@ def proration_remaining_value(uid, cur_price_num, cur_days):
         return 0.0
     return round(cur_price_num * (rem / cur_days), 2)
 def revoke_plan(uid):
-    q("UPDATE users SET plan_id=NULL, plan_expires=NULL, next_plan_id=NULL, next_plan_days=NULL, remind_key=NULL WHERE id=?", (uid,), commit=True)
+    q("UPDATE users SET plan_id=NULL, plan_expires=NULL, remind_key=NULL WHERE id=?", (uid,), commit=True)
     admin_limits_invalidate(uid)
 def expiring_users():
     """کاربران غیرممنوعی که پلنِ فعالِشان (بر اساس plan_expires واقعی، نه مدت پلن) به بازه‌های هشدار رسیده است:
@@ -490,26 +540,27 @@ def admin_limits_invalidate(uid=None):
     if uid is None: _limits_cache.clear(); return
     _limits_cache.pop(uid, None)
 def admin_limits(uid):
-    if is_super(uid): return dict(daily_posts=None, max_sources=None, max_channels=None, daily_tests=None, plan=None, plan_id=None, expires=None, active=True, next_plan=None)
+    if is_super(uid): return dict(daily_posts=None, max_sources=None, max_channels=None, daily_tests=None, plan=None, plan_id=None, expires=None, active=True)
     u = get_user(uid); p = get_plan(u["plan_id"]) if u and u["plan_id"] else None
     exp = parse_dt(u["plan_expires"]) if u else None; active = bool(p and exp and exp > now_utc() and not u["banned"])
-    return dict(daily_posts=p["daily_posts"] if p else 0, max_sources=p["max_sources"] if p else 0, max_channels=p["max_channels"] if p else 0, daily_tests=p["daily_tests"] if p else 0, plan=p, plan_id=p["id"] if p else None, expires=exp, active=active, next_plan=get_plan(u["next_plan_id"]) if u and u["next_plan_id"] else None)
+    return dict(daily_posts=p["daily_posts"] if p else 0, max_sources=p["max_sources"] if p else 0, max_channels=p["max_channels"] if p else 0, daily_tests=p["daily_tests"] if p else 0, plan=p, plan_id=p["id"] if p else None, expires=exp, active=active)
 def admin_offset(uid):
+    """مشخصهٔ منطقهٔ زمانیِ مدیر: نام IANA (ترجیحاً) یا آفست ثابت؛ مستقیم به today_str/fmt_date/local_clock داده می‌شود."""
     ch = q("SELECT settings FROM channels WHERE admin_id=? ORDER BY id LIMIT 1", (uid,), one=True)
-    try: return float(json.loads(ch["settings"]).get("utc_offset", DEFAULT_UTC_OFFSET)) if ch and ch["settings"] else DEFAULT_UTC_OFFSET
-    except Exception: return DEFAULT_UTC_OFFSET
+    return _tz_spec(ch["settings"]) if ch and ch["settings"] else (DEFAULT_TZ or DEFAULT_UTC_OFFSET)
 def usage_today(uid):
     r = q("SELECT posts,tests FROM usage WHERE admin_id=? AND day=?", (uid, today_str(admin_offset(uid))), one=True)
     return {"posts": r["posts"], "tests": r["tests"]} if r else {"posts": 0, "tests": 0}
-def usage_reset(uid, field="tests"): q(f"UPDATE usage SET {field}=0 WHERE admin_id=? AND day=?", (uid, today_str(admin_offset(uid))), commit=True)
+def usage_reset(uid, field="tests"):
+    if field not in ("tests", "posts"): raise ValueError("unknown usage field")      # نام ستون در SQL پویا فقط از فهرست سفید
+    q(f"UPDATE usage SET {field}=0 WHERE admin_id=? AND day=?", (uid, today_str(admin_offset(uid))), commit=True)
 def channel_posts_today(cid, off):
-    """تعداد پست‌های منتشرشده‌ی «امروزِ» خودِ این کانال (بر پایه‌ی ساعت محلی کانال) از جدول posted.
+    """تعداد پست‌های منتشرشده‌ی «امروزِ» خودِ این کانال (بر پایه‌ی ساعت محلی کانال، با DST) از جدول posted.
     سهمیه‌ی usage سراسریِ ادمین است؛ سقف روزانه‌ی کانال باید از شمارش همان کانال دربیاید."""
     try:
         ch = get_channel(cid)
         if not ch: return 0
-        off = float(off); loc = now_utc() + timedelta(hours=off)
-        start = (datetime(loc.year, loc.month, loc.day, tzinfo=UTC) - timedelta(hours=off)).isoformat()
+        z = tz_of(off); loc = datetime.now(z); start = datetime(loc.year, loc.month, loc.day, tzinfo=z).astimezone(UTC).isoformat()
         r = q("SELECT COUNT(*) c FROM posted WHERE channel_id=? AND posted_at>=?", (ch["chat_id"], start), one=True)
         return int(r["c"]) if r else 0
     except Exception:
@@ -531,7 +582,9 @@ def remaining(uid, field="posts", cid=None):
         if ch_cap:
             # مرز «امروزِ» سقف روزانه باید بر پایهٔ ساعت محلیِ خودِ کانال باشد، نه آفست ادمینی که چرخه را اجرا کرده؛
             # فقط اگر کانال آفست ذخیره‌شده نداشت، به آفست ادمین/پیش‌فرض برمی‌گردیم.
-            try: ch_off = float(json.loads((get_channel(cid) or {})["settings"] or "{}").get("utc_offset"))
+            try:
+                raw = (get_channel(cid) or {})["settings"] or "{}"; dd = json.loads(raw)
+                ch_off = _tz_spec(raw) if isinstance(dd, dict) and ("tz" in dd or "utc_offset" in dd) else None
             except Exception: ch_off = None
             if ch_off is None: ch_off = admin_offset(uid)
             ch_left = max(0, int(ch_cap) - channel_posts_today(cid, ch_off))
@@ -635,7 +688,7 @@ def default_settings(lang="fa", channel_username=""):
     lang = lang if lang in LANGS else "fa"
     return {"ui_lang": lang, "enabled": True, "mode": "auto", "prompt": DEFAULT_PROMPT[lang], "topic": "", "language": "فارسی" if lang == "fa" else "English",
             "categories": [dict(c) for c in DEFAULT_CATEGORIES[lang]], "criteria": [dict(c) for c in DEFAULT_CRITERIA[lang]], "min_score": 60,
-            "lookback_hours": 72, "allow_undated": True, "quiet_start": None, "quiet_end": None, "utc_offset": DEFAULT_UTC_OFFSET,
+            "lookback_hours": 72, "allow_undated": True, "quiet_start": None, "quiet_end": None, "utc_offset": DEFAULT_UTC_OFFSET, "tz": DEFAULT_TZ,
             "include_media": True, "include_link": True, "signature": f"@{channel_username}" if channel_username else "@channel", "max_words": 500, "post_limit": POST_LIMIT_DEFAULT,  # پیش‌فرض کلمات طبق دستور فاز ۳ (قبلی ۱۵۰)
             "strict_ads": False, "interval_minutes": 60, "posts_per_cycle": 1, "hashtags": True, "daily_posts_cap": None,
             "last_run": None, "last_end": None, "last_result": "", "last_diag": None, "last_notified_diag": ""}
@@ -653,6 +706,12 @@ def get_settings(cid):
     s["interval_minutes"] = max(MIN_INTERVAL, int(s.get("interval_minutes") or MIN_INTERVAL)); s["lookback_hours"] = min(MAX_LOOKBACK, max(1, int(s.get("lookback_hours") or 72)))
     # کپشن کانال هرگز از سقف سخت بالاتر نمی‌رود (وگرنه تلگرام پست را دو پیام می‌کند)
     s["post_limit"] = min(POST_LIMIT_MAX, max(300, int(s.get("post_limit") or POST_LIMIT_DEFAULT))); s["posts_per_cycle"] = min(MAX_PPC, max(1, int(s.get("posts_per_cycle") or 1)))
+    # فقط مقدارِ «ذخیره‌شده» تعیین‌کننده است؛ پیش‌فرض‌ها نباید آفستِ قدیمیِ کانال را بپوشانند
+    if "tz" in stored: tz = stored["tz"] if _zi(stored["tz"]) else None
+    elif stored.get("utc_offset") is not None: tz = _guess_tz(stored["utc_offset"])      # مهاجرتِ لحظه‌ایِ تنظیمات قدیمی (چیزی ذخیره نمی‌شود)؛ آفستِ ناشناخته ⇒ ثابت می‌ماند
+    else: tz = DEFAULT_TZ
+    s["tz"] = tz
+    if tz: s["utc_offset"] = _offset_now(tz)                                    # آفستِ «همین لحظه» (DST اعمال می‌شود)
     return s
 LOCALIZED_KEYS = ("prompt", "language", "categories", "criteria")
 def _same(a, b):
@@ -677,7 +736,7 @@ def update_settings(cid, **kw): s = get_settings(cid); s.update(kw); save_settin
 def in_quiet(s):
     a, b = s.get("quiet_start"), s.get("quiet_end")
     if a is None or b is None or a == b: return False
-    h = datetime.now(tz_of(s.get("utc_offset"))).hour
+    h = datetime.now(tz_of(s.get("tz") or s.get("utc_offset"))).hour
     return (a <= h < b) if a < b else (h >= a or h < b)
 # ============================================================
 # کانال‌ها + لایه‌ی امنیتی (توکن انتقال مالکیت)
@@ -851,6 +910,14 @@ def article_update(aid, **f):
     _safe_fields("articles", f)
     q("UPDATE articles SET " + ", ".join(f"{k}=?" for k in f) + " WHERE id=?", (*f.values(), aid), commit=True)
 def get_article(aid): return q("SELECT * FROM articles WHERE id=?", (aid,), one=True)
+def retry_later(aid, why):
+    """خطای موقت (قطعی AI، شبکه، 429/5xx) ≠ رد محتوا. مقاله «discovered» می‌ماند و با backoff نمایی + jitter دوباره امتحان می‌شود
+    (leftovers چرخهٔ بعد). فقط پس از RETRY_MAX_ATTEMPTS تلاش، صریحاً failed می‌شود. خروجی: "retry" | "failed"."""
+    a = get_article(aid); n = (int(a["attempts"] or 0) if a else 0) + 1
+    if n >= RETRY_MAX_ATTEMPTS:
+        article_update(aid, status="failed", reason=f"{why} (gave up after {n} attempts)"[:200], attempts=n, retry_at=None); return "failed"
+    delay = min(6 * 3600, RETRY_BASE_SEC * 2 ** (n - 1)) * (0.8 + random.random() * 0.4)
+    article_update(aid, status="discovered", reason=f"retry: {why}"[:200], attempts=n, retry_at=(now_utc() + timedelta(seconds=delay)).isoformat()); return "retry"
 class PublicationQuotaExceeded(Exception): pass
 def get_pub_journal(aid):
     r = q("SELECT journal FROM pub_journal WHERE article_id=?", (aid,), one=True)
@@ -908,6 +975,9 @@ class PublicationTransport:
             previous = self.journal["phase"]
             self.journal["phase"] = "in_flight"
             set_pub_journal(self.aid, self.journal)
+            try: await asyncio.to_thread(d1_barrier, "in_flight")   # جایگزینی/خرابی VPS وسط ارسال ⇒ D1 می‌داند «ممکن است ارسال شده باشد» و هرگز دوباره منتشر نمی‌شود
+            except BaseException:                                   # D1Unavailable یا لغو: هنوز چیزی ارسال نشده ⇒ فاز برمی‌گردد (delivery_unknown کاذب نمی‌سازد)
+                self.journal["phase"] = previous; set_pub_journal(self.aid, self.journal); raise
             try: message = await method(*args, **kwargs)
             except (BadRequest, RetryAfter, Forbidden):
                 self.journal["phase"] = previous
@@ -1028,7 +1098,7 @@ def cleanup():
         conn.execute("DELETE FROM pay_requests WHERE status!='pending' AND COALESCE(decided_at, created_at)<?", ((now_utc() - timedelta(days=90)).isoformat(),))
     _trx(_go)
     try: q("PRAGMA wal_checkpoint(TRUNCATE)")   # خارج از تراکنش (checkpoint داخل تراکنش معنا ندارد)
-    except Exception: pass
+    except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     gset("last_cleanup", time.time())
 # ============================================================
 # پشتیبانی و درخواست‌های پرداخت
@@ -1039,6 +1109,9 @@ def support_is_open(uid):
 def support_map_set(msg_key, uid): q("INSERT OR REPLACE INTO support_map VALUES(?,?,?)", (msg_key, uid, now_iso()), commit=True)
 def support_map_get(msg_key):
     r = q("SELECT user_id FROM support_map WHERE msg_id=?", (msg_key,), one=True); return r["user_id"] if r else None
+def pay_pending_any(uid):
+    """هر درخواست در انتظار/در حال تصمیم کاربر. هم‌زمان فقط یکی مجاز است: دو درخواستِ موازی با قیمت‌گذاری قدیمی/کیف پول مشترک پشت سر هم تأیید می‌شدند."""
+    return q("SELECT * FROM pay_requests WHERE user_id=? AND status IN ('pending','processing') LIMIT 1", (uid,), one=True)
 def pay_pending_for(uid, pid): return q("SELECT * FROM pay_requests WHERE user_id=? AND plan_id=? AND status='pending'", (uid, pid), one=True)
 def pay_create(uid, pid, receipt_chat=None, receipt_msg=None, note="", discount=None, final_price=None, pc=None):
     return q("INSERT INTO pay_requests(user_id,plan_id,created_at,receipt_chat,receipt_msg,note,discount,final_price,pc) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -1105,7 +1178,7 @@ async def fetch(url, **kw):
                     continue
                 try:
                     if int(r.headers.get("content-length") or 0) > MAX_PAGE_BYTES: raise FetchError(413, current)
-                except (TypeError, ValueError): pass
+                except (TypeError, ValueError) as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
                 chunks = bytearray()
                 async for chunk in r.aiter_bytes(262144):
                     chunks.extend(chunk)
@@ -1144,7 +1217,8 @@ async def load_deeplink(key):
 
 # ---- Cloudflare D1 = منبع حقیقتِ دائمی؛ SQLite محلی کپی کاری (طراحی و دلیل: بالای d1sync.py) ----
 D1 = None
-D1_STRICT = os.getenv("D1_STRICT", "1").lower() not in ("0", "false", "no", "off")   # نقاط حساس بدون تأیید D1 جلو نمی‌روند
+D1_STRICT = os.getenv("D1_STRICT", "1").lower() not in ("0", "false", "no", "off")
+D1_BARRIER_TIMEOUT = float(os.getenv("D1_BARRIER_TIMEOUT", "10"))   # حداکثر انتظار برای تأیید D1 پیش از ارسال به تلگرام   # نقاط حساس بدون تأیید D1 جلو نمی‌روند
 
 def _d1_boot():
     """پیش از seed_plans/recover_publications: lease تک‌نمونه‌ای + (seed | restore | resume). روی VPS جدید دیتابیس خالی از D1 بازسازی می‌شود."""
@@ -1159,9 +1233,13 @@ def _d1_boot():
     mode = D1.bootstrap(); D1.start()
     log.info("D1 آماده | mode=%s epoch=%s instance=%s", mode, D1.epoch, D1.instance)
 
-def d1_barrier(what="", timeout=10.0):
+def d1_barrier(what="", timeout=None):
     """تا تأیید D1 صبر می‌کند (ژورنال انتشار/پرداخت). بدون D1 ⇒ True. D1_STRICT=1 و عدم تأیید ⇒ d1sync.D1Unavailable."""
-    return True if D1 is None else D1.barrier(timeout, strict=D1_STRICT)
+    if D1 is None: return True
+    if D1.lost or not D1.lease_ok():          # lease تازه تمدید نشده (قطعی D1 / مالک جدید) ⇒ کار حساس انجام نمی‌شود
+        if D1_STRICT: raise d1sync.D1Unavailable("D1 lease not confirmed")
+        return False
+    return D1.barrier(D1_BARRIER_TIMEOUT if timeout is None else timeout, strict=D1_STRICT)
 
 def _d1_stop():
     """خاموشی تمیز: flush نهایی تغییرات و آزادسازی lease (جابه‌جایی VPS بدون انتظار)."""
@@ -1170,6 +1248,14 @@ def _d1_stop():
         try: D1.stop()
         except Exception as e: log.warning("D1 stop: %s", redact(e))
         D1 = None
+
+async def d1_confirm(what):
+    """بعد از رویداد مالی تا تأیید D1 صبر می‌کند. عدم تأیید فقط هشدار است (داده محلی و در صف تکثیر محفوظ است)."""
+    if D1 is None: return True
+    try: ok = await asyncio.to_thread(D1.barrier, D1_BARRIER_TIMEOUT, False)
+    except Exception as e: log.warning("D1 confirm(%s) failed: %s", what, redact(str(e))[:120]); return False
+    if not ok: log.warning("D1 did not confirm %s in time; replication continues in background", what)
+    return ok
 
 def init_core(d1=True):
     db()
@@ -1254,12 +1340,30 @@ def _openai_content(j):
             raise AIResponseError("malformed provider content")
         c = "".join(p["text"] for p in c)
     return _ai_text(c)
-async def _post(url, **kw): return await http().post(url, timeout=httpx.Timeout(120, connect=15), **kw)
+MAX_CONCURRENT_UPDATES = max(16, int(os.getenv("MAX_CONCURRENT_UPDATES", "256")))   # سقف هندلرهای هم‌زمان (پیش‌فرض PTB با True: ۴۰۹۶)
+PROVIDER_CONCURRENCY = int(os.getenv("PROVIDER_CONCURRENCY", "2"))      # هم‌زمانی هر provider (host)؛ جدا از سقف سراسری AI_CONCURRENCY
+_PROV_SEM = {}
+def _prov_sem(url):
+    """سمافور هر host (به‌ازای event loop). یک provider کُند/محدود نباید همهٔ سقف سراسری AI را اشغال کند یا 429 بگیرد."""
+    key = (id(asyncio.get_running_loop()), urlparse(url).netloc.lower())
+    s = _PROV_SEM.get(key)
+    if s is None:
+        if len(_PROV_SEM) > 256: _PROV_SEM.clear()
+        s = _PROV_SEM[key] = asyncio.Semaphore(max(1, PROVIDER_CONCURRENCY))
+    return s
+async def _guarded_post(m, url, **kw):
+    """فراخوانی provider. مدل شخصی (base_url را کاربر داده): مقصد باید عمومی باشد (DNS هم حل می‌شود، نه فقط رشتهٔ آدرس) و redirect دنبال نمی‌شود،
+    وگرنه 302 به آدرس داخلی/متادیتا = SSRF. مدل عمومی (مدیر کلان) مثل قبل."""
+    personal = m["owner_id"] is not None
+    if personal and not _ALLOW_PRIVATE_MODELS and not await asyncio.to_thread(public_url, url):
+        raise AIResponseError("model host is not a public address")
+    async with _prov_sem(url):
+        return await http().post(url, timeout=httpx.Timeout(120, connect=15), follow_redirects=not personal, **kw)
 async def _call_model(m, system, user):
     kind = m["kind"] or detect_kind(m["base_url"]); base = (m["base_url"] or "").rstrip("/"); key = m["api_key"] or ""; model = m["model"]; temp = 0.5 if m["temperature"] is None else float(m["temperature"]); mx = int(m["max_tokens"] or 2500)
     if kind == "anthropic":
         url = base + ("/messages" if base.endswith("/v1") else "/v1/messages")
-        r = await _post(url, headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}, json={"model": model, "max_tokens": mx, "temperature": temp, "system": system, "messages": [{"role": "user", "content": user}]})
+        r = await _guarded_post(m, url, headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}, json={"model": model, "max_tokens": mx, "temperature": temp, "system": system, "messages": [{"role": "user", "content": user}]})
         j = _provider_json(r); blocks = j.get("content")
         if not isinstance(blocks, list) or any(not isinstance(b, dict) for b in blocks): raise AIResponseError("malformed provider content")
         parts = [b.get("text") for b in blocks if b.get("type") == "text"]
@@ -1267,7 +1371,7 @@ async def _call_model(m, system, user):
         return _ai_text("".join(parts))
     if kind == "gemini":
         model = model.replace("models/", ""); root = base if re.search(r"/v1(beta)?$", base) else base + "/v1beta"
-        r = await _post(f"{root}/models/{model}:generateContent", params={"key": key}, json={"system_instruction": {"parts": [{"text": system}]}, "contents": [{"role": "user", "parts": [{"text": user}]}], "generationConfig": {"temperature": temp, "maxOutputTokens": mx}})
+        r = await _guarded_post(m, f"{root}/models/{model}:generateContent", params={"key": key}, json={"system_instruction": {"parts": [{"text": system}]}, "contents": [{"role": "user", "parts": [{"text": user}]}], "generationConfig": {"temperature": temp, "maxOutputTokens": mx}})
         j = _provider_json(r); cands = j.get("candidates")
         if not isinstance(cands, list) or not cands or not isinstance(cands[0], dict): raise AIResponseError("malformed provider candidates")
         content = cands[0].get("content")
@@ -1279,8 +1383,8 @@ async def _call_model(m, system, user):
     if "openrouter" in base: headers.update({"HTTP-Referer": "https://t.me", "X-Title": "NewsBot"})
     body = {"model": model, "temperature": temp, "max_tokens": mx, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     url = base if base.endswith("/chat/completions") else base + "/chat/completions"
-    r = await _post(url, headers=headers, json=body)
-    if r.status_code == 404 and not re.search(r"/v\d", base): r = await _post(base + "/v1/chat/completions", headers=headers, json=body)
+    r = await _guarded_post(m, url, headers=headers, json=body)
+    if r.status_code == 404 and not re.search(r"/v\d", base): r = await _guarded_post(m, base + "/v1/chat/completions", headers=headers, json=body)
     return _openai_content(_provider_json(r))
 async def _mark_fail(m, err):
     cur = get_model(m["id"]) or m   # اسنپ‌شاتِ ورودی ممکن است کهنه باشد؛ شمارنده از سطر فعلی خوانده می‌شود
@@ -1293,7 +1397,7 @@ async def _mark_fail(m, err):
         await notify_super(f"🔴 مدل <b>{html.escape(m['name'])}</b> (<code>{html.escape(m['model'])}</code>) از کار افتاد.\n<code>{html.escape(redact(err)[:200])}</code>")
 async def _mark_ok(m):
     cur = get_model(m["id"]) or m   # ok_count/fail_count از سطر فعلی، نه از اسنپ‌شات احتمالاً کهنه
-    update_model(m["id"], fail_count=0, status="ok", last_ok=now_iso(), ok_count=(cur["ok_count"] or 0) + 1, next_try_after="")
+    update_model(m["id"], fail_count=0, status="ok", last_ok=now_iso(), verified_at=now_iso(), ok_count=(cur["ok_count"] or 0) + 1, next_try_after="")
     if cur["status"] == "down": log_event("INFO", f"مدل «{m['name']}» دوباره فعال شد."); await notify_super(f"🟢 مدل <b>{html.escape(m['name'])}</b> دوباره فعال شد.")
 # --- حریم خصوصی مدل‌ها: هیچ نام مدل/آدرس/کلیدی به مدیر میانی نمی‌رسد؛ فقط یک کد کوتاه و بی‌خطر
 AI_ERR = {"ai_busy": ("سرویس هوش مصنوعی موقتاً شلوغ است", "AI service is busy right now"), "ai_auth": ("دسترسی سرویس هوش مصنوعی برقرار نشد", "AI service access failed"),
@@ -1324,6 +1428,19 @@ def _model_ready(m):
     if nta: return now_utc() >= nta
     lf = parse_dt(m["last_fail"]); return bool(not lf or (now_utc() - lf) >= timedelta(minutes=MODEL_PROBE_MIN))
 _ai_events = ContextVar("ai_events", default=None)
+_ai_detail = ContextVar("ai_detail", default=None)   # آخرین خطای واقعی provider (redact‌شده) — فقط برای نمایش به مالک/مدیر کلان هنگام تست
+def _safe_ai_detail(e, api_key=""):
+    s = redact(str(e) or type(e).__name__)
+    if api_key and len(api_key) >= 8: s = s.replace(api_key, "•••")
+    return re.sub(r"\s+", " ", s).strip()[:200]
+async def _notify_fallback(owner_id, failed, used_label):
+    """مدل شخصیِ کاربر خراب شد و کار با مدل دیگری انجام شد ⇒ خودِ همان کاربر باخبر شود (نه فقط مدیر کلان). حداکثر ساعتی یک‌بار برای هر مدل."""
+    lang = user_lang(owner_id) or "fa"
+    for name, code, detail in failed[:3]:
+        if not rate_ok(f"fbnote:{owner_id}:{name}", 3600): continue
+        reason = ai_err_text(code, lang); d = f"\n<code>{esc(detail[:160])}</code>" if detail else ""
+        await notify_user(owner_id, (f"⚠️ Your model <b>{esc(name)}</b> failed ({reason}).{d}\nThis task was completed with <b>{esc(used_label)}</b> instead." if lang == "en"
+                                     else f"⚠️ مدل شما <b>{esc(name)}</b> پاسخ نداد ({reason}).{d}\nاین کار به‌جای آن با <b>{esc(used_label)}</b> انجام شد."))
 
 def is_url_like(x):
     x=(x or "").strip().lower()
@@ -1368,7 +1485,7 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
         fc = m["fail_count"] or 0; okc = m["ok_count"] or 0
         ratio = (okc + 1.0) / (okc + fc + 2.0)
         return (ratio, -fc, -(okc), m["priority"] or 99, m["id"])
-    tried = set(); last = "ai_none"; attempts = 0; content_fails = 0; stop = False
+    tried = set(); last = "ai_none"; attempts = 0; content_fails = 0; stop = False; personal_failed = []
     for stage, models in groups:
         if stage == "test" and not models: await _ai_event("no_test")
         rest = sorted(models, key=_sort_key)
@@ -1403,9 +1520,11 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                         content_fail = False
                     await _mark_ok(current)
                 await _ai_event("success", label)
+                if personal_failed and stage != "personal" and owner_id: await _notify_fallback(owner_id, personal_failed, label)
                 return text, label, None
             except (httpx.HTTPError, asyncio.TimeoutError, AIResponseError) as e:
                 last = "ai_timeout" if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError)) else err_code(e)
+                _ai_detail.set(_safe_ai_detail(e, m["api_key"] or ""))
                 # خطای اعتبارسنجیِ محتوا به حساب provider نوشته نمی‌شود؛ وگرنه یک قرارداد/پرامپتِ سخت‌گیرانه
                 # همهٔ مدل‌های سالم را پشت‌سرهم down می‌کرد. مدل بعدی همچنان امتحان می‌شود.
                 if content_fail:
@@ -1418,20 +1537,25 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                 else:
                     bump("model_fail", sub=last)   # شکست provider به تفکیک کد خطا (نمایش در پنل مالک)
                     await _mark_fail(m, e)
+                    if stage == "personal": personal_failed.append((label, last, _ai_detail.get() or ""))
                 await _ai_event("failure", label, last)
             if stop: break
     await _ai_event("failed", code=last)
     return None, None, last
 
-_ai_calls, _ai_t0 = 0, 0.0    # بودجهٔ هر مقاله: تعداد و زمان کل فراخوانی‌های مدل
+# بودجهٔ «همین مقاله/عملیات»: ContextVar، نه شمارندهٔ سراسری. قبلاً یک جفت global بود؛ با چند کاربر هم‌زمان بودجهٔ هم را تمام می‌کردند
+# و درخواست‌های بی‌گناه «ai_budget» می‌گرفتند (و ریست یک مقاله شمارندهٔ مقالهٔ دیگر را پاک می‌کرد).
+_ai_budget = ContextVar("ai_budget", default=None)
+def _ai_budget_reset(): _ai_budget.set({"calls": 0, "t0": time.monotonic()})
 async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, validate=None):
-    global _ai_calls, _ai_t0
-    if _ai_t0 == 0.0 or (time.monotonic() - _ai_t0) > AI_ARTICLE_TIME_BUDGET * 2: _ai_calls, _ai_t0 = 0, time.monotonic()   # تماس بیرون از مسیر مقاله: پنجرهٔ تازه
-    _ai_calls += 1
-    if _ai_calls > AI_MAX_CALLS_PER_ARTICLE:
+    bud = _ai_budget.get()
+    if bud is None or (time.monotonic() - bud["t0"]) > AI_ARTICLE_TIME_BUDGET * 2:      # تماس بیرون از مسیر مقاله: پنجرهٔ تازه برای همین عملیات
+        bud = {"calls": 0, "t0": time.monotonic()}; _ai_budget.set(bud)
+    bud["calls"] += 1
+    if bud["calls"] > AI_MAX_CALLS_PER_ARTICLE:
         log.warning("AI call budget exhausted for one article (%d calls) — stopping", AI_MAX_CALLS_PER_ARTICLE); return None, None, "ai_budget"
-    if (time.monotonic() - _ai_t0) > AI_ARTICLE_TIME_BUDGET:
-        log.warning("AI time budget exhausted for one article (%.0fs) — stopping", time.monotonic() - _ai_t0); return None, None, "ai_timeout"
+    if (time.monotonic() - bud["t0"]) > AI_ARTICLE_TIME_BUDGET:
+        log.warning("AI time budget exhausted for one article (%.0fs) — stopping", time.monotonic() - bud["t0"]); return None, None, "ai_timeout"
     personal = [m for m in list_models(active_only=True, owner_id=owner_id) if _model_ready(m)] if owner_id else []
     if selected_id is not None:
         selected = get_model(selected_id)
@@ -1451,6 +1575,45 @@ async def test_model(mid):
     out, label, err = await _try_models([("direct", [m])], "You are a health-check. Reply with exactly one word.",
                                       "Say: READY", validate=_validate_ready, explicit_id=mid)
     return out is not None, out[:100] if out else err, round(time.monotonic() - t, 1)
+_MODEL_SKIP = re.compile(r"embed|whisper|tts|dall-?e|moderation|rerank|transcribe|realtime|audio|image", re.I)   # فقط برای دکمه‌های انتخاب؛ تایپ دستی آزاد است
+async def discover_models(base_url, api_key, owner_id=None):
+    """فهرست مدل‌های provider (بدون ذخیره). خروجی: (ids, error|None). خطا redact‌شده و امن است؛ کلید هرگز برنمی‌گردد.
+    مدل شخصی: مقصد باید عمومی باشد و redirect دنبال نمی‌شود (SSRF). پاسخ حداکثر ۲MB خوانده می‌شود (DoS)."""
+    base = str(base_url or "").strip().rstrip("/"); key = str(api_key or "").strip(); kind = detect_kind(base); personal = owner_id is not None
+    if not base or not key: return [], "missing base URL or key"
+    if kind == "anthropic": urls = [base + ("/models" if base.endswith("/v1") else "/v1/models")]; headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}; params = {"limit": 100}
+    elif kind == "gemini": root = base if re.search(r"/v1(beta)?$", base) else base + "/v1beta"; urls = [root + "/models"]; headers = {}; params = {"key": key, "pageSize": 200}
+    else:
+        root = re.sub(r"/chat/completions$", "", base); urls = [root + "/models"] + ([root + "/v1/models"] if not re.search(r"/v\d", root) else [])
+        headers = {"Authorization": f"Bearer {key}"}; params = None
+    last_err = "no response"
+    for url in urls:
+        try:
+            if personal and not _ALLOW_PRIVATE_MODELS and not await asyncio.to_thread(public_url, url): return [], "host is not a public address"
+            async with http().stream("GET", url, headers=headers, params=params, timeout=httpx.Timeout(20, connect=10), follow_redirects=not personal) as r:
+                body = b""
+                async for chunk in r.aiter_bytes():
+                    body += chunk
+                    if len(body) > 2_000_000: return [], "response too large"
+                status = r.status_code
+        except Exception as e: last_err = _safe_ai_detail(f"{type(e).__name__}: {e}", key); continue
+        try: j = json.loads(body.decode("utf-8", "replace"))
+        except ValueError: last_err = f"HTTP {status}: not JSON"; continue
+        if status >= 400:
+            err = j.get("error") if isinstance(j, dict) else None
+            msg = (err.get("message") if isinstance(err, dict) else err) or (j.get("message") if isinstance(j, dict) else None) or ""
+            last_err = _safe_ai_detail(f"HTTP {status}: {re.sub(r'<[^>]+>', '', str(msg))[:140]}", key)
+            if status == 404 and url != urls[-1]: continue
+            return [], last_err
+        items = (j.get("data") if isinstance(j, dict) else None) or (j.get("models") if isinstance(j, dict) else None) or (j if isinstance(j, list) else [])
+        ids = []
+        for it in items if isinstance(items, list) else []:
+            if not isinstance(it, dict): continue
+            if kind == "gemini" and "generateContent" not in (it.get("supportedGenerationMethods") or []): continue
+            mid = str(it.get("id") or it.get("name") or "").replace("models/", "", 1).strip()
+            if mid and len(mid) <= 100 and mid not in ids: ids.append(mid)
+        return sorted(ids)[:200], None
+    return [], last_err
 async def probe_down_models():
     """چند مدل خراب در هر تیک آزمایش می‌شود تا بازیابی به چند ده دقیقه کشیده نشود."""
     rows = q("SELECT * FROM ai_models WHERE active=1 AND status='down' ORDER BY COALESCE(last_fail,'') LIMIT ?", (MODEL_PROBE_BATCH,))
@@ -1686,7 +1849,7 @@ def _bad_media_url(u):
 def _mk_media(u, kind, page=""):
     return None if _bad_media_url(u) else {"url": str(u), "kind": kind, "page": page or ""}
 def _entry_media(e, page=""):
-    vids = []
+    vids = []; auds = []
     for m in (e.get("media_content") or []) + (e.get("media_thumbnail") or []):
         u = m.get("url"); t = (m.get("type") or "").lower()
         if u and ("video" in t or re.search(r"\.(mp4|webm|mov|m4v)(\?|$)", u, re.I)): vids.append(u)
@@ -1696,6 +1859,7 @@ def _entry_media(e, page=""):
     for enc in e.get("enclosures") or []:
         u = enc.get("href") or enc.get("url"); t = (enc.get("type") or "").lower()
         if u and t.startswith("video/"): vids.append(u)
+        if u and t.startswith("audio/"): auds.append(u)
         if u and t.startswith("image/"):
             got = _mk_media(u, "photo", page)
             if got: return got
@@ -1705,6 +1869,9 @@ def _entry_media(e, page=""):
         if got: return got
     for u in vids:
         got = _mk_media(u, "video", page)
+        if got: return got
+    for u in auds:                              # پادکست/صوت: آخرین اولویت (تصویر و ویدیو مقدم‌اند)
+        got = _mk_media(u, "audio", page)
         if got: return got
     return None
 def _entry_html(e):
@@ -1774,7 +1941,7 @@ async def _get(url, cond=None, feed=False):
             try:
                 r2 = await fetch(url, headers={**h, **extra})
                 if r2.status_code == 200: return r2
-            except Exception: pass
+            except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     return r
 def _html_links(soup, base_url, limit):
     base = hostname(base_url); scored, seen = [], set()
@@ -1896,7 +2063,7 @@ async def discover_source(src, limit=25, use_cache=True):
         try:
             rb = await fetch(origin + "/robots.txt", timeout=10)
             if rb.status_code == 200: smaps = [m.strip() for m in re.findall(r"(?im)^sitemap:\s*(\S+)", rb.text)][:3] + smaps
-        except Exception: pass
+        except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
         for sp in smaps[:9]:
             su = sp if sp.startswith("http") else origin + sp
             try: rr = await _get(su, feed=True)
@@ -2082,13 +2249,18 @@ def _merge_text(a, b):
         if len(k) < 20 or k in seen: continue
         seen.add(k); out.append(p.strip())
     return "\n\n".join(out)
+class ExtractTransient(Exception):
+    """صفحه به‌خاطر خطای موقت (timeout، 429/5xx، قطع شبکه) خوانده نشد؛ «بدون متن» نیست و نباید rejected شود."""
 async def extract_article(url, fallback_html=""):
     """کل متن خبر خوانده می‌شود: اگر مقاله چندصفحه‌ای باشد (rel=next) تا MAX_ARTICLE_PAGES صفحه دنبال و به هم دوخته می‌شود."""
-    raw = None
+    raw = None; transient = None
     try:
         r = await _get(url, feed=False)
         if r.status_code == 200 and "html" in r.headers.get("content-type", "text/html").lower(): raw = r.text
-    except Exception: pass
+        elif r.status_code in (408, 425, 429) or r.status_code >= 500: transient = f"HTTP {r.status_code}"
+    except FetchError as e:                       # 4xx قطعی (404/410/403/SSRF) = واقعاً خوانده نمی‌شود؛ 408/425/429 و 5xx موقت
+        if e.status in (408, 425, 429) or e.status >= 500: transient = f"HTTP {e.status}"
+    except Exception as e: transient = type(e).__name__   # timeout / قطع شبکه / خطای TLS
     page = await asyncio.to_thread(_parse_page, raw, url) if raw else {"title": "", "text": "", "published": None, "media": None, "author": None, "site": None, "next": ""}
     seen_pages, nxt, hops = {clean_url(url)}, page.get("next") or "", 0
     while nxt and hops < max(0, MAX_ARTICLE_PAGES - 1) and len(page["text"]) < MAX_ARTICLE_CHARS:
@@ -2110,7 +2282,9 @@ async def extract_article(url, fallback_html=""):
         fb = await asyncio.to_thread(_html_to_text, fallback_html)
         if len(fb) >= 120:
             page["text"] = _merge_text(page["text"], fb) if len(page["text"]) >= 120 else fb
-    if len(page["text"]) < 120: return None
+    if len(page["text"]) < 120:
+        if transient: raise ExtractTransient(transient)
+        return None
     page["url"] = url; page["pages"] = hops + 1; page["text"] = page["text"][:MAX_ARTICLE_CHARS]; return page
 # ============================================================
 # فیلتر تبلیغ — چندزبانه، منطبق با پرشمارترین زبان‌های کاربران تلگرام
@@ -2273,8 +2447,7 @@ def ai_cache_key(s, art):
     return hashlib.sha1(f"{url_hash(art.get('url') or '')}|{art.get('title') or ''}|{hashlib.sha1(sig.encode()).hexdigest()[:16]}".encode()).hexdigest()
 async def generate(s, art, on_queue=None, owner_id=None):
     """خروجی: (json, model_name, error_code) — error_code کلید امن است (never متن خطای مدل یا base url)."""
-    global _ai_calls, _ai_t0
-    _ai_calls, _ai_t0 = 0, time.monotonic()      # بودجهٔ این مقاله از صفر شروع می‌شود
+    _ai_budget_reset()      # بودجهٔ این مقاله (فقط در همین عملیات) از صفر شروع می‌شود
     ckey = ai_cache_key(s, art)
     if AI_CACHE_TTL_DAYS > 0:
         _hit = q("SELECT value FROM ai_cache WHERE key=?", (ckey,), one=True)
@@ -2352,11 +2525,12 @@ def _media_headers(media):
     try:
         p = urlparse(page)
         if p.scheme and p.netloc: h["Referer"] = f"{p.scheme}://{p.netloc}/"
-    except Exception: pass
+    except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     return h
 def _ext_kind(u, fallback="photo"):
     e = os.path.splitext(urlparse(str(u)).path)[1].lower()
     if e in (".mp4", ".m4v", ".mov", ".webm"): return "video"
+    if e in (".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac"): return "audio"
     if e == ".gif": return "animation"
     if e in (".jpg", ".jpeg", ".png", ".webp", ".bmp"): return "photo"
     return fallback
@@ -2391,45 +2565,66 @@ class _GuardedStream:
             await self._stack.aclose(); raise
     async def __aexit__(self, *a): return await self._stack.__aexit__(*a)
 
+class MediaTransient(Exception):
+    """رسانه به‌خاطر خطای موقت (429/5xx/timeout/قطع شبکه/دانلود ناقص) دریافت نشد؛ «رسانه ندارد» نیست."""
+_TRANSIENT_HTTP = (408, 425, 429, 500, 502, 503, 504)
+async def _media_sleep(s): await asyncio.sleep(s)
 async def download_media(media):
-    """دانلود جریانی تا سقف MAX_MEDIA_MB (پیش‌فرض ۵۰ مگابایت = سقف آپلود ربات‌های تلگرام). اگر نوبت اول رد شد، یک‌بار با هدر دیگری دوباره تلاش می‌شود."""
+    """دانلود جریانی تا سقف MAX_MEDIA_MB (۵۰MB روی Bot API عمومی؛ ۲۰۰۰MB با سرور محلی). دو هدر × حداکثر دو تلاش.
+    429/5xx/timeout/دانلود ناقص (Content-Length ناهمخوان) ⇒ retry با backoff؛ در پایانِ تلاش‌ها MediaTransient (نه None).
+    None فقط برای «واقعاً قابل‌دریافت نیست» (4xx، HTML، بزرگ‌تر از سقف، SSRF)."""
     if not media or not media.get("url"): return None
     if not await asyncio.to_thread(public_url, media["url"]): return None
+    transient = False
     for hdr in (_media_headers(media), {"User-Agent": UA_FEED, "Accept": "*/*"}):
-        tmp = None; path = None
-        try:
-            async with FETCH_SEM:
-                async with _GuardedStream(media["url"], hdr) as r:
-                    if r is None: continue
-                    if r.status_code != 200: continue
-                    ct = r.headers.get("content-type", "").lower()
-                    if ct.startswith("text/") or "html" in ct: return None
-                    try:
-                        if int(r.headers.get("content-length") or 0) > MAX_MEDIA_BYTES: log.info(f"media skipped (> {MAX_MEDIA_MB}MB upload ceiling)"); return None
-                    except Exception: pass
-                    kind = "animation" if "gif" in ct else "photo" if ct.startswith("image/") else "video" if ct.startswith("video/") else _ext_kind(media["url"], media.get("kind") or "document")
-                    ext = {"photo": ".jpg", "animation": ".gif", "video": ".mp4"}.get(kind, os.path.splitext(urlparse(media["url"]).path)[1] or ".bin")
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext); size = 0
-                    try:      # فایل موقت در هیچ مسیری (خطا، سقف حجم، فایل ناقص) روی دیسک جا نمی‌ماند
-                        async for chunk in r.aiter_bytes(262144):
-                            size += len(chunk)
-                            if size > MAX_MEDIA_BYTES: log.info(f"media skipped (> {MAX_MEDIA_MB}MB upload ceiling)"); return None
-                            tmp.write(chunk)
-                    finally:
-                        tmp.close()
-                    if size < 1024: return None
-                    if kind == "photo" and size > 10 * 1024 * 1024: kind = "document"
-                    path = tmp.name
-        except Exception as e:
-            log.warning(f"media: {e}"); path = None
-        except BaseException:
-            path = None
-            raise
-        finally:
-            if tmp is not None and path is None:   # مالکیت فایل فقط پس از خروج سالم از استریم منتقل می‌شود
-                try: os.unlink(tmp.name)
-                except OSError: pass
-        if path: return path, kind
+        for attempt in (1, 2):
+            tmp = None; path = None; retry = False; delay = 1.0 + random.random()
+            try:
+                async with FETCH_SEM:
+                    async with _GuardedStream(media["url"], hdr) as r:
+                        if r is None: break                       # مقصد/redirect نامعتبر (SSRF) ⇒ دائمی
+                        if r.status_code in _TRANSIENT_HTTP:
+                            transient = retry = True
+                            try: delay = min(10.0, max(delay, float(r.headers.get("retry-after") or 0)))
+                            except ValueError as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
+                        elif r.status_code != 200: break          # 4xx دائمی ⇒ هدر بعدی
+                        else:
+                            ct = r.headers.get("content-type", "").lower()
+                            if ct.startswith("text/") or "html" in ct: return None
+                            try: clen = int(r.headers.get("content-length") or 0)
+                            except ValueError: clen = 0
+                            if clen > MAX_MEDIA_BYTES: log.info(f"media skipped (> {MAX_MEDIA_MB}MB upload ceiling)"); return None
+                            kind = "animation" if "gif" in ct else "photo" if ct.startswith("image/") else "video" if ct.startswith("video/") else "audio" if ct.startswith("audio/") else _ext_kind(media["url"], media.get("kind") or "document")
+                            ext = {"photo": ".jpg", "animation": ".gif", "video": ".mp4", "audio": ".mp3"}.get(kind, os.path.splitext(urlparse(media["url"]).path)[1] or ".bin")
+                            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext); size = 0
+                            try:      # فایل موقت در هیچ مسیری (خطا، سقف حجم، فایل ناقص) روی دیسک جا نمی‌ماند
+                                async for chunk in r.aiter_bytes(262144):
+                                    size += len(chunk)
+                                    if size > MAX_MEDIA_BYTES: log.info(f"media skipped (> {MAX_MEDIA_MB}MB upload ceiling)"); return None
+                                    tmp.write(chunk)
+                            finally:
+                                tmp.close()
+                            if clen and not r.headers.get("content-encoding") and size != clen:
+                                log.warning(f"media truncated: got {size}B of {clen}B"); transient = retry = True      # دانلود ناقص ⇒ retry، نه فایل خراب
+                            elif size < 1024: return None
+                            else:
+                                if kind == "photo" and size > 10 * 1024 * 1024: kind = "document"       # سقف آپلود عکس در Bot API = ۱۰MB
+                                path = tmp.name
+            except (httpx.HTTPError, OSError, asyncio.TimeoutError) as e:
+                log.warning(f"media transient: {type(e).__name__}: {redact(str(e))[:100]}"); transient = retry = True
+            except Exception as e:
+                log.warning(f"media: {type(e).__name__}: {redact(str(e))[:100]}"); path = None; break
+            except BaseException:
+                path = None
+                raise
+            finally:
+                if tmp is not None and path is None:   # مالکیت فایل فقط پس از خروج سالم از استریم منتقل می‌شود
+                    try: os.unlink(tmp.name)
+                    except OSError as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
+            if path: return path, kind
+            if not retry or attempt == 2: break
+            await _media_sleep(delay)
+    if transient: raise MediaTransient("temporary media fetch failure")
     return None
 def _is_parse_err(e): s = str(e).lower(); return "parse" in s or "entit" in s or "tag" in s or "unsupported start" in s
 async def _send_media(bot, chat_id, caption, pm, media):
@@ -2444,24 +2639,39 @@ async def _send_media(bot, chat_id, caption, pm, media):
             if _is_parse_err(e): raise
         except (NetworkError, RetryAfter, Forbidden): raise
         except Exception: raise
-    if not mf: mf = await download_media(media); media["_file"] = mf
+    transient = None
+    if not mf:
+        try: mf = await download_media(media)
+        except MediaTransient as e: transient = e
+        media["_file"] = mf
     for alt in (media.get("alt") or [])[:2]:          # منبع اصلی نیامد؟ نامزدهای جانشین همان مقاله
         if mf: break
         log.info(f"media fallback → {str(alt)[:90]}")
-        mf = await download_media({**media, "url": alt}); media["_file"] = mf
+        try: mf = await download_media({**media, "url": alt})
+        except MediaTransient as e: transient = e
+        media["_file"] = mf
     if not mf:
-        log.info(f"media dropped ({kind}): دریافت فایل ممکن نشد — پست بدون رسانه می‌رود")
+        if transient: raise transient                  # خطای موقت: پست بدون رسانه نمی‌رود؛ انتشار بعداً (با سقف) تکرار می‌شود
+        log.info(f"media dropped ({kind}): رسانه قابل‌دریافت نیست — پست بدون رسانه می‌رود")
         return None
     path, k = mf
     try:
         with open(path, "rb") as f:
             fn = getattr(bot, f"send_{k}"); kw = {k: f}
             if k == "video": kw["supports_streaming"] = True
-            if k in ("video", "animation", "document"): kw.update(read_timeout=240, write_timeout=600, connect_timeout=30, pool_timeout=120)
+            if k in ("video", "animation", "document", "audio"): kw.update(read_timeout=240, write_timeout=600, connect_timeout=30, pool_timeout=120)
             return await fn(chat_id, caption=caption, parse_mode=pm, **kw)
     except RetryAfter: raise
     except BadRequest as e:
         if _is_parse_err(e): raise
+        if k != "document":     # مثلاً ابعاد/نسبت عکس برای sendPhoto نامعتبر یا کدک ناسازگار: همان فایل به‌صورت سند می‌رود، نه حذف رسانه
+            log.warning(f"send_{k} rejected ({redact(str(e))[:80]}); retrying as document")
+            try:
+                with open(path, "rb") as f2:
+                    return await bot.send_document(chat_id, document=f2, caption=caption, parse_mode=pm, read_timeout=240, write_timeout=600, connect_timeout=30, pool_timeout=120)
+            except BadRequest as e2:
+                if _is_parse_err(e2): raise
+                log.warning(f"send_document: {redact(str(e2))[:100]}"); return None
         log.warning(f"send_{k}: {e}"); return None
     except (NetworkError, Forbidden): raise
     except Exception:
@@ -2552,6 +2762,13 @@ def channel_caption(s, ch, post_html, full_html, title, url):
         parts.append(chunk)
     return cut, tail, "\n".join(parts)
 
+def _media_transient_outcome(aid, a):
+    """رسانه موقتاً دریافت نشد: به‌جای انتشار بی‌صدا بدون رسانه، چند بار (MEDIA_MAX_TRIES) با فاصله تلاش می‌شود؛ پس از آن صریحاً بدون رسانه."""
+    n = (int(a["media_tries"] or 0) if "media_tries" in a.keys() else 0) + 1
+    if n >= MEDIA_MAX_TRIES:
+        article_update(aid, media=None, media_tries=n, reason="media_unavailable"); log.warning("media still unavailable after %d tries — article=%s will be published without media", n, aid)
+        return False, "retry_after:5"
+    article_update(aid, media_tries=n, reason="media_retry"); return False, f"retry_after:{60 * n}"
 async def publish_article(bot, aid, count_usage=True, test_user=None):
     a = get_article(aid)
     if not a: return False, "not_ready"
@@ -2601,7 +2818,9 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
         if journal.get("media_id"):
             text = journal["text"]
             media = {"_sent_id": journal["media_id"]}
-        elif media and media.get("kind") != "photo": media["_file"] = await download_media(media)
+        elif media and media.get("kind") != "photo":
+            try: media["_file"] = await download_media(media)
+            except MediaTransient: return _media_transient_outcome(aid, a)
         journal["text"] = text
         set_pub_journal(aid, journal)
         operation_checkpoint()
@@ -2615,6 +2834,10 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
                 if journal.get("phase") == "ack":
                     published = True
                     raise
+                if isinstance(e, MediaTransient): return _media_transient_outcome(aid, a)
+                if isinstance(e, d1sync.D1Unavailable):   # D1 فاز in_flight را تأیید نکرد ⇒ چیزی ارسال نشده؛ شکست شمرده نمی‌شود، مقاله «ready» می‌ماند
+                    article_update(aid, reason="d1_unavailable"); log.warning("publication paused: D1 unavailable article=%s channel=%s", aid, ch["id"])
+                    return False, "retry_after:30"
                 if isinstance(e, RetryAfter):      # محدودیت نرخ تلگرام → به بالا گزارش می‌شود تا صف drain موقتاً بخوابد
                     article_update(aid, reason="rate_limited")
                     return False, f"retry_after:{min(max(int(getattr(e, 'retry_after', 30) or 30), 5), 300)}"
@@ -2675,6 +2898,7 @@ DIAG = {
     "src_empty": ("🟡 {name}: فید یا مقاله‌ای پیدا نکردم", "🟡 {name}: no feed/articles found"), "src_fail": ("🔴 {name}: نتوانستم بخوانم — {err}", "🔴 {name}: {err}"), "src_cooldown": ("⏸ {name}: تازه بررسی‌اش کرده‌ام؛ فعلاً ردش می‌کنم", "⏸ {name}: checked recently"),
     "old": ("🕰 {n} خبر قدیمی‌تر از {h} ساعت بود؛ کنارشان گذاشتم", "🕰 {n} older than {h}h"), "leftover": ("♻️ {n} مورد از چرخه‌های قبلی را دوباره برمی‌دارم", "♻️ {n} left over from earlier cycles"), "retry": ("🧪 {n} مورد قبلی را دوباره بررسی می‌کنم", "🧪 Re-checking {n} earlier items"),
     "found": ("🔎 {n} مقاله را برای بررسی برداشتم", "🔎 {n} articles to process"), "none_found": ("⚠️ مقاله‌ی تازه‌ای پیدا نکردم", "⚠️ No new article"),
+    "later": ("⏳ {n} مورد به‌خاطر خطای موقت رد نشد؛ بعداً خودکار دوباره امتحان می‌شود", "⏳ {n} kept for an automatic retry (temporary error)"),
     "extract_fail": ("📄 {n} مورد متن قابل استخراج نداشت؛ ردشان کردم", "📄 {n} without extractable text"), "undated": ("📅 {n} خبر بدون تاریخ بود؛ ردش کردم", "📅 {n} undated (skipped)"), "ad": ("🛡 {n} مورد را تبلیغ تشخیص دادم؛ حذف کردم", "🛡 {n} ads (filter)"),
     "ai_fail": ("🤖 خطای مدل: {err}", "🤖 AI error: {err}"), "ai_ad": ("🤖 {n} مورد را خود مدل تبلیغ تشخیص داد", "🤖 {n} ads (AI)"), "low": ("⭐ {n} مورد زیر حداقل امتیاز ({min}) بود؛ بهترین {best}", "⭐ {n} below {min} · best {best}"),
     "from_src": ("🌐 محتوا را از منبع {name} ساختم", "🌐 Generated from source: {name}"),
@@ -2730,6 +2954,11 @@ def _within_lookback(pub_iso, s, hours=None):
 def _pub_err(code, lang):
     if code == "bot_not_admin": return DIAG["bot_not_admin"][1 if lang == "en" else 0]
     if code == "duplicate": return "duplicate" if lang == "en" else "تکراری"
+    if isinstance(code, str) and code.startswith("retry_after:"):
+        n = code.split(":", 1)[1]
+        return f"Temporary delay; retrying automatically in ~{n}s" if lang == "en" else f"تأخیر موقت؛ حدود {n} ثانیه بعد خودکار دوباره تلاش می‌شود"
+    if code == "delivery_unknown":
+        return "Delivery status unknown; not re-sent to avoid a duplicate post" if lang == "en" else "وضعیت تحویل نامعلوم است؛ برای جلوگیری از پست تکراری دوباره ارسال نشد"
     return code.replace("send_failed:", "")
 def article_src_name(aid):
     """نام منبعِ تولیدکننده‌ی یک مقاله (برای نمایش به مدیر در تست فوری و چرخه‌ی خودکار)."""
@@ -2754,7 +2983,7 @@ async def _cycle(bot, uid, cid, test_mode, progress):
     async def p(pct, txt):
         if progress:
             try: await progress(pct, txt)
-            except Exception: pass
+            except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     def fin():
         _ms = int((time.monotonic() - _cy0) * 1000)
         bump("cycle_ms", _ms); bump("cycle_n")
@@ -2784,7 +3013,7 @@ async def _cycle(bot, uid, cid, test_mode, progress):
             items, changed, method = await discover_source(src, use_cache=not test_mode); return src, name, items, changed, method, None
         except Exception as e: return src, str(src["url"])[:40], None, False, "", str(e)[:80]
     results = await asyncio.gather(*[one(src) for src in sources], return_exceptions=True)
-    leftovers = q("SELECT id,url,title,published_at FROM articles WHERE channel_id=? AND status='discovered' AND source_id IN (SELECT id FROM sources WHERE active=1 AND channel_id=articles.channel_id) ORDER BY id DESC LIMIT 10", (cid,))
+    leftovers = q("SELECT id,url,title,published_at FROM articles WHERE channel_id=? AND status='discovered' AND (retry_at IS NULL OR retry_at<=?) AND source_id IN (SELECT id FROM sources WHERE active=1 AND channel_id=articles.channel_id) ORDER BY id DESC LIMIT 10", (cid, now_iso()))
     candidates, all_items, n_old, n_dup, seen = [], [], 0, 0, set()
     for _r in results:
         if isinstance(_r, BaseException): res["errors"] += 1; log_event("WARN", f"منبع بی‌نام: {_r}"); continue
@@ -2835,7 +3064,7 @@ async def _cycle(bot, uid, cid, test_mode, progress):
     if not candidates: D.add("none_found"); D.hint("hint_sources"); return fin()
     D.add("found", n=len(candidates))
     # ══ stage 3/5: extract + stage 4/5: generate ══ استخراج ۳تایی هم‌زمان، تولید ترتیبی تا رسیدن به هدف
-    quiet = in_quiet(s); cnt = {"extract": 0, "undated": 0, "ad": 0, "ai_ad": 0, "low": 0}; best = 0.0; details = []; ai_err = None; i = 0; stop = False
+    quiet = in_quiet(s); cnt = {"extract": 0, "undated": 0, "ad": 0, "ai_ad": 0, "low": 0, "later": 0}; best = 0.0; details = []; ai_err = None; i = 0; stop = False
     # مانده‌ی صف ready از چرخه‌های قبلی اول منتشر می‌شود تا FIFO حفظ شود؛ داخل سقف همان چرخه (posts_per_cycle) و فقط در حالت خودکار خارج از خاموشی
     drained = 0
     if not test_mode and s["mode"] == "auto" and not quiet:
@@ -2865,7 +3094,11 @@ async def _cycle(bot, uid, cid, test_mode, progress):
             if res["accepted"] >= target: stop = True; break
             aid = c["aid"]; res["processed"] += 1
             src_name = article_src_name(aid) or hostname(c["url"])
-            if not art or isinstance(art, Exception): article_update(aid, status="rejected", reason="extract_failed"); res["rejected"] += 1; cnt["extract"] += 1; step_add(_current_operation.get(), "src_extract_fail", key=src_name, status="fail"); continue
+            if isinstance(art, BaseException):       # خطای موقت یا باگ غیرمنتظره: رد نمی‌شود؛ با backoff دوباره امتحان می‌شود
+                if not isinstance(art, ExtractTransient): log.warning("extract crashed article=%s: %s: %s", aid, type(art).__name__, redact(str(art))[:120])
+                retry_later(aid, f"extract: {redact(str(art))[:80] or type(art).__name__}"); cnt["later"] += 1
+                step_add(_current_operation.get(), "src_extract_fail", key=src_name, status="fail"); continue
+            if not art: article_update(aid, status="rejected", reason="extract_failed"); res["rejected"] += 1; cnt["extract"] += 1; step_add(_current_operation.get(), "src_extract_fail", key=src_name, status="fail"); continue
             if not art["title"]: art["title"] = c["title"] or hostname(c["url"])
             if not art["media"] and c["media"]: art["media"] = c["media"]
             D.stage = "filter"
@@ -2886,7 +3119,7 @@ async def _cycle(bot, uid, cid, test_mode, progress):
             gen, model, err = await generate(s, art, on_queue=_on_queue, owner_id=uid)
             log_ctx(model=model, stage="compose" if gen else "ai-fail")
             if not gen:
-                article_update(aid, status="failed", reason=f"ai: {err}"); res["errors"] += 1; ai_err = err
+                retry_later(aid, f"ai: {err}"); cnt["later"] += 1; res["errors"] += 1; ai_err = err   # قطعی/خطای مدل ≠ رد محتوا؛ بعداً دوباره
                 step_add(_current_operation.get(), "src_ai_fail", key=src_name, status="fail", model=model)
                 continue
             D.stage = "score"
@@ -2914,6 +3147,7 @@ async def _cycle(bot, uid, cid, test_mode, progress):
             else: res["queued"] += 1
     # --- جمع‌بندی
     if cnt["extract"]: D.add("extract_fail", n=cnt["extract"])
+    if cnt["later"]: D.add("later", n=cnt["later"])
     if cnt["undated"]: D.add("undated", n=cnt["undated"]); D.hint("hint_undated")
     if cnt["ad"]: D.add("ad", n=cnt["ad"])
     if ai_err: D.add("ai_fail", err=ai_err_text(ai_err, lang)); D.hint("hint_ai")
@@ -2962,14 +3196,13 @@ async def _plan_notifications():
     SCHED_NOTIF_FAILURES.set(True)
     try:
         for u, key, left in expiring_users():
-            if u["next_plan_id"]: continue
             lang = u["lang"] or "fa"; p = get_plan(u["plan_id"]); name = html.escape(plan_txt(p, "name", lang)) if p else "—"
             # کلید در DB رزرو شده؛ اگر ارسال واقعاً ناموفق باشد، claim آزاد می‌شود تا تیک بعدی دوباره تلاش کند
             try:
                 await notify_user(u["id"], (f"⏳ پلن «{name}» حدود <b>{int(left)} ساعت</b> دیگر تمام می‌شود." if lang == "fa" else f"⏳ Plan “{name}” ends in about <b>{int(left)}h</b>."), [[("🔄 تمدید / ارتقا" if lang == "fa" else "🔄 Renew / Upgrade", "u:plans")]])
             except Exception:
                 q("UPDATE users SET remind_key=NULL WHERE id=? AND remind_key=?", (u["id"], key), commit=True)
-        for u in q("SELECT * FROM users WHERE plan_id IS NOT NULL AND plan_expires<=? AND next_plan_id IS NULL AND (remind_key IS NULL OR remind_key!='expired') AND banned=0", (now_iso(),)):
+        for u in q("SELECT * FROM users WHERE plan_id IS NOT NULL AND plan_expires<=? AND (remind_key IS NULL OR remind_key!='expired') AND banned=0", (now_iso(),)):
             lang = u["lang"] or "fa"
             # الگوی «فقط بعد از موفقیت ثبت شود» (مثل rate_free/rate_mark): بهجای ثبت remind_key پیش از ارسال،
             # تا وقتی ارسال موفق نشده کلید مصرف نمیشود و تیک بعدی دوباره تلاش میکند.
@@ -3126,7 +3359,6 @@ TXT = {
     "busy_click": ("⏳ کمی آهسته‌تر", "⏳ Slow down a bit"),
     # ---- کاربر / پلن
     "plans_btn": ("🧾 شروع", "🧾 Start"), "plans_title": ("🧾 <b>پلن‌ها</b>", "🧾 <b>Plans</b>"), "plans_current": ("🧾 فعلی: <b>{name}</b>{until}", "🧾 Current: <b>{name}</b>{until}"), "until": (" · تا {d}", " · until {d}"),
-    "plans_next": ("⏭ بعدی: <b>{name}</b>", "⏭ Next: <b>{name}</b>"), "plans_pick": ("👆 پلن را انتخاب کنید · جزئیات و قیمت", "👆 Pick a plan · details and price"),
     "plan_details": ("⏳ {days} روز · 📢 {posts} پست/روز · 🧪 {tests} تست/روز\n🌐 {src} منبع · 📣 {ch} کانال\n💰 <b>{price}</b>", "⏳ {days} days · 📢 {posts} posts/day · 🧪 {tests} tests/day\n🌐 {src} sources · 📣 {ch} channels\n💰 <b>{price}</b>"),
     "plan_disc_line": ("🎟 <s>{old}</s> ➜ <b>{new}</b> · {code} −{p}%", "🎟 <s>{old}</s> ➜ <b>{new}</b> · {code} −{p}%"),
     "plan_chain_note": ("ℹ️ پلن متفاوت: شروع بعد از پلن فعلی\n♻️ تمدید همین پلن: افزودن روز", "ℹ️ Different plan: starts after the current one\n♻️ Same plan renewed: days are added"),
@@ -3229,7 +3461,7 @@ TXT = {
     "art_del_arch": ("🗑 حذف از آرشیو", "🗑 Remove from archive"), "art_to_ready": ("♻️ به صف انتشار", "♻️ To publish queue"), "art_edit_prompt": ("متن جدید پست (فرمت تلگرام حفظ می‌شود):", "New post text (Telegram formatting kept):"),
     "art_updated": ("✅ متن بروزرسانی شد", "✅ Text updated"), "art_moved": ("♻️ به صف منتقل شد", "♻️ Moved to queue"), "publishing": ("⏳ انتشار…", "⏳ Publishing…"), "published_ok": ("✅ منتشر شد", "✅ Published"), "pub_failed": ("❌ انتشار: {e}", "❌ Publish: {e}"), "full_head": ("📖 <b>نسخه‌ی کامل</b>\n\n", "📖 <b>Full version</b>\n\n"),
     # ---- پلن من
-    "myplan": ("🧾 <b>پلن من: {name}</b>\n{st}{exp}{nxt}\n📢 {p}/{pc} پست · 🧪 {t}/{tc} تست (امروز)\n🌐 {s}/{sc} منبع · 📣 {c}/{cc} کانال", "🧾 <b>My plan: {name}</b>\n{st}{exp}{nxt}\n📢 {p}/{pc} posts · 🧪 {t}/{tc} tests (today)\n🌐 {s}/{sc} sources · 📣 {c}/{cc} channels"),
+    "myplan": ("🧾 <b>پلن من: {name}</b>\n{st}{exp}\n📢 {p}/{pc} پست · 🧪 {t}/{tc} تست (امروز)\n🌐 {s}/{sc} منبع · 📣 {c}/{cc} کانال", "🧾 <b>My plan: {name}</b>\n{st}{exp}\n📢 {p}/{pc} posts · 🧪 {t}/{tc} tests (today)\n🌐 {s}/{sc} sources · 📣 {c}/{cc} channels"),
     "st_active": ("🟢 فعال", "🟢 active"), "st_expired": ("🔴 غیرفعال", "🔴 inactive"), "exp_at": (" · تا {d}", " · until {d}"), "upgrade_btn": ("⬆️ ارتقا / تمدید", "⬆️ Upgrade / renew"),
     # ---- دلیل کوتاه ردشده‌ها (بدون جزئیات فنی)
     "rj_extract": ("متن قابل استخراج نبود", "no extractable text"), "rj_ad": ("فیلتر تبلیغ", "ad filter"), "rj_ai_ad": ("تبلیغ (تشخیص AI)", "ad (AI)"), "rj_score": ("امتیاز کمتر از حداقل", "below minimum score"),
@@ -3254,7 +3486,7 @@ TXT = {
     "s_disc_view": ("🎟 <code>{code}</code> {st}\n💥 {p}% · ⏳ {exp} · 👥 {used}/{max}", "🎟 <code>{code}</code> {st}\n💥 {p}% · ⏳ {exp} · 👥 {used}/{max}"), "s_disc_created": ("✅ کد {code} ساخته شد", "✅ Code {code} created"), "s_disc_dup": ("⚠️ کد تکراری یا نامعتبر", "⚠️ Duplicate or invalid code"),
     "s_disc_exp_bad": ("⚠️ انقضا: عدد روز یا تاریخ YYYY-MM-DD", "⚠️ Expiry: days number or YYYY-MM-DD"), "s_disc_p": ("✏️ درصد", "✏️ Percent"), "s_disc_e": ("✏️ انقضا", "✏️ Expiry"), "s_disc_m": ("✏️ سقف استفاده", "✏️ Max uses"), "s_disc_del": ("🗑 حذف کد", "🗑 Delete code"), "unlimited": ("∞", "∞"),
     "s_users_title": ("👥 <b>{what}</b> ({n}) · {p}/{pp}", "👥 <b>{what}</b> ({n}) · {p}/{pp}"), "s_users_w": ("کاربران", "Users"), "s_admins_w": ("مدیران", "Admins"), "s_prev": ("⬅️", "⬅️"), "s_next": ("➡️", "➡️"),
-    "s_user_view": ("👤 <b>{name}</b> · <code>{id}</code> · {role} · {ban} · {lang} {prem}\n🧾 {plan} {act}{exp}{nxt}\n📢 امروز {p} پست · {t} تست · 📣 {c} کانال · 🌐 {s} منبع\n📰 ۲۴h: {d} کشف · {pub} منتشر · 🎁 رایگان {free}\n🕐 عضویت {join} · آخرین {seen}", "👤 <b>{name}</b> · <code>{id}</code> · {role} · {ban} · {lang} {prem}\n🧾 {plan} {act}{exp}{nxt}\n📢 today {p} posts · {t} tests · 📣 {c} channels · 🌐 {s} sources\n📰 24h: {d} found · {pub} published · 🎁 free {free}\n🕐 joined {join} · seen {seen}"),
+    "s_user_view": ("👤 <b>{name}</b> · <code>{id}</code> · {role} · {ban} · {lang} {prem}\n🧾 {plan} {act}{exp}\n📢 امروز {p} پست · {t} تست · 📣 {c} کانال · 🌐 {s} منبع\n📰 ۲۴h: {d} کشف · {pub} منتشر · 🎁 رایگان {free}\n🕐 عضویت {join} · آخرین {seen}", "👤 <b>{name}</b> · <code>{id}</code> · {role} · {ban} · {lang} {prem}\n🧾 {plan} {act}{exp}\n📢 today {p} posts · {t} tests · 📣 {c} channels · 🌐 {s} sources\n📰 24h: {d} found · {pub} published · 🎁 free {free}\n🕐 joined {join} · seen {seen}"),
     "s_ban_y": ("⛔ مسدود", "⛔ banned"), "s_ban_n": ("✅ آزاد", "✅ active"), "s_uplan": ("🧾 تعیین پلن", "🧾 Assign plan"), "s_urevoke": ("❌ لغو پلن", "❌ Revoke plan"), "s_uban": ("⛔ مسدود/آزاد", "⛔ Ban/unban"), "s_umsg": ("✉️ پیام", "✉️ Message"),
     "s_ureport": ("📊 کانال‌ها", "📊 Channels"), "s_ufree": ("🔁 ریست رایگان", "🔁 Reset free"), "s_utests": ("🧪 ریست تست", "🧪 Reset tests"), "s_uposts": ("📢 ریست پست", "📢 Reset posts"),
     "s_plan_pick": ("🧾 پلن این کاربر:", "🧾 Plan for this user:"), "s_assigned": ("✅ پلن تا {d} فعال شد", "✅ Plan active until {d}"), "s_assigned_q": ("⏭ پلن بعدی (پس از {d})", "⏭ Queued as next (after {d})"),
@@ -3274,6 +3506,36 @@ TXT = {
     "sup_reply_head": ("💬 <b>پاسخ پشتیبانی:</b>\n", "💬 <b>Support reply:</b>\n"), "sup_sent": ("✅ ارسال شد", "✅ Sent"), "sup_fail": ("❌ ارسال نشد: {e}", "❌ Not sent: {e}"), "sup_received": ("✅", "✅"),
     "dl_notfound": ("🔎 متأسفم، نسخهٔ کامل این مطلب پیدا نشد — ممکن است پاک شده باشد. لطفاً از خودِ کانال پست را باز کن یا چند دقیقه بعد دوباره امتحان کن.", "🔎 Sorry, this full version could not be found — it may have been removed. Please open the post in the channel or try again later."), "dl_source": ("🔗 Source", "🔗 Source"),
 }
+TXT.update({
+    "s_health": ("🩺 سلامت", "🩺 Health"), "s_ref": ("🎁 معرفی دوستان", "🎁 Referrals"), "s_mand": ("📢 کانال اجباری", "📢 Mandatory channel"),
+    "ref_btn": ("🎁 دعوت دوستان", "🎁 Invite friends"), "ref_off": ("⛔ برنامهٔ دعوت دوستان فعلاً فعال نیست", "⛔ The referral program is not active right now"),
+    "ref_page": ("🎁 <b>دعوت دوستان</b>\n\nلینک اختصاصی شما:\n<code>{link}</code>\n\n{rules}\n\n👥 دعوت‌شده‌ها: <b>{n}</b>\n💳 خریدار: <b>{paid}</b>\n💰 مجموع پاداش: <b>{earned}</b>\n👛 موجودی کیف پول: <b>{bal}</b>",
+                 "🎁 <b>Invite friends</b>\n\nYour personal link:\n<code>{link}</code>\n\n{rules}\n\n👥 Invited: <b>{n}</b>\n💳 Buyers: <b>{paid}</b>\n💰 Total rewards: <b>{earned}</b>\n👛 Wallet balance: <b>{bal}</b>"),
+    "ref_r_fixed": ("🎯 پاداش ثابت: {v}", "🎯 Fixed reward: {v}"), "ref_r_pct": ("📈 {v}٪ از مبلغ پرداخت‌شدهٔ دوستتان", "📈 {v}% of your friend's payment"),
+    "ref_r_first": ("🔁 فقط برای اولین خریدِ هر دوست", "🔁 Only for each friend's first purchase"), "ref_r_every": ("🔁 برای هر خریدِ دوست", "🔁 For every purchase your friend makes"),
+    "ref_r_min": ("⬇️ حداقل مبلغ خرید: {v}", "⬇️ Minimum purchase: {v}"), "ref_r_none": ("پاداش هنوز تنظیم نشده است", "The reward has not been configured yet"),
+    "s_ref_title": ("🎁 <b>معرفی دوستان</b>\n\nوضعیت: <b>{st}</b>\n🎯 پاداش ثابت: <b>{fixed}</b>\n📈 درصد: <b>{percent}٪</b>\n🔁 حالت: <b>{mode}</b>\n⬇️ حداقل خرید: <b>{mn}</b>\n🛑 سقف پاداش هر معرف: <b>{cap}</b>\n\n👥 معرفی‌شده‌ها: <b>{n}</b> · 🏆 پاداش‌ها: <b>{rw}</b> · 💰 مجموع: <b>{total}</b>",
+                    "🎁 <b>Referrals</b>\n\nStatus: <b>{st}</b>\n🎯 Fixed reward: <b>{fixed}</b>\n📈 Percent: <b>{percent}%</b>\n🔁 Mode: <b>{mode}</b>\n⬇️ Minimum purchase: <b>{mn}</b>\n🛑 Cap per referrer: <b>{cap}</b>\n\n👥 Referred: <b>{n}</b> · 🏆 Rewards: <b>{rw}</b> · 💰 Total: <b>{total}</b>"),
+    "s_ref_on_btn": ("🟢 روشن — تپ برای خاموش‌کردن", "🟢 On — tap to turn off"), "s_ref_off_btn": ("🔴 خاموش — تپ برای روشن‌کردن", "🔴 Off — tap to turn on"),
+    "ref_mode_first": ("فقط اولین خرید", "First purchase only"), "ref_mode_every": ("هر خرید", "Every purchase"), "s_ref_mode_btn": ("🔁 حالت: {m}", "🔁 Mode: {m}"),
+    "s_ref_fixed": ("🎯 مبلغ ثابت", "🎯 Fixed amount"), "s_ref_percent": ("📈 درصد", "📈 Percent"), "s_ref_min": ("⬇️ حداقل خرید", "⬇️ Minimum purchase"), "s_ref_cap": ("🛑 سقف پاداش", "🛑 Reward cap"),
+    "ref_prompt": ("«{f}» را بفرستید (عدد؛ ۰ = غیرفعال)", "Send “{f}” (a number; 0 = disabled)"), "ref_invalid": ("❌ عدد معتبر نیست (درصد ۰ تا ۱۰۰، مبلغ‌ها ≥ ۰)", "❌ Invalid number (percent 0–100, amounts ≥ 0)"),
+    "ref_reward_got": ("🎁 یکی از دوستانی که دعوت کرده بودید خرید کرد؛ {amt} به کیف پول شما اضافه شد.", "🎁 A friend you invited made a purchase; {amt} was added to your wallet."),
+    "pay_wallet_changed": ("⚠️ موجودی کیف پول کاربر از زمان ثبت درخواست کم شده و تأیید با مبلغ قبلی ممکن نیست. درخواست را رد کنید تا کاربر دوباره ثبت کند.", "⚠️ The user's wallet balance dropped since the request was made, so it can't be approved at the old amount. Reject it so the user can re-submit."),
+    "req_pending": ("⏳ یک درخواست شما در حال بررسی است؛ تا تعیین تکلیف آن، درخواست جدید ثبت نمی‌شود", "⏳ You already have a request under review; a new one can't be submitted until it is decided"),
+    "mand_gate": ("📢 برای استفاده از پنل مدیریت، ابتدا در کانال زیر عضو شوید و سپس «بررسی عضویت» را بزنید:\n\n<b>{title}</b>", "📢 To use the admin panel, join the channel below and then tap “Check membership”:\n\n<b>{title}</b>"),
+    "mand_join": ("📢 عضویت در کانال", "📢 Join the channel"), "mand_check": ("✅ بررسی عضویت", "✅ Check membership"),
+    "mand_not_yet": ("❌ هنوز عضو نیستید", "❌ You are not a member yet"), "mand_unverifiable": ("⚠️ الان امکان بررسی عضویت نیست؛ کمی بعد دوباره تلاش کنید", "⚠️ Membership can't be verified right now; please try again shortly"),
+    "s_mand_title": ("📢 <b>کانال اجباری</b> (فقط برای مدیرها)\n\nوضعیت: <b>{st}</b>\nکانال: {ch}\n\nمدیرها (دارندگان پلن) برای استفاده از پنل باید عضو این کانال باشند. کاربران عادی و مدیر کلان هرگز مجبور به عضویت نمی‌شوند.",
+                     "📢 <b>Mandatory channel</b> (admins only)\n\nStatus: <b>{st}</b>\nChannel: {ch}\n\nAdmins (plan holders) must be members of this channel to use the panel. Regular users and the super admin are never forced to join."),
+    "s_mand_set": ("✏️ تنظیم کانال", "✏️ Set channel"), "s_mand_toggle_on": ("🔴 خاموش — فعال‌سازی", "🔴 Off — activate"), "s_mand_toggle_off": ("🟢 روشن — خاموش‌کردن", "🟢 On — turn off"),
+    "s_mand_rm": ("🗑 حذف کانال", "🗑 Remove channel"), "mand_none": ("— (تنظیم نشده)", "— (not set)"),
+    "mand_set_prompt": ("کانال را بفرستید (@mychannel، شناسهٔ عددی -100… یا لینک t.me). ربات باید در آن کانال ادمین باشد.", "Send the channel (@mychannel, a numeric -100… id, or a t.me link). The bot must be an admin of that channel."),
+    "mand_bad": ("❌ کانال پیدا نشد یا ربات در آن ادمین نیست: {e}", "❌ Channel not found or the bot is not an admin there: {e}"),
+    "mand_saved": ("✅ کانال ثبت شد (هنوز خاموش است). برای فعال‌سازی باید خودتان عضو آن باشید.", "✅ Channel saved (still off). To activate it you must be a member yourself."),
+    "mand_activated": ("✅ کانال اجباری فعال شد", "✅ Mandatory channel activated"), "mand_deactivated": ("✅ کانال اجباری خاموش شد", "✅ Mandatory channel turned off"), "mand_removed": ("🗑 کانال اجباری حذف شد", "🗑 Mandatory channel removed"),
+    "mand_need_member": ("📢 برای فعال‌سازی ابتدا خودتان عضو کانال شوید و «بررسی عضویت» را بزنید.\n\n<b>{title}</b>", "📢 To activate it, first join the channel yourself and then tap “Check membership”.\n\n<b>{title}</b>"),
+})
 def tr(lang, key, / , **kw):
     if key not in TXT: return str(key)   # کلید ناشناخته (callback_data دست‌ساز) نباید KeyError بدهد
     s = TXT[key][1 if lang == "en" else 0]
@@ -3295,11 +3557,15 @@ FIELD_LABEL = {"prompt": ("پرامپت نگارش", "Writing prompt"), "topic":
                "daily_posts_cap": ("📊 سقف روزانهٔ پست — عددی تا سقف پلنت بنویس (خالی = نامحدود)", "📊 Daily post cap — a number up to your plan max (blank = unlimited)"), "max_words": ("حداکثر کلمات پست", "Max post words"), "min_score": ("حداقل امتیاز (۰–۱۰۰)", "Min score (0–100)"), "post_limit": ("سقف کاراکتر پست کانال (پیش‌فرض ۹۰۰)؛ محتوای کامل‌تر → «ادامه در ربات» (۳۰۰–۹۰۰)", "Channel post char limit (default 900); longer content → “continue in bot” (300–900)"),
                "interval_minutes": (f"فاصله‌ی چرخه (دقیقه، ≥{MIN_INTERVAL})", f"Cycle interval (min, ≥{MIN_INTERVAL})"), "posts_per_cycle": (f"پست در هر چرخه (≤{MAX_PPC})", f"Posts per cycle (≤{MAX_PPC})"), "lookback_hours": (f"مقالات چند ساعت اخیر (≤{MAX_LOOKBACK})", f"Articles from last N hours (≤{MAX_LOOKBACK})")}
 SCHED_FIELDS = ("interval_minutes", "posts_per_cycle", "lookback_hours", "daily_posts_cap")
-TZ_NAMES = {"tehran": ("🇮🇷 تهران", "🇮🇷 Tehran"), "istanbul": ("🇹🇷 استانبول", "🇹🇷 Istanbul"), "dubai": ("🇦🇪 دبی", "🇦🇪 Dubai"), "kabul": ("🇦🇫 کابل", "🇦🇫 Kabul"), "karachi": ("🇵🇰 کراچی", "🇵🇰 Karachi"), "delhi": ("🇮🇳 دهلی", "🇮🇳 Delhi"),
+TZ_NAMES = {"tehran": ("🇮🇷 تهران", "🇮🇷 Tehran"), "istanbul": ("🇹🇷 استانبول · مسکو", "🇹🇷 Istanbul · Moscow"), "dubai": ("🇦🇪 دبی", "🇦🇪 Dubai"), "kabul": ("🇦🇫 کابل", "🇦🇫 Kabul"), "karachi": ("🇵🇰 کراچی", "🇵🇰 Karachi"), "delhi": ("🇮🇳 دهلی", "🇮🇳 Delhi"),
             "moscow": ("🇷🇺 مسکو", "🇷🇺 Moscow"), "berlin": ("🇩🇪 برلین", "🇩🇪 Berlin"), "london": ("🇬🇧 لندن", "🇬🇧 London"), "beijing": ("🇨🇳 پکن", "🇨🇳 Beijing"), "tokyo": ("🇯🇵 توکیو", "🇯🇵 Tokyo"), "sydney": ("🇦🇺 سیدنی", "🇦🇺 Sydney"),
             "newyork": ("🇺🇸 نیویورک", "🇺🇸 New York"), "losangeles": ("🇺🇸 لس‌آنجلس", "🇺🇸 Los Angeles"), "saopaulo": ("🇧🇷 سائوپائولو", "🇧🇷 São Paulo"), "utc": ("🌐 گرینویچ", "🌐 UTC")}
-def tz_city(off, lang):
-    z = next((k for k, o in TZ_ZONES if abs(o - float(off)) < 0.01), None); return TZ_NAMES[z][1 if lang == "en" else 0] if z else ""
+def tz_city(spec, lang):
+    k = next((key for key, name in TZ_ZONES if name == spec), None)
+    if k is None:
+        try: o = float(spec); k = next((key for key, name in TZ_ZONES if abs((_offset_now(name) if _offset_now(name) is not None else 99) - o) < 0.01), None)
+        except (TypeError, ValueError): k = None
+    return TZ_NAMES[k][1 if lang == "en" else 0] if k else ""
 WIZ = {
     "cat_add": [("name", ("نام دسته (مثلاً خبری)", "Category name (e.g. News)"), "str"), ("emoji", ("یک ایموجی", "One emoji"), "str"), ("style", ("سبک نگارش (مثلاً: تیتر بولد، سه جمله، دو بولت)", "Writing style (e.g. bold headline, three sentences, two bullets)"), "str")],
     "crit_add": [("name", ("نام معیار", "Criterion name"), "str"), ("weight", ("وزن (۱–۱۰۰)", "Weight (1–100)"), "int")],
@@ -3334,6 +3600,11 @@ def redact(x):
     t = re.sub(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9\-._~+/=]{8,}", r"\1 •••", t)
     t = re.sub(r"(?i)\b(apikey|api[-_]?key|access[-_]?token|auth[-_]?token|secret|password|passwd|authorization|token)([=:\s]+)[^\s&\"',;]{6,}", r"\1\2•••", t)
     t = re.sub(r"(?i)\bsk-[A-Za-z0-9_\-]{12,}|\bAIza[0-9A-Za-z_\-]{25,}", "•••", t)   # کلیدهای خام OpenAI/Google حتی بدون برچسب
+    t = re.sub(r"(?<!\d)\d{6,12}:[A-Za-z0-9_\-]{30,}", "•••", t)                              # توکن ربات تلگرام (در URL به‌شکل /bot<id>:<hash>/…)
+    t = re.sub(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|cf[a-z]{2,3}_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,})", "•••", t)   # GitHub/Cloudflare/Slack
+    for _k in ("BOT_TOKEN", "CF_API_TOKEN", "CF_D1_API_TOKEN"):                            # رازهای همین نصب را دقیقاً (بدون الگو) هم پاک کن
+        _v = os.getenv(_k, "")
+        if len(_v) >= 8: t = t.replace(_v, "•••")
     # شمارهٔ کارت (۱۵–۱۹ رقم، با جداکنندهٔ فاصله/خط تیره): در لاگ هرگز نباید ثبت شود
     t = re.sub(r"(?<!\d)(?:\d[ \-]?){14,18}\d(?!\d)", "•••", t)
     return re.sub(r"(?i)([?&](?:key|api_key|apikey|token|access_token)=)[^&\s]+", r"\1•••", t)
@@ -3535,7 +3806,7 @@ async def _temp_sweeper_loop():
         try:
             if nxt is None: await _temp_wake.wait()                       # هیچ پیام موقتی نیست ⇒ بدون بیدارشدن منتظر می‌ماند
             else: await asyncio.wait_for(_temp_wake.wait(), timeout=max(0.25, nxt - time.monotonic()))
-        except asyncio.TimeoutError: pass
+        except asyncio.TimeoutError as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
         _temp_wake.clear()
 
 def expire_temp(bot, chat_id, mid, seconds=5):
@@ -3546,7 +3817,7 @@ def expire_temp(bot, chat_id, mid, seconds=5):
     if _temp_wake is not None: _temp_wake.set()      # پاک‌کنندهٔ خواب‌رفته فوراً بیدار می‌شود (بدون نظرسنجی دوره‌ای)
     if _temp_sweeper is None or _temp_sweeper.done():
         try: _temp_sweeper = asyncio.create_task(_temp_sweeper_loop(), name="temp-sweeper")
-        except RuntimeError: pass          # خارج از event loop؛ با اولین پیام بعدی راه می‌افتد
+        except RuntimeError as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)          # خارج از event loop؛ با اولین پیام بعدی راه می‌افتد
 
 _temp_wake = None
 
@@ -3640,8 +3911,7 @@ async def operation_status(context, text, failed=False, terminal=False):
                                 op.status_display = display
                             except BadRequest:
                                 break
-                except asyncio.CancelledError:
-                    pass
+                except asyncio.CancelledError as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
                 except Exception:
                     log.debug("thinking animation stopped", exc_info=True)
 
@@ -3714,7 +3984,7 @@ async def run_user_operation(update, context, kind, channel, work, show_status=F
             if op.started: op.task.cancel()
         if op.started:
             try: await asyncio.shield(op.task)
-            except asyncio.CancelledError: pass
+            except asyncio.CancelledError as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     finally:
         if op.task.done() and _operations.get(uid) is op: _operations.pop(uid, None)
 
@@ -3782,18 +4052,14 @@ async def run_model_test(update, context, mid, personal=False):
     started = time.monotonic(); label = _model_label(m, uid if personal else None)
     token = _ai_events.set(_ai_status_reporter(context, lang))
     try:
-        if personal:
-            out, label, error = await ai_chat("You are a health-check. Reply with exactly one word.", "Say: READY",
-                                             owner_id=uid, selected_id=mid, validate=_validate_ready)
-            ok = out is not None
-        else:
-            ok, out, elapsed = await test_model(mid)
-            error = None if ok else out
+        _ai_detail.set(None)
+        ok, out, elapsed = await test_model(mid)      # دقیقاً همین مدل؛ fallback روی مدل دیگر نباید «تست موفق» گزارش شود (قبلاً مسیر شخصی از ai_chat با fallback رد می‌شد)
+        error = None if ok else out
         elapsed = round(time.monotonic() - started, 1)
         if ok:
             result = f"Test successful — model: {esc(label)} ({elapsed}s)" if lang == "en" else f"تست موفق — مدل: {esc(label)} ({elapsed}s)"
         else:
-            result = ("Test failed — " if lang == "en" else "تست ناموفق — ") + ai_err_text(error, lang)
+            result = ("Test failed — " if lang == "en" else "تست ناموفق — ") + ai_err_text(error, lang) + (f"\n<code>{esc(_ai_detail.get())}</code>" if _ai_detail.get() else "")
         await operation_status(context, result, failed=not ok, terminal=True)
         if op: op.final_status = True
         await popup(update, context, result, alert=True)
@@ -3812,7 +4078,7 @@ async def popup(update, context, text, alert=False):
             # قاعده: هشدار/وضعیت همیشه نوتیفیکیشن آبی بالای چت (show_alert=False) تا چت را نپوشاند
             await qy.answer(plain[:200], show_alert=False); context._callback_answered = True
             return
-        except Exception: pass
+        except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     await send_temp(context, update.effective_chat.id, text, seconds=temp)
 async def render(update, context, text, kb=None, force_new=False):
     operation_checkpoint()
@@ -3842,10 +4108,19 @@ async def wiz_prompt(update, context):
     if type(i) is not int or not 0 <= i < len(steps):
         if context.user_data.get("await") is st: context.user_data.pop("await", None)
         return
-    await render(update, context, f"{tr(lang, 'step', i=i + 1, n=len(steps))} ✏️ {steps[i][1][1 if lang == 'en' else 0]}\n\n<i>{tr(lang, 'send_value')}</i>", [[B(tr(lang, "cancel"), "c:cancel")]])
-async def notify_supers(text, kb=None):
+    text = f"{tr(lang, 'step', i=i + 1, n=len(steps))} ✏️ {steps[i][1][1 if lang == 'en' else 0]}\n\n<i>{tr(lang, 'send_value')}</i>"; kb = [[B(tr(lang, "cancel"), "c:cancel")]]
+    if steps[i][0] == "model" and st.get("wiz") in ("model_add", "my_ai_add"):     # کشف خودکار مدل‌ها از provider؛ تایپ دستی همچنان ممکن است
+        uid = update.effective_user.id; found, err = ([], None)
+        if rate_ok(f"mdisc:{uid}", 3): found, err = await discover_models(st["data"].get("base_url"), st["data"].get("api_key"), owner_id=uid if st["wiz"] == "my_ai_add" else None)
+        pick = [n for n in found if not _MODEL_SKIP.search(n)][:24] or found[:24]; st["found"] = pick
+        if pick: text += "\n\n" + (f"📥 {len(found)} models found — tap one or type a name:" if lang == "en" else f"📥 {len(found)} مدل پیدا شد — یکی را انتخاب کنید یا نام را بفرستید:"); kb = pairs([B(n[:32], f"c:wizm:{k}") for k, n in enumerate(pick)]) + kb
+        elif err: text += "\n\n" + ("⚠️ Could not fetch the model list: " if lang == "en" else "⚠️ دریافت فهرست مدل‌ها ممکن نشد: ") + f"<code>{esc(err)}</code>"
+    await render(update, context, text, kb)
+async def notify_supers(text, kb=None, text_en=None):
+    """text_en داده شود ⇒ هر مدیر کلان به زبان خودش پیام می‌گیرد (بدون ترکیب فارسی/انگلیسی)."""
     for sid in SUPER_ADMIN_IDS:
-        try: await APP.bot.send_message(sid, redact(text), parse_mode=HTML, reply_markup=kbm(kb) if kb and isinstance(kb[0][0], tuple) else (InlineKeyboardMarkup(kb) if kb else None), disable_web_page_preview=True)
+        msg = text_en if (text_en and user_lang(sid) == "en") else text
+        try: await APP.bot.send_message(sid, redact(msg), parse_mode=HTML, reply_markup=kbm(kb) if kb and isinstance(kb[0][0], tuple) else (InlineKeyboardMarkup(kb) if kb else None), disable_web_page_preview=True)
         except Exception as e: log.warning(f"notify {sid}: {e}")
 async def notify_user_fn(uid, text, kb=None):
     try: await APP.bot.send_message(uid, text, parse_mode=HTML, reply_markup=kbm(kb), disable_web_page_preview=True)
@@ -3868,11 +4143,12 @@ async def set_language(update, context, lang):
     await popup(update, context, tr(lang, "lang_set") + (tr(lang, "lang_set_n", n=n) if n else "")); await go_home(update, context)
 async def view_user_home(update, context):
     lang = L(update); u = update.effective_user
-    await render(update, context, gtext("welcome", lang, name=esc(u.first_name)), [[B(tr(lang, "plans_btn"), "u:plans")]])
+    kb = [[B(tr(lang, "plans_btn"), "u:plans")]]
+    if ref_cfg()["ref_on"]: kb.append([B(tr(lang, "ref_btn"), "u:ref")])
+    await render(update, context, gtext("welcome", lang, name=esc(u.first_name)), kb)
 async def view_plans(update, context):
     uid = update.effective_user.id; lang = L(update); lim = admin_limits(uid); text = tr(lang, "plans_title") + "\n\n"
     if lim["plan_id"]: text += tr(lang, "plans_current", name=esc(plan_txt(lim["plan"], "name", lang)), until=tr(lang, "until", d=fmt_date(lim["expires"], admin_offset(uid))) if lim["expires"] else "") + "\n"
-    if lim["next_plan"]: text += tr(lang, "plans_next", name=esc(plan_txt(lim["next_plan"], "name", lang))) + "\n"
     text += "\n" + tr(lang, "plans_pick")
     kb = pairs([B(f"{'🎁' if p['is_free'] else '⭐'} {plan_txt(p, 'name', lang)}", f"u:plan:{p['id']}") for p in list_plans()])
     kb.append([B(tr(lang, "back"), "home")]); await render(update, context, text, kb)
@@ -3902,54 +4178,69 @@ async def view_plan(update, context, pid):
         if pay_pending_for(uid, pid): kb.append([B(tr(lang, "plan_pending_btn"), "noop")])
         else: kb.append([B(tr(lang, "plan_renew_btn" if lim["plan_id"] == pid and lim["active"] else "plan_req_btn"), f"u:req:{pid}"), B(tr(lang, "disc_remove") if d else tr(lang, "disc_btn"), f"u:disc{'x' if d else ''}:{pid}")])
     kb.append([B(tr(lang, "back"), "u:plans")]); await render(update, context, text, kb)
+def _claim_free(uid):
+    """CAS اتمی: دو تپ پشت‌سرهم/دو callback هم‌زمان فقط یک‌بار پلن رایگان فعال می‌کنند (قبلاً check-then-act بود و روزها دوبار اضافه می‌شد)."""
+    return _trx(lambda conn: conn.execute("UPDATE users SET free_used=1 WHERE id=? AND COALESCE(free_used,0)=0", (uid,)).rowcount == 1)
 async def do_free(update, context, pid):
     uid = update.effective_user.id; lang = L(update); u = get_user(uid); p = get_plan(pid)
-    if not p or not p["is_free"] or u["free_used"]: await popup(update, context, tr(lang, "free_once"), alert=True); return await view_plans(update, context)
-    assign_plan(uid, pid); log_event("INFO", f"پلن رایگان فعال شد برای {uid}", uid); await popup(update, context, tr(lang, "free_done", name=plan_txt(p, "name", lang)), alert=True)
-    await notify_supers(f"🎁 {esc(uname(u))} (<code>{uid}</code>) پلن رایگان را فعال کرد."); await view_admin_home(update, context)
+    if not p or not p["is_free"] or not _claim_free(uid): await popup(update, context, tr(lang, "free_once"), alert=True); return await view_plans(update, context)
+    exp, _ = assign_plan(uid, pid)
+    if exp is None:
+        q("UPDATE users SET free_used=0 WHERE id=?", (uid,), commit=True); await popup(update, context, tr(lang, "notfound"), alert=True); return await view_plans(update, context)
+    log_event("INFO", f"پلن رایگان فعال شد برای {uid}", uid); await popup(update, context, tr(lang, "free_done", name=plan_txt(p, "name", lang)), alert=True)
+    await notify_supers(f"🎁 {esc(uname(u))} (<code>{uid}</code>) پلن رایگان را فعال کرد.", text_en=f"🎁 {esc(uname(u))} (<code>{uid}</code>) activated the Free plan."); await view_admin_home(update, context)
 def _fmt_price(v):
-    s = f"{v:g}"
-    return s + "$"
+    s = f"{float(v):.2f}".rstrip("0").rstrip("."); return s + "$"      # قبلاً %g بود: ۱۰۰۰۰۰۰۰ → «1e+07$»
 def _price_num(p):
     """قیمت عددیِ پلن (برای proration)؛ اگر ستون price_num وجود نداشته باشد یا خالی باشد ۰ (proration انجام نمی‌شود)."""
     try:
         return float(p["price_num"] or 0)
     except (KeyError, IndexError, TypeError, ValueError):
         return 0.0
+def _money(x):
+    """گردکردن پولی: نیم‌به‌بالا با دو رقم اعشار. round() پایتون «بانکی» است و روی مبالغ مرزی غیرقابل‌پیش‌بینی."""
+    return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+class WalletChanged(Exception):
+    """موجودی کیف پول از زمان صدور درخواست کمتر شده (مصرف هم‌زمان)؛ تأیید باید بازبینی شود، نه با موجودیِ صفرشده ادامه یابد."""
 def _user_credit(uid):
     """موجودی کیف پول کاربر (از مابه‌التفاوت کاهش پلن)."""
     try:
         r = q("SELECT credit FROM users WHERE id=?", (uid,), one=True); return float(r["credit"] or 0) if r else 0.0
     except (KeyError, IndexError, TypeError, ValueError): return 0.0
 def upgrade_quote(uid, p, cur, disc_percent=None):
-    """مبلغ ارتقا/خرید طبق قاعده‌ی محصول:
-      قابل پرداخت = (قیمت پلن جدید ÷ روزهای دوره‌ی جدید) × روزهای باقی‌مانده
-                    − اعتبار باقی‌مانده‌ی پلن فعلی − موجودی کیف پول
-    تاریخ پایان دوره دست‌نخورده می‌ماند و فقط پلن و سهمیه‌ها عوض می‌شوند.
-    اگر پلن جدید برای روزهای باقی‌مانده ارزان‌تر از اعتبار پلن فعلی باشد، مابه‌التفاوت به کیف پول می‌رود (کاهش پلن).
-    اگر قیمت عددیِ پلن ثبت نشده باشد، محاسبه انجام نمی‌شود و قیمت متنی نمایش داده می‌شود."""
+    """مبلغ خرید/ارتقا/تمدید (گردکردن همه‌جا نیم‌به‌بالا با دو رقم؛ اجزا جدا گرد می‌شوند تا جمع نمایش‌داده‌شده همیشه درست دربیاید):
+      • تمدید همان پلنِ فعال (renew): قیمت کامل یک دورهٔ تازه؛ دوره‌ها پشت سر هم اضافه می‌شوند.
+      • ارتقا/کاهش به پلن دیگر (upgrade): (قیمت پلن جدید ÷ روزهای آن) × روزهای باقی‌مانده − اعتبار باقی‌مانده‌ی پلن فعلی؛ تاریخ پایان دست‌نخورده می‌ماند.
+        اگر پلن جدید برای روزهای باقی‌مانده ارزان‌تر از اعتبار پلن فعلی باشد، مابه‌التفاوت به کیف پول می‌رود.
+      • بدون پلن فعال (fresh): قیمت کامل.
+    از مبلغِ نهایی ابتدا کیف پول و سپس درصد کد تخفیف کم می‌شود. اگر قیمت عددیِ پلن ثبت نشده باشد، قیمت متنی نمایش داده می‌شود."""
     new_num = _price_num(p); new_days = int(p["days"] or 0); rem = proration_remaining_days(uid); bal = _user_credit(uid)
     out = {"kind": "fresh", "rem_days": rem, "credit": 0.0, "new_cost": 0.0, "surplus": 0.0,
            "balance": bal, "used_balance": 0.0, "payable": 0.0, "keep_expiry": False, "payable_num": False,
            "from_plan": (cur["id"] if cur else None), "to_plan": p["id"]}
     if not new_num or new_days <= 0:
         return out
-    if rem > 0 and cur and _price_num(cur) and int(cur["days"] or 0) > 0:
+    if rem > 0 and cur and cur["id"] == p["id"]:
+        # قبلاً اعتبار پلن فعلی دقیقاً با هزینهٔ «پلن جدید» (همان پلن) خنثی می‌شد و تمدید ۳۰روزه مبلغ ۰ داشت
+        use = min(bal, new_num); out.update(kind="renew", new_cost=_money(new_num), used_balance=_money(use), payable=_money(new_num - use), payable_num=True)
+    elif rem > 0 and cur and _price_num(cur) and int(cur["days"] or 0) > 0:
         credit = proration_remaining_value(uid, _price_num(cur), int(cur["days"]))
-        new_cost = round(new_num * (rem / new_days), 2)          # هزینه‌ی پلن جدید فقط برای روزهای باقی‌مانده
-        backend = round(max(0.0, new_cost - credit), 2)
-        out.update(kind="upgrade", credit=credit, new_cost=new_cost, surplus=round(max(0.0, credit - new_cost), 2),
-                   used_balance=round(min(bal, backend), 2), payable=round(backend - min(bal, backend), 2),
-                   keep_expiry=True, payable_num=True)
+        new_cost = _money(new_num * (rem / new_days))             # هزینه‌ی پلن جدید فقط برای روزهای باقی‌مانده
+        backend = _money(max(0.0, new_cost - credit)); use = min(bal, backend)
+        out.update(kind="upgrade", credit=credit, new_cost=new_cost, surplus=_money(max(0.0, credit - new_cost)),
+                   used_balance=_money(use), payable=_money(backend - use), keep_expiry=True, payable_num=True)
     else:
-        out.update(kind="fresh", new_cost=new_num, used_balance=round(min(bal, new_num), 2),
-                   payable=round(new_num - min(bal, new_num), 2), payable_num=True)
-    if disc_percent: out["payable"] = round(out["payable"] * (100 - disc_percent) / 100, 2)
+        use = min(bal, new_num); out.update(kind="fresh", new_cost=_money(new_num), used_balance=_money(use), payable=_money(new_num - use), payable_num=True)
+    if disc_percent: out["payable"] = _money(out["payable"] * (100 - disc_percent) / 100)
     return out
 def apply_plan_change(uid, pid, pc):
-    """کیف پول را مصرف می‌کند، مابه‌التفاوت کاهش پلن را برمی‌گرداند و سابقه‌ی تغییر پلن را ثبت می‌کند."""
+    """کیف پول را مصرف می‌کند، مابه‌التفاوت کاهش پلن را برمی‌گرداند و سابقه‌ی تغییر پلن را ثبت می‌کند (همه در یک تراکنش).
+    اگر موجودی از مقدارِ قیمت‌گذاری‌شده کمتر شده باشد WalletChanged می‌دهد؛ قبلاً MAX(0,…) آن را بی‌صدا صفر می‌کرد و کیف پول دو بار خرج می‌شد."""
     used = float(pc.get("used_balance") or 0); surplus = float(pc.get("surplus") or 0)
-    def _go(conn):      # یک تراکنش: یا هم موجودی کم می‌شود و هم سابقه ثبت، یا هیچ‌کدام (قبلاً دو commit جدا بود)
+    def _go(conn):
+        if used > 0:
+            bal = float(conn.execute("SELECT COALESCE(credit,0) FROM users WHERE id=?", (uid,)).fetchone()[0])
+            if used > bal + 0.005: raise WalletChanged(f"wallet {bal} < quoted {used}")
         if used or surplus:
             conn.execute("UPDATE users SET credit=MAX(0, COALESCE(credit,0) - ? + ?) WHERE id=?", (used, surplus, uid))
         conn.execute("INSERT INTO plan_changes(user_id, plan_id, from_plan, kind, credit_used, surplus, paid, rem_days, ts) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -3963,7 +4254,7 @@ async def do_request(update, context, pid):
     if p["is_free"]: return await do_free(update, context, pid)          # پلن رایگان مسیر خودش را دارد (قاعدهٔ یک‌بار دور زده نمی‌شود)
     if "active" in p.keys() and not p["active"]:
         await popup(update, context, tr(lang, "plan_notfound"), alert=True); return await view_plans(update, context)
-    if pay_pending_for(uid, pid): await popup(update, context, tr(lang, "req_pending"), alert=True); return await view_plan(update, context, pid)
+    if pay_pending_any(uid): await popup(update, context, tr(lang, "req_pending"), alert=True); return await view_plan(update, context, pid)
     lim = admin_limits(uid); cur = get_plan(lim["plan_id"]) if lim["plan_id"] else None
     d = _applied_disc(context, pid); new_price, _ = _price_text(p, lang, d)
     qt = upgrade_quote(uid, p, cur, d["percent"] if d else None); amt, rv = (qt["payable"] if qt["payable_num"] else None), qt["credit"]
@@ -3971,12 +4262,15 @@ async def do_request(update, context, pid):
     # the same amount persists to pay_requests.final_price at receipt time (no later overwrite)
     if amt is not None:
         final_amount = str(amt)
+        en = lang == "en"
         if qt["kind"] == "upgrade":
-            b = [f"− اعتبار {plan_txt(cur, 'name', lang)} {_fmt_price(rv)}"]
-            if qt["used_balance"]: b.append(f"− کیف پول {_fmt_price(qt['used_balance'])}")
-            display = f"{_fmt_price(amt)}  (هزینه {plan_txt(p, 'name', lang)} برای {round(qt['rem_days'])} روز: {_fmt_price(qt['new_cost'])} · " + " · ".join(b) + ")"
+            b = [f"− {'credit' if en else 'اعتبار'} {plan_txt(cur, 'name', lang)} {_fmt_price(rv)}"]
+            if qt["used_balance"]: b.append(f"− {'wallet' if en else 'کیف پول'} {_fmt_price(qt['used_balance'])}")
+            display = f"{_fmt_price(amt)}  ({'cost of ' if en else 'هزینه '}{plan_txt(p, 'name', lang)} {'for' if en else 'برای'} {round(qt['rem_days'])} {'days' if en else 'روز'}: {_fmt_price(qt['new_cost'])} · " + " · ".join(b) + ")"
         else:
-            display = f"{_fmt_price(amt)}" + (f"  (از کیف پول −{_fmt_price(qt['used_balance'])})" if qt["used_balance"] else "")
+            note = f"+{p['days']} {'days after your current expiry' if en else 'روز بعد از پایان دورهٔ فعلی'}" if qt["kind"] == "renew" else ""
+            wal = f"{'from wallet' if en else 'از کیف پول'} −{_fmt_price(qt['used_balance'])}" if qt["used_balance"] else ""
+            extra = " · ".join(x for x in (note, wal) if x); display = f"{_fmt_price(amt)}" + (f"  ({extra})" if extra else "")
     else:
         final_amount = new_price
         display = new_price
@@ -3987,17 +4281,18 @@ async def view_receipt_ok(update, context): lang = L(update); await render(updat
 # ============================================================
 # پنل مدیر میانی — صفحه‌ی اصلی و پنل کانال
 async def view_admin_home(update, context):
+    if not is_super(update.effective_user.id) and not await mand_gate(update, context): return    # کانال اجباری (فقط مدیرها)
     uid = update.effective_user.id; lang = L(update); lim = admin_limits(uid); use = usage_today(uid); chs = list_channels(uid)
     pname = "∞" if is_super(uid) else (plan_txt(lim["plan"], "name", lang) or tr(lang, "no_plan"))
     text = (f"{tr(lang, 'panel')}\n🧾 <b>{esc(pname)}</b>" + (tr(lang, "until", d=fmt_date(lim["expires"], admin_offset(uid))) if lim["expires"] else "") + "\n" +
             tr(lang, "today_line", p=use["posts"], pc=cap(lim["daily_posts"]), t=use["tests"], tc=cap(lim["daily_tests"]), c=len(chs), cc=cap(lim["max_channels"]), s=count_sources(uid), sc=cap(lim["max_sources"])))
     text += quota_bars([("📝", use["posts"], lim["daily_posts"]), ("🧪", use["tests"], lim["daily_tests"]),
                         ("📢", len(chs), lim["max_channels"]), ("🔗", count_sources(uid), lim["max_sources"])])
-    if lim["next_plan"]: text += "\n" + tr(lang, "plans_next", name=esc(plan_txt(lim["next_plan"], "name", lang)))
     if not lim["active"]: text += "\n\n" + tr(lang, "plan_inactive")
     text += "\n\n" + (tr(lang, "pick_channel") if chs else tr(lang, "no_channels"))
     kb = pairs([B(f"{'🟢' if get_settings(c['id'])['enabled'] else '🔴'} {c['title'][:22]}", f"a:ch:{c['id']}") for c in chs])
     kb.append([B(tr(lang, "ch_add"), "a:chadd")]); kb.append([B(tr(lang, "my_plan"), "a:plan"), B(tr(lang, "my_ai"), "a:myai")])
+    if ref_cfg()["ref_on"]: kb.append([B(tr(lang, "ref_btn"), "u:ref")])
     if is_super(uid): kb.append([B(tr(lang, "super_panel"), "s:home")])
     await render(update, context, text, kb)
 async def view_channel(update, context, cid):
@@ -4117,8 +4412,8 @@ async def view_quiet(update, context, cid):
     lang = L(update); s = get_settings(cid)
     await render(update, context, tr(lang, "quiet_pick_start", tz=off_label(s["utc_offset"]), loc=local_clock(s["utc_offset"])), hour_grid(f"a:qs:{cid}") + [[B(tr(lang, "quiet_off"), f"a:qoff:{cid}")], [B(tr(lang, "back"), f"a:sch:{cid}")]])
 async def view_tz(update, context, cid):
-    lang = L(update); s = get_settings(cid); cur = float(s["utc_offset"]); i = 1 if lang == "en" else 0
-    rows = pairs([B(("✅ " if abs(o - cur) < 0.01 else "") + f"{TZ_NAMES[z][i]} {off_label(o)}", f"a:tzs:{cid}:{k}") for k, (z, o) in enumerate(TZ_ZONES)])
+    lang = L(update); s = get_settings(cid); cur = s.get("tz"); i = 1 if lang == "en" else 0
+    rows = pairs([B(("✅ " if name == cur else "") + f"{TZ_NAMES[z][i]} {off_label(_offset_now(name))}", f"a:tzs:{cid}:{k}") for k, (z, name) in enumerate(TZ_ZONES)])
     await render(update, context, tr(lang, "tz_pick", utc=utc_clock()), rows + [[B(tr(lang, "back"), f"a:sch:{cid}")]])
 # ============================================================
 # صف انتشار و مقالات
@@ -4160,16 +4455,21 @@ async def view_my_ai(update, context):
     text = tr(lang, "my_ai_title") + ("".join(tr(lang, "my_ai_line", i=_mic(m), name=esc(_mname(m)), model=esc(m["model"]), ok=m["ok_count"] or 0) for m in ms) if ms else tr(lang, "my_ai_none"))
     kb = pairs([B(f"{_mic(m)} {_mname(m)[:20]}", f"a:myai_v:{m['id']}") for m in ms]) + [[B(tr(lang, "my_ai_add"), "a:myai_add")], [B(tr(lang, "back"), "a:home")]]
     await render(update, context, text, kb)
+def _verified_line(m, lang):
+    v = m["verified_at"] if "verified_at" in m.keys() else None
+    if v: return "\n" + (f"✅ Verified: {v[:16].replace('T', ' ')} UTC" if lang == "en" else f"✅ تأییدشده: {v[:16].replace('T', ' ')} UTC")
+    return "\n" + ("⚠️ Not verified yet — run a test" if lang == "en" else "⚠️ هنوز تأیید نشده — تست بگیرید")
 async def view_my_ai_model(update, context, mid):
     uid = update.effective_user.id; lang = L(update); m = get_model(mid)
     if not m or m["owner_id"] != uid: await popup(update, context, tr(lang, "notfound")); return await view_my_ai(update, context)
     text = tr(lang, "my_ai_view", name=esc(m["name"]), kind=m["kind"], model=esc(m["model"]), base=esc(m["base_url"]), st=tr(lang, "s_m_off" if not m["active"] else "s_m_ok" if m["status"] == "ok" else "s_m_down"), ok=m["ok_count"] or 0, fc=m["fail_count"] or 0, lo=ago_text(m["last_ok"], lang), lf=ago_text(m["last_fail"], lang))
+    text += _verified_line(m, lang)
     kb = [[B(tr(lang, "s_model_test"), f"a:myai_t:{mid}"), B(tr(lang, "toggle"), f"a:myai_o:{mid}")]] + pairs([B(f"✏️ {f[2] if lang == 'en' else f[1]}", f"a:myai_e:{mid}:{f[0]}") for f in MODEL_FIELDS]) + [[B(tr(lang, "delete"), f"a:myai_d:{mid}")], [B(tr(lang, "back"), "a:myai")]]
     await render(update, context, text, kb)
 async def view_my_plan(update, context):
     uid = update.effective_user.id; lang = L(update); lim = admin_limits(uid); use = usage_today(uid)
     pname = "∞" if is_super(uid) else (plan_txt(lim["plan"], "name", lang) or tr(lang, "no_plan"))
-    text = tr(lang, "myplan", name=esc(pname), st=tr(lang, "st_active" if lim["active"] else "st_expired"), exp=tr(lang, "exp_at", d=fmt_date(lim["expires"], admin_offset(uid), True)) if lim["expires"] else "", nxt=("\n" + tr(lang, "plans_next", name=esc(plan_txt(lim["next_plan"], "name", lang)))) if lim["next_plan"] else "",
+    text = tr(lang, "myplan", name=esc(pname), st=tr(lang, "st_active" if lim["active"] else "st_expired"), exp=tr(lang, "exp_at", d=fmt_date(lim["expires"], admin_offset(uid), True)) if lim["expires"] else "",
               p=use["posts"], pc=cap(lim["daily_posts"]), t=use["tests"], tc=cap(lim["daily_tests"]), s=count_sources(uid), sc=cap(lim["max_sources"]), c=len(list_channels(uid)), cc=cap(lim["max_channels"]))
     await render(update, context, text, [[B(tr(lang, "upgrade_btn"), "u:plans")], [B(tr(lang, "back"), "a:home")]])
 async def run_test(update, context, cid):
@@ -4180,7 +4480,7 @@ async def run_test(update, context, cid):
     if ch_lock(cid).locked(): await popup(update, context, tr(lang, "test_busy"), alert=True); return await view_channel(update, context, cid)
     if not is_super(uid) and not rate_free(f"test:{cid}", TEST_COOLDOWN_SEC): await popup(update, context, tr(lang, "test_wait", n=rate_left(f"test:{cid}", TEST_COOLDOWN_SEC)), alert=True); return await view_channel(update, context, cid)
     try: await qy.answer(); context._callback_answered = True
-    except Exception: pass
+    except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
 
     last = [0.0]
 
@@ -4219,7 +4519,7 @@ async def run_test(update, context, cid):
             try:
                 mm = get_model(gget("test_model_id")) if gget("test_model_id") else None
                 if mm and mm.get("model"): return f"{'مدل عمومی' if lang=='fa' else 'Public model'} ({mm['model']})"
-            except Exception: pass
+            except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
             return "مدل عمومی" if lang == "fa" else "Public model"
         return lbl
     model_line = ("مدل: " if lang == "fa" else "Model: ") + esc(", ".join(_final_label(l) for l in model_labels)) if model_labels else ""
@@ -4281,8 +4581,8 @@ async def cmd_health(update, context):
 async def view_super_home(update, context):
     lang = L(update); models = list_models(); down = sum(1 for m in models if m["active"] and m["status"] == "down"); auto = gget("automation_enabled", True); n_pay = len(pay_pending())
     text = tr(lang, "s_title", m=len(models), ms=tr(lang, "s_all_ok") if not down else tr(lang, "s_down", n=down), a=len(list_users("admin")), u=len(list_users()), p=n_pay, dc=len(disc_list()), due=gget("load_due", 0), hb=ago_text(gget("heartbeat"), lang))
-    kb = [[B(tr(lang, "s_report"), "s:report"), B("🩺 سلامت / Health", "s:health")], [B(tr(lang, "s_plans"), "s:plans"), B(tr(lang, "s_discs"), "s:discs")], [B(tr(lang, "s_users"), "s:users:0"), B(tr(lang, "s_admins"), "s:admins:0")],
-          [B(tr(lang, "s_models"), "s:models"), B(tr(lang, "s_pays", n=n_pay), "s:pays")], [B(tr(lang, "s_bc"), "s:bc"), B(tr(lang, "s_texts"), "s:texts")], [B(tr(lang, "s_auto", i="🟢" if auto else "🔴"), "s:auto"), B(tr(lang, "s_me"), "a:home")]]
+    kb = [[B(tr(lang, "s_report"), "s:report"), B(tr(lang, "s_health"), "s:health")], [B(tr(lang, "s_plans"), "s:plans"), B(tr(lang, "s_discs"), "s:discs")], [B(tr(lang, "s_users"), "s:users:0"), B(tr(lang, "s_admins"), "s:admins:0")],
+          [B(tr(lang, "s_models"), "s:models"), B(tr(lang, "s_pays", n=n_pay), "s:pays")], [B(tr(lang, "s_bc"), "s:bc"), B(tr(lang, "s_texts"), "s:texts")], [B(tr(lang, "s_ref"), "s:ref"), B(tr(lang, "s_mand"), "s:mand")], [B(tr(lang, "s_auto", i="🟢" if auto else "🔴"), "s:auto"), B(tr(lang, "s_me"), "a:home")]]
     await render(update, context, text, kb)
 async def view_s_plans(update, context):
     lang = L(update); plans = list_plans(active_only=False)
@@ -4330,7 +4630,7 @@ async def view_s_user(update, context, tid):
     if not u: return await view_s_users(update, context)
     lim = admin_limits(tid); use = usage_today(tid); off = admin_offset(tid)
     text = tr(lang, "s_user_view", name=esc(uname(u)), id=tid, role=u["role"], ban=tr(lang, "s_ban_y" if u["banned"] else "s_ban_n"), lang=u["lang"] or "—", prem="💎" if u["premium"] else "", plan=esc(plan_txt(lim["plan"], "name", lang) or tr(lang, "no_plan")), act="🟢" if lim["active"] else "🔴", exp=tr(lang, "until", d=fmt_date(lim["expires"], off)) if lim["expires"] else "",
-              nxt=("\n" + tr(lang, "plans_next", name=esc(plan_txt(lim["next_plan"], "name", lang)))) if lim["next_plan"] else "", p=use["posts"], t=use["tests"], c=len(list_channels(tid)), s=count_sources(tid), d=count_articles(tid, 24), pub=count_articles(tid, 24, "published"), free=onoff(u["free_used"]), join=(u["created_at"] or "")[:10], seen=ago_text(u["last_seen"], lang))
+              p=use["posts"], t=use["tests"], c=len(list_channels(tid)), s=count_sources(tid), d=count_articles(tid, 24), pub=count_articles(tid, 24, "published"), free=onoff(u["free_used"]), join=(u["created_at"] or "")[:10], seen=ago_text(u["last_seen"], lang))
     kb = [[B(tr(lang, "s_uplan"), f"s:uplan:{tid}"), B(tr(lang, "s_urevoke"), f"s:urevoke:{tid}")], [B(tr(lang, "s_uban"), f"s:uban:{tid}"), B(tr(lang, "s_umsg"), f"s:umsg:{tid}")], [B(tr(lang, "s_ureport"), f"s:ureport:{tid}"), B(tr(lang, "s_ufree"), f"s:ufree:{tid}")], [B(tr(lang, "s_utests"), f"s:utests:{tid}"), B(tr(lang, "s_uposts"), f"s:uposts:{tid}")], [B(tr(lang, "back"), "s:users:0")]]
     await render(update, context, text, kb)
 def _mic(m): return "⏸" if not m["active"] else "🟢" if m["status"] == "ok" else "🔴"
@@ -4342,13 +4642,14 @@ async def view_s_models(update, context):
 async def view_s_model(update, context, mid):
     lang = L(update); m = get_model(mid)
     if not m: return await view_s_models(update, context)
-    key = m["api_key"] or ""; masked = (key[:5] + "…" + key[-4:]) if len(key) > 12 else "—"
+    key = m["api_key"] or ""; masked = ("••••" + key[-4:]) if len(key) > 12 else "—"
     text = tr(lang, "s_model_view", name=esc(m["name"]), kind=m["kind"], model=esc(m["model"]), base=esc(m["base_url"]), key=esc(masked), pr=m["priority"] or 10, temp=0.5 if m["temperature"] is None else m["temperature"], mx=m["max_tokens"] or 2500, st=tr(lang, "s_m_off" if not m["active"] else "s_m_ok" if m["status"] == "ok" else "s_m_down"), ok=m["ok_count"] or 0, fc=m["fail_count"] or 0, lo=ago_text(m["last_ok"], lang), lf=ago_text(m["last_fail"], lang), err=f"\n<code>{esc(redact(m['last_error'] or '')[:150])}</code>" if m["last_error"] else "")
+    text += _verified_line(m, lang)
     kb = [[B(tr(lang, "s_model_test"), f"s:model_test:{mid}"), B(tr(lang, "toggle"), f"s:model_t:{mid}")]] + pairs([B(f"✏️ {f[2] if lang == 'en' else f[1]}", f"s:model_e:{mid}:{f[0]}") for f in MODEL_FIELDS]) + [[B(tr(lang, "s_model_del"), f"s:model_d:{mid}")], [B(tr(lang, "back"), "s:models")]]
     if m["owner_id"] is None:
         selected = gget("test_model_id") == mid
-        label = ("Unset Test Model" if selected else "Use as Test Model") if lang == "en" else ("برداشتن انتخاب Test Model" if selected else "استفاده به‌عنوان Test Model")
-        text += "\nTest Model: " + (("Selected" if selected else "Not selected") if lang == "en" else ("منتخب" if selected else "انتخاب نشده"))
+        label = ("Unset Test Model" if selected else "Use as Test Model") if lang == "en" else ("برداشتن مدل آزمایشی" if selected else "استفاده به‌عنوان مدل آزمایشی")
+        text += ("\nTest Model: " if lang == "en" else "\nمدل آزمایشی: ") + (("Selected" if selected else "Not selected") if lang == "en" else ("منتخب" if selected else "انتخاب نشده"))
         kb.insert(1, [B(label, f"s:model_test_pick:{mid}")])
     await render(update, context, text, kb)
 async def view_s_pays(update, context):
@@ -4359,6 +4660,164 @@ async def view_s_texts(update, context):
     lang = L(update); text = tr(lang, "s_texts_title") + "\n"
     for k in TEXT_KEYS: text += f"\n<b>{k}</b>\n🇮🇷 <i>{esc(strip_tags(gtext(k, 'fa'))[:60])}…</i>\n🇬🇧 <i>{esc(strip_tags(gtext(k, 'en'))[:60])}…</i>"
     kb = [[B(f"✏️ {k} 🇮🇷", f"s:txt:{k}:fa"), B(f"✏️ {k} 🇬🇧", f"s:txt:{k}:en"), B("↩️🇮🇷", f"s:txtr:{k}:fa"), B("↩️🇬🇧", f"s:txtr:{k}:en")] for k in TEXT_KEYS] + [[B(tr(lang, "back"), "s:home")]]; await render(update, context, text, kb)
+# ============================================================
+# Referral / Affiliate — پاداش فقط بعد از «تأیید پرداخت» توسط مدیر کلان (ضدسوءاستفاده)، اتمیک و یک‌بار برای هر پرداخت
+REF_DEFAULTS = {"ref_on": False, "ref_fixed": 0.0, "ref_percent": 0.0, "ref_mode": "first", "ref_min": 0.0, "ref_cap": 0.0}
+REF_NUM = {"ref_fixed": (0, 10000), "ref_percent": (0, 100), "ref_min": (0, 1000000), "ref_cap": (0, 1000000)}
+REF_LABELS = {"ref_fixed": ("مبلغ ثابت پاداش", "Fixed reward amount"), "ref_percent": ("درصد از مبلغ پرداخت‌شده", "Percent of the amount paid"),
+              "ref_min": ("حداقل مبلغ خرید برای پاداش", "Minimum purchase for a reward"), "ref_cap": ("سقف کل پاداش هر معرف", "Total reward cap per referrer")}
+REF_NEW_USER_MINUTES = 30      # فقط کاربرِ تازه‌وارد قابل انتساب است (انتسابِ جعلی به کاربر قدیمی ممکن نیست)
+def ref_cfg():
+    d = {k: gget(k, v) for k, v in REF_DEFAULTS.items()}
+    for k in REF_NUM:
+        try: d[k] = float(d[k] or 0)
+        except (TypeError, ValueError): d[k] = 0.0
+    d["ref_on"] = bool(d["ref_on"]); d["ref_mode"] = "every" if d["ref_mode"] == "every" else "first"
+    return d
+def ref_parse(key, raw):
+    """ورودی مدیر کلان → عدد معتبر (ارقام فارسی/عربی هم پذیرفته می‌شود)؛ ValueError برای ورودی نامعتبر."""
+    if key not in REF_NUM: raise ValueError(key)
+    s = str(raw).strip().translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٫٬", "01234567890123456789.,")).replace(",", "")
+    v = float(s); lo, hi = REF_NUM[key]
+    if v != v or not (lo <= v <= hi): raise ValueError(key)
+    return _money(v)
+def ref_attribute(referrer_id, uid):
+    """معرف را برای کاربرِ «تازه‌وارد» ثبت می‌کند. خروجی: ok | disabled | self | invalid | not_new | exists | cycle.
+    ضدسوءاستفاده: خودمعرفی، معرف ناموجود/مسدود، کاربر قدیمی/دارای پلن یا پرداخت، چندمعرفی (UNIQUE referred_id)، چرخهٔ دوطرفه."""
+    if not ref_cfg()["ref_on"]: return "disabled"
+    if referrer_id == uid: return "self"
+    def _go(conn):
+        ru = conn.execute("SELECT banned FROM users WHERE id=?", (referrer_id,)).fetchone()
+        u = conn.execute("SELECT created_at, plan_id FROM users WHERE id=?", (uid,)).fetchone()
+        if not ru or ru["banned"] or not u: return "invalid"
+        created = parse_dt(u["created_at"])
+        if u["plan_id"] or not created or (now_utc() - created) > timedelta(minutes=REF_NEW_USER_MINUTES): return "not_new"
+        if conn.execute("SELECT 1 FROM pay_requests WHERE user_id=?", (uid,)).fetchone(): return "not_new"
+        if conn.execute("SELECT 1 FROM referrals WHERE referrer_id=? AND referred_id=?", (uid, referrer_id)).fetchone(): return "cycle"
+        cur = conn.execute("INSERT OR IGNORE INTO referrals(referrer_id, referred_id, created_at) VALUES(?,?,?)", (referrer_id, uid, now_iso()))
+        return "ok" if cur.rowcount == 1 else "exists"
+    return _trx(_go)
+def ref_reward_for_payment(r, pc):
+    """پاداش معرف برای یک پرداختِ تأییدشده. در یک تراکنش: UNIQUE(pay_id) ⇒ حتی با تأیید دوباره/رقابت، فقط یک‌بار. خروجی: (referrer, amount, referred) | None."""
+    cfg = ref_cfg()
+    if not cfg["ref_on"]: return None
+    uid, rid = r["user_id"], r["id"]
+    base = float((pc or {}).get("payable") or 0) if (pc or {}).get("payable_num") else 0.0     # مبلغ نقدیِ واقعی (بعد از کیف پول و تخفیف)
+    def _go(conn):
+        ref = conn.execute("SELECT id, referrer_id FROM referrals WHERE referred_id=?", (uid,)).fetchone()
+        if not ref: return None
+        rr = conn.execute("SELECT banned FROM users WHERE id=?", (ref["referrer_id"],)).fetchone()
+        if not rr or rr["banned"]: return None
+        if conn.execute("SELECT 1 FROM referral_rewards WHERE pay_id=?", (rid,)).fetchone(): return None
+        if cfg["ref_mode"] != "every" and conn.execute("SELECT 1 FROM referral_rewards WHERE referral_id=?", (ref["id"],)).fetchone(): return None
+        if cfg["ref_min"] and base < cfg["ref_min"]: return None
+        amount = _money(cfg["ref_fixed"] + base * cfg["ref_percent"] / 100.0)
+        if cfg["ref_cap"]:
+            earned = float(conn.execute("SELECT COALESCE(SUM(amount),0) FROM referral_rewards WHERE referrer_id=?", (ref["referrer_id"],)).fetchone()[0])
+            amount = _money(min(amount, max(0.0, cfg["ref_cap"] - earned)))
+        if amount <= 0: return None
+        conn.execute("INSERT INTO referral_rewards(referral_id, pay_id, referrer_id, amount, basis, created_at) VALUES(?,?,?,?,?,?)",
+                     (ref["id"], rid, ref["referrer_id"], amount, json.dumps({"base": base, "fixed": cfg["ref_fixed"], "percent": cfg["ref_percent"], "mode": cfg["ref_mode"]}), now_iso()))
+        conn.execute("UPDATE users SET credit=COALESCE(credit,0)+? WHERE id=?", (amount, ref["referrer_id"]))
+        return (ref["referrer_id"], amount, uid)
+    return _trx(_go)
+async def _notify_ref_reward(reward):
+    rid_, amount, _ = reward
+    try: await notify_user_fn(rid_, tr(user_lang(rid_) or "fa", "ref_reward_got", amt=_fmt_price(amount)))
+    except Exception as e: log.warning("referral notify %s failed: %s", rid_, redact(str(e))[:100])
+async def _ref_start(update, context, param):
+    uid = update.effective_user.id
+    if not param.isdigit() or len(param) > 15: return
+    res = ref_attribute(int(param), uid)
+    if res == "ok": log_event("INFO", f"referral {param} → {uid}", uid)
+    elif res not in ("disabled", "exists", "self"): log.info("referral rejected (%s): %s → %s", res, param, uid)
+def _ref_rules_text(cfg, lang):
+    parts = []
+    if cfg["ref_fixed"]: parts.append(tr(lang, "ref_r_fixed", v=_fmt_price(cfg["ref_fixed"])))
+    if cfg["ref_percent"]: parts.append(tr(lang, "ref_r_pct", v=f"{cfg['ref_percent']:g}"))
+    if not parts: return tr(lang, "ref_r_none")
+    parts.append(tr(lang, "ref_r_every" if cfg["ref_mode"] == "every" else "ref_r_first"))
+    if cfg["ref_min"]: parts.append(tr(lang, "ref_r_min", v=_fmt_price(cfg["ref_min"])))
+    return "\n".join(parts)
+async def view_referral(update, context):
+    uid = update.effective_user.id; lang = L(update); cfg = ref_cfg()
+    if not cfg["ref_on"]: await popup(update, context, tr(lang, "ref_off"), alert=True); return await go_home(update, context)
+    st = q("SELECT (SELECT COUNT(*) FROM referrals WHERE referrer_id=?) n, (SELECT COUNT(DISTINCT referral_id) FROM referral_rewards WHERE referrer_id=?) paid, (SELECT COALESCE(SUM(amount),0) FROM referral_rewards WHERE referrer_id=?) earned", (uid, uid, uid), one=True)
+    link = f"https://t.me/{context.bot.username}?start=ref_{uid}"
+    await render(update, context, tr(lang, "ref_page", link=esc(link), rules=_ref_rules_text(cfg, lang), n=st["n"], paid=st["paid"], earned=_fmt_price(st["earned"]), bal=_fmt_price(_user_credit(uid))), [[B(tr(lang, "home"), "home")]])
+async def view_s_ref(update, context):
+    lang = L(update); cfg = ref_cfg(); st = q("SELECT (SELECT COUNT(*) FROM referrals) n, (SELECT COUNT(*) FROM referral_rewards) rw, (SELECT COALESCE(SUM(amount),0) FROM referral_rewards) total", one=True)
+    mode = tr(lang, "ref_mode_every" if cfg["ref_mode"] == "every" else "ref_mode_first")
+    text = tr(lang, "s_ref_title", st=tr(lang, "on" if cfg["ref_on"] else "off"), fixed=_fmt_price(cfg["ref_fixed"]), percent=f"{cfg['ref_percent']:g}", mode=mode,
+              mn=_fmt_price(cfg["ref_min"]) if cfg["ref_min"] else "—", cap=_fmt_price(cfg["ref_cap"]) if cfg["ref_cap"] else "∞", n=st["n"], rw=st["rw"], total=_fmt_price(st["total"]))
+    kb = [[B(tr(lang, "s_ref_on_btn" if cfg["ref_on"] else "s_ref_off_btn"), "s:ref_t:on")], [B(tr(lang, "s_ref_mode_btn", m=mode), "s:ref_t:mode")],
+          [B(tr(lang, "s_ref_fixed"), "s:ref_e:ref_fixed"), B(tr(lang, "s_ref_percent"), "s:ref_e:ref_percent")], [B(tr(lang, "s_ref_min"), "s:ref_e:ref_min"), B(tr(lang, "s_ref_cap"), "s:ref_e:ref_cap")],
+          [B(tr(lang, "back"), "s:home")]]
+    await render(update, context, text, kb)
+
+# ============================================================
+# کانال اجباری — فقط برای «مدیر»ها (دارندگان پلن). کاربر عادی و مدیر کلان هرگز مجبور به عضویت نمی‌شوند.
+_MAND_OK = {}; MAND_TTL = 600
+def mand_cfg(): return {"on": bool(gget("mand_on", False)), "chat": gget("mand_chat"), "user": gget("mand_user", ""), "title": gget("mand_title", ""), "link": gget("mand_link", "")}
+async def mand_member(bot, chat_id, uid):
+    """True=عضو · False=عضو نیست · None=قابل‌تشخیص نیست (خطای موقت/ربات ادمین نیست). None هرگز به‌عنوان «عضو نیست» رفتار نمی‌شود."""
+    try: m = await bot.get_chat_member(chat_id, uid)
+    except Exception as e:
+        log.warning("mandatory-channel check failed chat=%s: %s: %s", chat_id, type(e).__name__, redact(str(e))[:100]); return None
+    return m.status in ("member", "administrator", "creator") or (m.status == "restricted" and bool(getattr(m, "is_member", False)))
+def _mand_kb(cfg, lang, check="c:mandchk"):
+    rows = []
+    url = cfg["link"] or (f"https://t.me/{cfg['user']}" if cfg["user"] else "")
+    if url: rows.append([U(tr(lang, "mand_join"), url)])
+    rows.append([B(tr(lang, "mand_check"), check)]); return rows
+async def mand_gate(update, context):
+    """True = ادامه. فعال نبودن، مدیر کلان‌بودن، یا «ناتوانی در بررسی» (مثلاً ربات ادمین کانال نیست) ⇒ قفل نمی‌کنیم."""
+    cfg = mand_cfg(); uid = update.effective_user.id
+    if not cfg["on"] or not cfg["chat"] or is_super(uid): return True
+    if _MAND_OK.get(uid, 0) > time.time() - MAND_TTL: return True
+    ok = await mand_member(context.bot, cfg["chat"], uid)
+    if ok is True:
+        if len(_MAND_OK) > 5000: _MAND_OK.clear()
+        _MAND_OK[uid] = time.time(); return True
+    if ok is None:
+        if rate_ok("mand_alert", 21600): await notify_supers("⚠️ بررسی عضویت کانال اجباری ممکن نیست؛ مطمئن شوید ربات در آن کانال ادمین است. تا رفع مشکل، مدیرها قفل نمی‌شوند.", text_en="⚠️ Mandatory-channel membership can't be verified; make sure the bot is an admin there. Admins are not locked out meanwhile.")
+        return True
+    lang = L(update); await render(update, context, tr(lang, "mand_gate", title=esc(cfg["title"] or cfg["user"] or "")), _mand_kb(cfg, lang)); return False
+async def mand_check(update, context):
+    lang = L(update); cfg = mand_cfg(); uid = update.effective_user.id
+    ok = await mand_member(context.bot, cfg["chat"], uid) if (cfg["on"] and cfg["chat"] and not is_super(uid)) else True
+    if ok is True: _MAND_OK[uid] = time.time(); return await go_home(update, context)
+    return await popup(update, context, tr(lang, "mand_not_yet" if ok is False else "mand_unverifiable"), alert=True)
+async def view_s_mand(update, context):
+    lang = L(update); cfg = mand_cfg(); ch = (f"<b>{esc(cfg['title'])}</b>" + (f" · @{esc(cfg['user'])}" if cfg["user"] else "")) if cfg["chat"] else tr(lang, "mand_none")
+    kb = [[B(tr(lang, "s_mand_set"), "s:mand_set")]]
+    if cfg["chat"]: kb.append([B(tr(lang, "s_mand_toggle_off" if cfg["on"] else "s_mand_toggle_on"), "s:mand_t")]); kb.append([B(tr(lang, "s_mand_rm"), "s:mand_rm")])
+    await render(update, context, tr(lang, "s_mand_title", st=tr(lang, "on" if cfg["on"] else "off"), ch=ch), kb + [[B(tr(lang, "back"), "s:home")]])
+async def mand_toggle(update, context):
+    """فعال‌سازی فقط بعد از تأییدِ عضویتِ خودِ مدیری که فعال می‌کند؛ وگرنه پیام Join/Check و ادامه ممنوع."""
+    lang = L(update); uid = update.effective_user.id; cfg = mand_cfg()
+    if cfg["on"]: gset("mand_on", False); _MAND_OK.clear(); await popup(update, context, tr(lang, "mand_deactivated")); return await view_s_mand(update, context)
+    if not cfg["chat"]: return await popup(update, context, tr(lang, "mand_none"), alert=True)
+    ok = await mand_member(context.bot, cfg["chat"], uid)
+    if ok is True: gset("mand_on", True); _MAND_OK.clear(); await popup(update, context, tr(lang, "mand_activated")); return await view_s_mand(update, context)
+    if ok is False: return await render(update, context, tr(lang, "mand_need_member", title=esc(cfg["title"])), _mand_kb(cfg, lang, check="s:mand_t") + [[B(tr(lang, "back"), "s:mand")]])
+    return await popup(update, context, tr(lang, "mand_unverifiable"), alert=True)
+async def mand_set_channel(update, context, st, text, done):
+    lang = L(update); raw = text.strip(); m = re.search(r"(?:https?://)?t\.me/([A-Za-z0-9_]{4,})", raw); ref = ("@" + m.group(1)) if m else raw
+    if re.fullmatch(r"-?\d{5,20}", ref): ref = int(ref)
+    elif not re.fullmatch(r"@[A-Za-z0-9_]{4,}", str(ref)): return await popup(update, context, tr(lang, "mand_bad", e="format"), alert=True)
+    try:
+        chat = await context.bot.get_chat(ref)
+        if chat.type not in ("channel", "supergroup"): raise ValueError("not a channel")
+        me = await context.bot.get_chat_member(chat.id, context.bot.id)
+        if me.status not in ("administrator", "creator"): raise ValueError("bot is not an admin")
+    except Exception as e: return await popup(update, context, tr(lang, "mand_bad", e=esc(redact(str(e))[:100])), alert=True)
+    link = f"https://t.me/{chat.username}" if chat.username else (getattr(chat, "invite_link", None) or "")
+    if not link:
+        try: link = await context.bot.export_chat_invite_link(chat.id)
+        except Exception: link = ""
+    gset("mand_chat", chat.id); gset("mand_user", chat.username or ""); gset("mand_title", chat.title or ""); gset("mand_link", link); gset("mand_on", False); _MAND_OK.clear()
+    done(tr(lang, "mand_saved")); return await dispatch(update, context, st["back"])
 async def decide_pay(update, context, rid, approve, from_list):
     lang = L(update); r = pay_get(rid)
     if not r or r["status"] != "pending": await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
@@ -4382,6 +4841,9 @@ async def decide_pay(update, context, rid, approve, from_list):
             pc = {}
         # ثبت کیف پول اول و اتمیک: اگر شکست بخورد هیچ‌چیز جز مصرفِ کد تخفیف باقی نمی‌ماند ⇒ تخفیف برمی‌گردد
         try: apply_plan_change(r["user_id"], r["plan_id"], pc)
+        except WalletChanged:       # موجودی بین صدور و تأیید کم شده ⇒ با مبلغ قدیمی تأیید نمی‌شود؛ مدیر رد کند تا کاربر دوباره درخواست دهد
+            if r["discount"]: disc_refund(r["discount"])
+            pay_set(rid, "pending"); await popup(update, context, tr(lang, "pay_wallet_changed"), alert=True); return await view_s_pays(update, context) if from_list else None
         except Exception:
             log.exception("plan change bookkeeping failed rid=%s uid=%s", rid, r["user_id"])
             if r["discount"]: disc_refund(r["discount"])
@@ -4410,12 +4872,17 @@ async def decide_pay(update, context, rid, approve, from_list):
             rollback_payment("no_plan")
             await popup(update, context, tr(lang, "notfound"), alert=True); return await view_s_pays(update, context) if from_list else None
         pay_set(rid, "approved")
+        reward = None
+        try: reward = ref_reward_for_payment(r, pc)
+        except Exception: log.exception("referral reward failed rid=%s", rid)
+        await d1_confirm("payment")       # رویداد مالی پیش از اطلاع‌رسانی در D1 هم تأیید شود (عدم تأیید فقط هشدار است؛ تکثیر ادامه دارد)
+        if reward: await _notify_ref_reward(reward)
         await notify_user_fn(r["user_id"], tr(ul, "pay_approved", name=esc(plan_txt(p, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=fmt_date(exp, admin_offset(r["user_id"]))))); await popup(update, context, tr(lang, "s_pay_done_ok"))
     else: pay_set(rid, "rejected"); await notify_user_fn(r["user_id"], tr(ul, "pay_rejected")); await popup(update, context, tr(lang, "s_pay_done_no"))
     log_event("INFO", f"پرداخت #{rid} {'تأیید' if approve else 'رد'} شد", update.effective_user.id)
     if from_list: return await view_s_pays(update, context)
     try: await update.callback_query.edit_message_reply_markup(None)
-    except Exception: pass
+    except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
 # ============================================================
 # dispatch
 async def dispatch(update, context, data):
@@ -4424,10 +4891,20 @@ async def dispatch(update, context, data):
     if a == "lang": return await set_language(update, context, b)
     if not user_lang(uid): return await view_lang(update, context)
     if data == "home": return await go_home(update, context)
+    if a == "c" and b == "wizm":      # انتخاب مدل از فهرست کشف‌شده؛ فقط از فهرستی که خود سرور برای همین ویزارد ساخته پذیرفته می‌شود
+        st = ud.get("await"); found = st.get("found") if isinstance(st, dict) else None; idx = int(c) if c.isdigit() else -1
+        if not isinstance(st, dict) or st.get("kind") != "wiz" or st.get("wiz") not in ("model_add", "my_ai_add") or not isinstance(found, list) or not 0 <= idx < len(found):
+            return await popup(update, context, tr(lang, "notfound"), alert=True)
+        async def _noop(*x, **k): return None
+        shim = SimpleNamespace(message=SimpleNamespace(text=found[idx], caption=None, text_html=found[idx], caption_html=None, delete=_noop),
+                               effective_user=update.effective_user, effective_chat=update.effective_chat, callback_query=update.callback_query)
+        return await handle_input(shim, context, st)
+    if data == "c:mandchk": return await mand_check(update, context)
     if data == "c:cancel": st = ud.pop("await", None); await popup(update, context, operation_text(lang, "cancelled"), alert=True); return await dispatch(update, context, (st or {}).get("back", "home"))
     # ---------------- کاربر
     if a == "u":
         if b == "plans": return await view_plans(update, context)
+        if b == "ref": return await view_referral(update, context)
         if b == "plan": return await view_plan(update, context, int(c))
         if b == "free": return await do_free(update, context, int(c))
         if b == "req": return await do_request(update, context, int(c))
@@ -4438,6 +4915,7 @@ async def dispatch(update, context, data):
     # ---------------- مدیر میانی
     if a == "a":
         if not can_admin(uid): await popup(update, context, tr(lang, "no_admin"), alert=True); return await view_plans(update, context)
+        if not is_super(uid) and not await mand_gate(update, context): return
         lim = admin_limits(uid)
         # عملیاتی که محتوا تولید/منتشر می‌کنند فقط با پلن فعال (مشاهده و تنطیمات آزاد می‌ماند)
         if b in ("test", "pub", "srca", "chadd") and not lim["active"]: await popup(update, context, tr(lang, "plan_inactive"), alert=True); return await view_my_plan(update, context)
@@ -4542,13 +5020,13 @@ async def dispatch(update, context, data):
         if b == "tz": return await view_tz(update, context, cid)
         if b == "tzs":
             if not d.isdigit() or int(d) >= len(TZ_ZONES): return await popup(update, context, tr(lang, "notfound"), alert=True)
-            z, off = TZ_ZONES[int(d)]; old_day, new_day = today_str(s["utc_offset"]), today_str(off)
-            update_settings(cid, utc_offset=off)
+            z, name = TZ_ZONES[int(d)]; off = _offset_now(name); old_day, new_day = today_str(s.get("tz") or s["utc_offset"]), today_str(name)
+            update_settings(cid, tz=name, utc_offset=off)
             if old_day != new_day:      # جابه‌جایی مرزِ روز نباید سهمیهٔ امروز را صفر کند (سوءاستفاده و بی‌اعتباری شمارش)
                 prev = q("SELECT posts,tests FROM usage WHERE admin_id=? AND day=?", (uid, old_day), one=True)
                 if prev: q("INSERT INTO usage(admin_id,day,posts,tests) VALUES(?,?,?,?) ON CONFLICT(admin_id,day) DO UPDATE SET posts=MAX(posts,?), tests=MAX(tests,?)",
                            (uid, new_day, prev["posts"], prev["tests"], prev["posts"], prev["tests"]), commit=True)
-            await popup(update, context, tr(lang, "tz_set", city=tz_city(off, lang), tz=off_label(off), loc=local_clock(off))); return await view_sched(update, context, cid)
+            await popup(update, context, tr(lang, "tz_set", city=tz_city(name, lang), tz=off_label(off), loc=local_clock(name))); return await view_sched(update, context, cid)
         if b == "con": return await view_content(update, context, cid)
         if b == "cat": return await view_cats(update, context, cid)
         if b == "cata": return await wiz_start(update, context, "cat_add", f"a:cat:{cid}", cid=cid)
@@ -4580,6 +5058,19 @@ async def dispatch(update, context, data):
         if b == "home": return await view_super_home(update, context)
         if b == "report": return await render(update, context, report_text(None, None, lang), [[B(tr(lang, "refresh"), "s:report")], [B(tr(lang, "back"), "s:home")]])
         if b == "health": return await view_health(update, context)
+        if b == "ref": return await view_s_ref(update, context)
+        if b == "ref_t":
+            cfg = ref_cfg()
+            if c == "on": gset("ref_on", not cfg["ref_on"])
+            elif c == "mode": gset("ref_mode", "first" if cfg["ref_mode"] == "every" else "every")
+            await popup(update, context, tr(lang, "saved")); return await view_s_ref(update, context)
+        if b == "ref_e" and c in REF_NUM: return await ask(update, context, tr(lang, "ref_prompt", f=REF_LABELS[c][1 if lang == "en" else 0]), "ref_field", "s:ref", key=c)
+        if b == "mand": return await view_s_mand(update, context)
+        if b == "mand_set": return await ask(update, context, tr(lang, "mand_set_prompt"), "mand_set", "s:mand")
+        if b == "mand_t": return await mand_toggle(update, context)
+        if b == "mand_rm":
+            for k in ("mand_chat", "mand_user", "mand_title", "mand_link"): gset(k, "" if k != "mand_chat" else None)
+            gset("mand_on", False); _MAND_OK.clear(); await popup(update, context, tr(lang, "mand_removed")); return await view_s_mand(update, context)
         if b == "auto": new = not gget("automation_enabled", True); gset("automation_enabled", new); await popup(update, context, tr(lang, "s_auto_on" if new else "s_auto_off")); return await view_super_home(update, context)
         if b == "texts": return await view_s_texts(update, context)
         if b == "txt": return await ask(update, context, tr(lang, "s_text_prompt", k=c, lg=d), "gtext", "s:texts", key=c, lg=d)
@@ -4655,7 +5146,7 @@ async def dispatch(update, context, data):
                 return await popup(update, context, tr(lang, "notfound"), alert=True)
             selected = gget("test_model_id") == m["id"]
             gset("test_model_id", None if selected else m["id"])
-            await popup(update, context, ("Test Model cleared" if selected else "Test Model selected") if lang == "en" else ("انتخاب Test Model برداشته شد" if selected else "Test Model انتخاب شد"))
+            await popup(update, context, ("Test Model cleared" if selected else "Test Model selected") if lang == "en" else ("انتخاب مدل آزمایشی برداشته شد" if selected else "مدل آزمایشی انتخاب شد"))
             return await view_s_model(update, context, m["id"])
         if b == "models_test":
             await operation_status(context, tr(lang, "s_model_testing")); res = []
@@ -4675,7 +5166,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     qy = update.callback_query; u = update.effective_user; context._callback_answered = False
     if qy.data != "c:cancel" and not rate_ok(f"cb:{u.id}", CB_RATE):
         try: await qy.answer(tr(user_lang(u.id) or "fa", "busy_click"))
-        except Exception: pass
+        except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
         return
     ensure_user(u.id, u.username, u.full_name, premium=getattr(u, "is_premium", None))
     if get_user(u.id)["banned"] and not is_super(u.id): return await qy.answer(tr(L(update), "banned"), show_alert=True)
@@ -4700,7 +5191,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await run_user_operation(update, context, f"callback:{data}", channel, work, replace=navigation, keep=keep)
     if not getattr(context, "_callback_answered", False):
         try: await qy.answer()
-        except Exception: pass
+        except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
 # ============================================================
 # ورودی‌های متنی (ویزاردها، فیلدها، منبع، افزودن کانال + کد قفل، کد تخفیف، رسید …)
 _ALLOW_PRIVATE_MODELS = os.getenv("ALLOW_PRIVATE_MODEL_HOSTS", "").strip() == "1"   # پیش‌فرض: مقصد داخلی مسدود
@@ -4814,7 +5305,7 @@ def _input_access(st, uid, lang):
     kind = st.get("kind"); wiz = st.get("wiz") if kind == "wiz" else None
     user = get_user(uid)
     if user and user["banned"] and not is_super(uid): return tr(lang, "banned")
-    if kind in ("plan_field", "disc_field", "gtext", "umsg", "bc") or wiz in ("plan_new", "model_add", "disc_add") or (kind == "model_field" and not st.get("own")):
+    if kind in ("plan_field", "disc_field", "gtext", "umsg", "bc", "ref_field", "mand_set") or wiz in ("plan_new", "model_add", "disc_add") or (kind == "model_field" and not st.get("own")):
         if not is_super(uid): return tr(lang, "no_admin")
     if kind in ("field", "cat_style", "crit_weight", "src_add", "src_api_url", "src_api_key", "ch_add", "chtoken", "art_edit") or wiz in ("cat_add", "crit_add", "my_ai_add") or (kind == "model_field" and st.get("own")):
         if not can_admin(uid): return tr(lang, "no_admin")
@@ -4839,7 +5330,7 @@ async def handle_input(update, context, st):
     raw_text = msg.text or msg.caption or ""; text = raw_text.strip(); text_html = (msg.text_html or msg.caption_html or "").strip()
     if kind not in ("bc", "receipt"):
         try: await msg.delete()
-        except Exception: pass
+        except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     if ud.get("await") is not st: return
     def done(notice=None):
         current = ud.get("await")
@@ -4869,12 +5360,12 @@ async def handle_input(update, context, st):
             if not get_model(mid):
                 await popup(update, context, tr(lang, "notfound"), alert=True)
                 return await dispatch(update, context, back)
-            ok, out, t = await test_model(mid)
+            _ai_detail.set(None); ok, out, t = await test_model(mid)
             model = get_model(mid)
             if not model:
                 await popup(update, context, tr(lang, "notfound"), alert=True)
                 return await dispatch(update, context, back)
-            result = tr(lang, "my_ai_added" if own else "s_model_added", name=esc(name), res=(tr(lang, "saved") if ok else ai_err_text(err_code(out), lang)) + f" ({t}s)")
+            result = tr(lang, "my_ai_added" if own else "s_model_added", name=esc(name), res=(tr(lang, "saved") if ok else ai_err_text(err_code(out), lang) + (f" — {esc(_ai_detail.get())}" if _ai_detail.get() else "")) + f" ({t}s)")
             await operation_status(context, result, failed=not ok)
             await popup(update, context, result, alert=not ok)
             return await dispatch(update, context, f"a:myai_v:{mid}" if own else back)
@@ -4983,7 +5474,7 @@ async def handle_input(update, context, st):
         if ud.get("await") is not st: return
         if not user_is_admin:
             log_event("WARN", f"ثبت کانال «{chat.title}» ({chat.id}) بدون ادمین‌بودن", uid)
-            await notify_supers(f"<b>هشدار امنیتی</b>\n<code>{uid}</code> تلاش کرد «{esc(chat.title)}» را بدون ادمین‌بودن ثبت کند.")
+            await notify_supers(f"<b>هشدار امنیتی</b>\n<code>{uid}</code> تلاش کرد «{esc(chat.title)}» را بدون ادمین‌بودن ثبت کند.", text_en=f"<b>Security alert</b>\n<code>{uid}</code> tried to register “{esc(chat.title)}” without being an admin there.")
             return await popup(update, context, tr(lang, "ch_user_not_admin"), alert=True)
         denied = _input_access(st, uid, lang)
         if denied: return await popup(update, context, denied, alert=True)
@@ -5080,6 +5571,11 @@ async def handle_input(update, context, st):
         elif kind == "disc_field": disc_update(rec, **{f: v})
         else: update_model(rec, **{f: v})
         done(tr(lang, "saved")); return await dispatch(update, context, back)
+    if kind == "ref_field":
+        try: v = ref_parse(st["key"], text)
+        except (ValueError, TypeError): return await popup(update, context, tr(lang, "ref_invalid"), alert=True)
+        gset(st["key"], v); done(tr(lang, "saved")); return await dispatch(update, context, back)
+    if kind == "mand_set": return await mand_set_channel(update, context, st, text, done)
     if kind == "gtext":
         if st["key"] not in TEXT_KEYS or st["lg"] not in LANGS: return await popup(update, context, tr(lang, "notfound"), alert=True)
         gtext_set(st["key"], st["lg"], sanitize_html(text_html)); done(tr(lang, "s_text_saved")); return await dispatch(update, context, back)
@@ -5122,7 +5618,7 @@ async def _ack(msg, fallback_text, kb=None):
     try: await msg.set_reaction("👌")
     except Exception:
         try: await msg.reply_text(fallback_text, reply_markup=kb)
-        except Exception: pass
+        except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
 async def send_temp(context, chat_id, text, seconds=None):
     """پیام موقت: seconds=None → همیشه ۵ ثانیه (قانون فاز ۱)؛ مقدار صریح فقط برای جایی که واقعاً لازم است."""
     seconds = 5 if seconds is None else max(1, int(seconds))
@@ -5187,6 +5683,7 @@ async def send_deeplink(update, context, key):
         await asyncio.sleep(.3)
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = await _prep(update, context)
+    if context.args and context.args[0].startswith("ref_"): await _ref_start(update, context, context.args[0][4:])    # لینک معرفی دوستان
     if context.args and context.args[0].startswith("r_"):
         if not rate_ok(f"dl:{update.effective_user.id}", CB_RATE): return   # جلوی تقویتِ درخواست بیرونی با /start تکراری را می‌گیرد
         return await send_deeplink(update, context, context.args[0][2:])
@@ -5239,13 +5736,12 @@ async def post_init(app: Application):
     app.job_queue.run_repeating(job_tick, interval=TICK_SECONDS, first=15, name="tick")
     _dup = gget("db_dup_warn")
     if _dup:
-        await notify_supers("⚠️ <b>ایندکس یکتای دیتابیس ساخته نشد</b>\n"
-                            f"ردیف تکراری در: <code>{html.escape(', '.join(str(x) for x in _dup))}</code>\n"
-                            "محافظت از ثبت کانال/منبع تکراری روی این نصب خاموش است. بررسی دستی:\n"
-                            "<code>SELECT chat_id, COUNT(*) FROM channels GROUP BY chat_id HAVING COUNT(*)>1;</code>\n"
-                            "<code>SELECT channel_id, url, COUNT(*) FROM sources GROUP BY channel_id, url HAVING COUNT(*)>1;</code>")
+        _dups = html.escape(', '.join(str(x) for x in _dup)); _q1 = "<code>SELECT chat_id, COUNT(*) FROM channels GROUP BY chat_id HAVING COUNT(*)>1;</code>\n"; _q2 = "<code>SELECT channel_id, url, COUNT(*) FROM sources GROUP BY channel_id, url HAVING COUNT(*)>1;</code>"
+        await notify_supers("⚠️ <b>ایندکس یکتای دیتابیس ساخته نشد</b>\n" + f"ردیف تکراری در: <code>{_dups}</code>\n" + "محافظت از ثبت کانال/منبع تکراری روی این نصب خاموش است. بررسی دستی:\n" + _q1 + _q2,
+                            text_en="⚠️ <b>The database unique index was not created</b>\n" + f"Duplicate rows in: <code>{_dups}</code>\n" + "Protection against duplicate channel/source registration is OFF on this install. Check manually:\n" + _q1 + _q2)
     log_event("INFO", f"ربات @{me.username} راه‌اندازی شد")
-    await notify_supers(f"🚀 @{me.username} راه‌اندازی شد · 🤖 مدل‌های فعال {len(list_models(True))} · CF KV {'✅' if CF_ENABLED else '❌'} · تیک هر {TICK_SECONDS}s · AI×{AI_CONCURRENCY} CYCLE×{CYCLE_CONCURRENCY}")
+    await notify_supers(f"🚀 @{me.username} راه‌اندازی شد · 🤖 مدل‌های فعال {len(list_models(True))} · CF KV {'✅' if CF_ENABLED else '❌'} · تیک هر {TICK_SECONDS}s · AI×{AI_CONCURRENCY} CYCLE×{CYCLE_CONCURRENCY}",
+                        text_en=f"🚀 @{me.username} started · 🤖 active models {len(list_models(True))} · CF KV {'✅' if CF_ENABLED else '❌'} · tick every {TICK_SECONDS}s · AI×{AI_CONCURRENCY} CYCLE×{CYCLE_CONCURRENCY}")
 async def post_shutdown(app: Application):
     _me = asyncio.current_task()
     pend = [t for t in asyncio.all_tasks() if t is not _me and t.get_name().split(":")[0] in ("publication", "user")]
@@ -5256,18 +5752,18 @@ async def post_shutdown(app: Application):
     if _temp_sweeper is not None and not _temp_sweeper.done():   # تسک پاک‌کننده‌ی پیام‌های موقت را تمیز جمع می‌کنیم
         _temp_sweeper.cancel()
         try: await _temp_sweeper
-        except BaseException: pass
+        except BaseException as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     await asyncio.to_thread(_d1_stop)         # بعد از جمع‌شدن تسک‌ها: flush نهایی به D1 + آزادسازی lease
     if _http:
         try: await _http.aclose()
-        except Exception: pass
+        except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
     try:
         log_event("INFO", "ربات خاموش شد"); log.info("خاموشی تمیز انجام شد.")
-    except Exception: pass
+    except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
 async def on_error(update, context):
     log.exception("خطا: %s", context.error)
     try: log_event("ERROR", f"unhandled: {context.error}")
-    except Exception: pass
+    except Exception as _ig: log.debug("ignored (best-effort): %s: %s", type(_ig).__name__, _ig)
 def preflight():
     """اعتبارسنجی پیکربندی پیش از راه‌اندازی. همه‌ی ایرادها یک‌جا گزارش می‌شوند تا کارِ اپراتور یک‌بار باشد."""
     bad, warn = [], []
@@ -5285,6 +5781,7 @@ def preflight():
         bad.append(f"پوشه‌ی دیتابیس قابل نوشتن نیست: {folder}")
     if os.path.exists(DB_FILE) and not os.access(DB_FILE, os.W_OK):
         bad.append(f"فایل دیتابیس قابل نوشتن نیست: {DB_FILE}")
+    if DEFAULT_TZ_ENV and not _zi(DEFAULT_TZ_ENV): bad.append(f"DEFAULT_TZ نامعتبر است (نام IANA مثل Asia/Tehran لازم است): {DEFAULT_TZ_ENV}")
     if not -12 <= DEFAULT_UTC_OFFSET <= 14:
         bad.append(f"DEFAULT_UTC_OFFSET بیرون از بازه‌ی ‎-12..14‎ است: {DEFAULT_UTC_OFFSET}")
     for nm, val, lo, hi in (("TICK_SECONDS", TICK_SECONDS, 10, 3600), ("AI_CONCURRENCY", AI_CONCURRENCY, 1, 32),
@@ -5321,7 +5818,7 @@ def main():
         raise SystemExit(f"⛔ نسخه‌ی دیگری از ربات روی همین دیتابیس در حال اجراست ({DB_FILE}) — ابتدا آن را ببندید.")
     init_core(); _bld = Application.builder().token(BOT_TOKEN)
     if API_BASE: _bld = _bld.base_url(API_BASE)          # سرور محلی Bot API (اختیاری) → پشتیبانی از فایل‌های تا ۲ گیگ
-    APP = _bld.post_init(post_init).post_shutdown(post_shutdown).concurrent_updates(True).build()
+    APP = _bld.post_init(post_init).post_shutdown(post_shutdown).concurrent_updates(MAX_CONCURRENT_UPDATES).build()
     for cmd, fn in (("start", cmd_start), ("create", cmd_create), ("admin", cmd_admin), ("man", cmd_man), ("help", cmd_help), ("about", cmd_about), ("lang", cmd_lang), ("cancel", cmd_cancel), ("health", cmd_health)): APP.add_handler(CommandHandler(cmd, managed_command(fn)))
     APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.COMMAND, managed_command(cmd_unknown)))
     APP.add_handler(CallbackQueryHandler(on_callback)); APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, on_message)); APP.add_error_handler(on_error)

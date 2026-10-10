@@ -6,4 +6,5 @@ trafilatura>=1.12
 beautifulsoup4>=4.12
 lxml>=5
 python-dotenv>=1.0
+tzdata   # پایگاه IANA برای zoneinfo روی VPSهای مینیمال (DST)
 # d1sync.py فقط از کتابخانهٔ استاندارد استفاده می‌کند

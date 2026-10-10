@@ -22,7 +22,10 @@ log = logging.getLogger("d1sync")
 
 # جدول‌های دائمی (D1 مرجع). kv_cache/ai_cache/dedup عمداً محلی‌اند: TTLدار و بازسازی‌پذیرند.
 REPLICATED = ("users", "plans", "discounts", "channels", "sources", "usage", "articles", "posted", "ch_tokens",
-              "ai_models", "deeplinks", "pub_journal", "settings", "support", "support_map", "plan_changes", "pay_requests")
+              "ai_models", "deeplinks", "pub_journal", "settings", "support", "support_map", "plan_changes", "pay_requests",
+              "referrals", "referral_rewards")
+# کلیدهای settings که هر تیک/چرخه بازنویسی می‌شوند و فقط تلمتری محلی‌اند؛ تکثیرشان مصرف نوشتن D1 را بی‌دلیل بالا می‌برد.
+VOLATILE_SETTINGS = ("heartbeat", "last_cycle_start", "last_cycle_end", "load_due", "last_recover", "last_cleanup")
 PAGE_ROWS = {"articles": 25, "deeplinks": 50, "pub_journal": 100}  # جدول‌های سنگین: صفحه‌های کوچک‌تر
 PAGE_DEFAULT = 200
 MAX_SAFE_INT = 2 ** 53  # D1 REST اعداد را JSON می‌فرستد؛ بالاتر از این دقت از دست می‌رود
@@ -229,16 +232,20 @@ class Replicator:
         try:
             c.execute("SELECT json_array(1)")  # JSON1 لازم است
             self.ensure_ctl(c)
-            w = "WHEN (SELECT v FROM _repl_ctl WHERE k='paused')=0"
+            base_w = "(SELECT v FROM _repl_ctl WHERE k='paused')=0"
+            vol = ",".join("'" + k.replace("'", "''") + "'" for k in VOLATILE_SETTINGS)
             for t in self.tables:
                 pk = self.pk_cols(c, t)
+                # فقط settings: ردیف‌های تلمتری از تکثیر مستثنی‌اند (کلید settings همیشه PK تک‌ستونی «key» است)
+                w_new = f"WHEN {base_w} AND NEW.\"key\" NOT IN ({vol})" if t == "settings" else f"WHEN {base_w}"
+                w_old = f"WHEN {base_w} AND OLD.\"key\" NOT IN ({vol})" if t == "settings" else f"WHEN {base_w}"
                 new = ",".join(f"NEW.{_q(x)}" for x in pk); old = ",".join(f"OLD.{_q(x)}" for x in pk)
                 for suf in ("ai", "au", "ad"): c.execute(f"DROP TRIGGER IF EXISTS {_q('_rpl_' + t + '_' + suf)}")
-                c.execute(f"CREATE TRIGGER {_q('_rpl_' + t + '_ai')} AFTER INSERT ON {_q(t)} {w} BEGIN INSERT INTO _changes(tbl,pk) VALUES('{t}', json_array({new})); END")
-                c.execute(f"CREATE TRIGGER {_q('_rpl_' + t + '_au')} AFTER UPDATE ON {_q(t)} {w} BEGIN "
+                c.execute(f"CREATE TRIGGER {_q('_rpl_' + t + '_ai')} AFTER INSERT ON {_q(t)} {w_new} BEGIN INSERT INTO _changes(tbl,pk) VALUES('{t}', json_array({new})); END")
+                c.execute(f"CREATE TRIGGER {_q('_rpl_' + t + '_au')} AFTER UPDATE ON {_q(t)} {w_new} BEGIN "
                           f"INSERT INTO _changes(tbl,pk) VALUES('{t}', json_array({new})); "
                           f"INSERT INTO _changes(tbl,pk) SELECT '{t}', json_array({old}) WHERE json_array({old}) IS NOT json_array({new}); END")
-                c.execute(f"CREATE TRIGGER {_q('_rpl_' + t + '_ad')} AFTER DELETE ON {_q(t)} {w} BEGIN INSERT INTO _changes(tbl,pk) VALUES('{t}', json_array({old})); END")
+                c.execute(f"CREATE TRIGGER {_q('_rpl_' + t + '_ad')} AFTER DELETE ON {_q(t)} {w_old} BEGIN INSERT INTO _changes(tbl,pk) VALUES('{t}', json_array({old})); END")
             c.commit()
         finally: c.close()
 

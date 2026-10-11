@@ -1,9 +1,0 @@
-.env
-*.db
-*.db-wal
-*.db-shm
-*.bak
-*.lock
-*.instance
-__pycache__/
-*.pyc

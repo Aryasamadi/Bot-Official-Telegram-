@@ -112,4 +112,92 @@ def _cut_pos(text, limit):
 def split_post_html(text, limit):
     """پست را در مرز امن به دو بخش «کانال + ادامه» می‌شکند؛ بخش دوم برای «ادامه در ربات» است و متنِ بخش اول را تکرار نمی‌کند."""
     if len(text) <= limit: return text, ""
-    pos = _cut_pos
+    pos = _cut_pos(text, limit); head_raw, rest_raw = text[:pos], text[pos:]
+    if rest_raw[:1] not in (" ", "\n", "") and ">" in rest_raw[:80]:
+        gt = rest_raw.find(">")
+        if "<" not in rest_raw[:gt]: rest_raw = rest_raw[gt + 1:]   # تکه‌ی نیمه‌تمامِ یک تگ از ابتدای ادامه حذف می‌شود
+    head = sanitize_html(re.sub(r"<[^>]*$", "", head_raw)).rstrip() + " …"
+    # اگر برشِ فعلی (اگر وسطِ Quote واقع شده باشد، sanitize تگِ ناقص را حذف می‌کند) Quote را از بخشِ «کانال» برداشته باشد
+    # و Quote در ادامهٔ «ادامه در ربات» مانده باشد، مرزِ برش را به پایانِ نخستین Quote می‌رانیم تا Quote با کانال بماند؛
+    # Quote‌های بعدی و متنِ اضافی به بخشِ ربات می‌روند.
+    if "<blockquote" not in head.lower() and "<blockquote" in text.lower():
+        bq = text.lower().find("</blockquote>")
+        if 0 <= bq and _cut_pos(text, limit) < bq:
+            pos = bq + len("</blockquote>")
+            head_raw, rest_raw = text[:pos], text[pos:]
+            head = sanitize_html(re.sub(r"<[^>]*$", "", head_raw)).rstrip() + " …"
+    rest = sanitize_html(rest_raw).strip()
+    return head, rest
+
+def fit_html(text, limit):
+    if len(text) <= limit: return text, False
+    return split_post_html(text, limit)[0], True
+
+def clean_ai_text(t, s=None):
+    """زباله‌های مدل حذف می‌شود: دیکشنری امتیازها («معیار»: ۹، ...) و تکه‌های JSON چسبیده به متن پست — هرگز به کانال یا ربات نمی‌رسد."""
+    if not t: return t
+    t = str(t).replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
+    t = re.sub(r"[^\S\n]{2,}", " ", t)   # اجرای طولانی فاصله/نویسهٔ نامرئی یک‌بار جمع می‌شود؛ وگرنه الگوی امتیازها عقب‌نشینی فاجعه‌بار می‌کند
+    names = [str(c.get("name", "")).strip() for c in (s or {}).get("criteria", []) if c.get("name")]
+    names += ["ارزش محتوایی", "غیرتبلیغاتی بودن", "کیفیت و کامل بودن", "ارتباط با موضوع کانال", "تازگی", "Content value", "Non-promotional", "Quality & completeness", "Relevance to channel topic", "Relevance", "Freshness"]
+    num = r'(?:10|[0-9۰-۹])(?:[.,][0-9۰-۹])?'
+    pat = re.compile(r'["“«\']?([^"”»:\n]{2,40})(?:[\t ]:[\t ]["”»\']?[\t ]|[\t ]["”»\']?[\t ]:[\t ])' + num + r'[\t ]*[,،.؛;]?')
+    def rep(m):
+        label = m.group(1).strip()
+        return "" if any(label and (label in n or n in label) for n in names) else m.group(0)
+    prev, guard = None, 0
+    while prev != t and guard < 6: prev = t; t = pat.sub(rep, t); guard += 1   # سقف تکرار: جلوگیری از حلقه‌ی طولانی روی متن‌های عجیب
+    t = re.sub(r'(?m)^\s*["”»،,{}\[\].…؛:!؟]+\s*$\n?', "", t)   # خط‌های زباله‌ی JSON (مثل «"،» یا «10.» تنها)
+    t = re.sub(r"\[([^\]\n]{1,160})\]((https?://[^)\s\"']{4,}))", lambda m: m.group(2) if m.group(1).strip() in m.group(2) else f'<a href="{m.group(2)}">{m.group(1).replace(chr(34), "")}</a>', t)   # لینک مارک‌داونی → لینک واقعی
+    t = re.sub(r"\[([^\]\n]{0,160})\](\s*)", r"\1", t)
+    t = re.sub(r"(?<![\w])['‘’]([\w؀-ۿ][\w؀-ۿ -]{0,38}[\w؀-ۿ]|[\w؀-ۿ])['‘’](?![\w])", r"\1", t)   # کوتیشن دور واژه‌ها حذف می‌شود
+    EM = r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF]\ufe0f?"
+    t = re.sub(rf"({EM})\1{{3,}}", r"\1\1", t)                    # فقط ایموجی‌های پشت‌سرهمِ افراطی جمع می‌شوند
+    t = re.sub(rf"(?m)^[ \t]*{EM}(?:[ \t]|{EM})+$", "", t)          # خطی که تنها ایموجی است حذف می‌شود
+    t = re.sub(r"(?m)^[ \t]+|[ \t]+$", "", t); t = re.sub(r"[ \t]{2,}", " ", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    parts = re.split(r"(<pre>.+?</pre>|<code>.+?</code>)", t, flags=re.S)
+    for i in range(0, len(parts), 2): parts[i] = re.sub(r"(?<!\n)\n(?!\n)", "\n\n", parts[i])   # پاراگراف‌ها همیشه با خط خالی از هم جدا می‌شوند
+    t = "".join(parts)
+    blocks, seen, keep = t.split("\n\n"), set(), []
+    for b in blocks:
+        k = re.sub(r"<[^>]+>", "", b); k = re.sub(r"[\s‌]+", " ", k).strip().lower()
+        if k and k in seen: continue   # پاراگراف تکراری (متن یکسان) حذف می‌شود
+        if k: seen.add(k)
+        keep.append(b)
+    t = "\n\n".join(keep).strip()
+    t = re.sub(r"""[\s"'.,;:!?،؛؟\[\]{}]+$""", "", t)
+    return t
+
+def strip_source_url(t, url):
+    """قانون ثابت: لینک منبع هرگز نباید داخل متن پست دیده شود — هر اشاره‌ای به دامنه‌ی منبع (لینک خام یا <a>) حذف می‌شود؛ بقیه‌ی لینک‌ها دست‌نخورده می‌مانند."""
+    if not t or not url: return t
+    host = re.sub(r"^[a-zA-Z]+://(www\.)?", "", str(url)).split("/")[0].strip().lower()
+    if not host or "." not in host: return t
+    h = re.escape(host)
+    t = re.sub(r'<a href="[^"]*' + h + r'[^"]*"[^>]*>.+?</a>', "", t, flags=re.I | re.S)
+    t = re.sub(r"https?://[^\s<>\"']*" + h + r"[^\s<>\"']*", "", t, flags=re.I)
+    t = re.sub(r"(?m)^[ \t]+$", "", t)
+    return t
+
+def finish_ok(t):
+    """اگر متن ناگهان وسط جمله قطع شده باشد، نشانه‌ی ادامه (« …») می‌گذارد — جمله‌ی تمام‌شده دست نمی‌خورد."""
+    if not t: return t
+    e = re.sub(r"(</[a-zA-Z]+>|\s)+$", "", t)
+    if e and re.search(r"[\w؀-ۿ،,؛:]$", e): return t.rstrip() + " …"
+    return t
+
+def split_html(text, limit=None):
+    limit = limit or config.MSG_LIMIT
+    if len(text) <= limit: return [text]
+    chunks, cur = [], ""
+    for para in text.split("\n"):
+        if len(cur) + len(para) + 1 > limit: chunks.append(sanitize_html(cur)); cur = para
+        else: cur = f"{cur}\n{para}" if cur else para
+    if cur: chunks.append(sanitize_html(cur))
+    return chunks
+
+def preview_text(html_text, n=100):
+    t = re.sub(r"\s+", " ", strip_tags(html_text).replace("\n", " ")).strip()
+    if len(t) <= n: return html.escape(t)
+    cut = t[:n]; sp = cut.rfind(" "); return html.escape(cut[:sp] if sp > n * 0.6 else cut) + " …"

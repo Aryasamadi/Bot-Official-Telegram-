@@ -109,7 +109,7 @@ def _cut_pos(text, limit):
     sp = cut.rfind(" ")
     return sp if sp > limit * 0.4 else len(cut)
 
-def split_post_html(text, limit):
+def split_post_html(text, limit, preserve_quote=True):
     """پست را در مرز امن به دو بخش «کانال + ادامه» می‌شکند؛ بخش دوم برای «ادامه در ربات» است و متنِ بخش اول را تکرار نمی‌کند."""
     if len(text) <= limit: return text, ""
     pos = _cut_pos(text, limit); head_raw, rest_raw = text[:pos], text[pos:]
@@ -117,10 +117,8 @@ def split_post_html(text, limit):
         gt = rest_raw.find(">")
         if "<" not in rest_raw[:gt]: rest_raw = rest_raw[gt + 1:]   # تکه‌ی نیمه‌تمامِ یک تگ از ابتدای ادامه حذف می‌شود
     head = sanitize_html(re.sub(r"<[^>]*$", "", head_raw)).rstrip() + " …"
-    # اگر برشِ فعلی (اگر وسطِ Quote واقع شده باشد، sanitize تگِ ناقص را حذف می‌کند) Quote را از بخشِ «کانال» برداشته باشد
-    # و Quote در ادامهٔ «ادامه در ربات» مانده باشد، مرزِ برش را به پایانِ نخستین Quote می‌رانیم تا Quote با کانال بماند؛
-    # Quote‌های بعدی و متنِ اضافی به بخشِ ربات می‌روند.
-    if "<blockquote" not in head.lower() and "<blockquote" in text.lower():
+    # Keep the first quote with the channel when requested, even if this requires extending the first chunk.
+    if preserve_quote and "<blockquote" not in head.lower() and "<blockquote" in text.lower():
         bq = text.lower().find("</blockquote>")
         if 0 <= bq and _cut_pos(text, limit) < bq:
             pos = bq + len("</blockquote>")
@@ -131,7 +129,8 @@ def split_post_html(text, limit):
 
 def fit_html(text, limit):
     if len(text) <= limit: return text, False
-    return split_post_html(text, limit)[0], True
+    # Unlike split_post_html (which may keep a quote with the channel), fit_html is a hard cap.
+    return split_post_html(text, max(1, limit - 2), preserve_quote=False)[0], True
 
 def clean_ai_text(t, s=None):
     """زباله‌های مدل حذف می‌شود: دیکشنری امتیازها («معیار»: ۹، ...) و تکه‌های JSON چسبیده به متن پست — هرگز به کانال یا ربات نمی‌رسد."""
@@ -141,7 +140,7 @@ def clean_ai_text(t, s=None):
     names = [str(c.get("name", "")).strip() for c in (s or {}).get("criteria", []) if c.get("name")]
     names += ["ارزش محتوایی", "غیرتبلیغاتی بودن", "کیفیت و کامل بودن", "ارتباط با موضوع کانال", "تازگی", "Content value", "Non-promotional", "Quality & completeness", "Relevance to channel topic", "Relevance", "Freshness"]
     num = r'(?:10|[0-9۰-۹])(?:[.,][0-9۰-۹])?'
-    pat = re.compile(r'["“«\']?([^"”»:\n]{2,40})(?:[\t ]:[\t ]["”»\']?[\t ]|[\t ]["”»\']?[\t ]:[\t ])' + num + r'[\t ]*[,،.؛;]?')
+    pat = re.compile(r'["“«\']?([^"”»:\n]{2,40}?)[\t ]*:[\t ]*["”»\']?[\t ]*' + num + r'[\t ]*[,،.؛;]?')
     def rep(m):
         label = m.group(1).strip()
         return "" if any(label and (label in n or n in label) for n in names) else m.group(0)

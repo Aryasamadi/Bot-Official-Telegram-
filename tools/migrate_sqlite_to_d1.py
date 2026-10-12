@@ -7,12 +7,12 @@ Idempotent: همه‌ی درج‌ها INSERT OR REPLACE هستند؛ اجرای 
     export CF_ACCOUNT_ID=... CF_D1_DATABASE_ID=... CF_D1_TOKEN=... DB_FILE=newsbot.db
     python tools/migrate_sqlite_to_d1.py
 """
-import asyncio, os, sqlite3, sys
+import asyncio, hashlib, json, os, sqlite3, sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import httpx
 from newsbot import config
-from newsbot.db import SCHEMA, DB_INDEXES, MIGRATIONS
+from newsbot.db import SCHEMA, DB_INDEXES, MIGRATIONS, REFERRAL_CREDIT_TRIGGER
 
 TABLES = ["users", "plans", "discounts", "channels", "sources", "usage", "articles", "posted",
           "ch_tokens", "ai_models", "deeplinks", "kv_cache", "pub_journal", "ai_cache", "dedup",
@@ -36,11 +36,15 @@ async def d1(client, sql, params=()):
 async def ensure_schema(client):
     for stmt in [s.strip() for s in (SCHEMA + "\n" + DB_INDEXES).split(";") if s.strip()]:
         await d1(client, stmt)
+    # meta is created by db._ensure_schema(), not included in SCHEMA; migration copies it too.
+    await d1(client, "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
     for tbl, col, decl in MIGRATIONS:
         res = await d1(client, "SELECT name FROM pragma_table_info(?)", (tbl,))
         cols = {row["name"] for row in (res.get("results") or [])}
         if col not in cols:
             await d1(client, f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
+    # Keep the atomic referral-wallet trigger in sync with the application schema.
+    await d1(client, REFERRAL_CREDIT_TRIGGER)
 
 
 async def copy_table(client, con, table):
@@ -58,14 +62,30 @@ async def copy_table(client, con, table):
     return len(rows)
 
 
+def _row_fingerprint(row):
+    """Canonical hash of every column; row counts alone cannot detect same-size data corruption."""
+    value = dict(row)
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 async def verify(client, con):
     bad = []
     for t in TABLES:
-        local = con.execute(f"SELECT COUNT(*) c FROM {t}").fetchone()["c"]
-        res = await d1(client, f"SELECT COUNT(*) c FROM {t}")
-        remote = (res.get("results") or [{}])[0].get("c", 0)
-        print(f"  {t}: local={local} d1={remote} {'OK' if local == remote else 'MISMATCH'}")
-        if local != remote:
+        local_rows = con.execute(f"SELECT * FROM {t}").fetchall()
+        local_hashes = sorted(_row_fingerprint(row) for row in local_rows)
+        remote_hashes, offset = [], 0
+        while True:
+            res = await d1(client, f"SELECT * FROM {t} LIMIT 500 OFFSET {offset}")
+            rows = res.get("results") or []
+            if not rows:
+                break
+            remote_hashes.extend(_row_fingerprint(row) for row in rows)
+            offset += len(rows)
+        remote_hashes.sort()
+        same = local_hashes == remote_hashes
+        print(f"  {t}: local={len(local_hashes)} d1={len(remote_hashes)} {'DATA OK' if same else 'MISMATCH'}")
+        if not same:
             bad.append(t)
     return bad
 
@@ -89,7 +109,7 @@ async def main():
         bad = await verify(client, con)
     con.close()
     if bad:
-        sys.exit(f"⛔ عدم تطابق در: {', '.join(bad)} — مهاجرت را دوباره اجرا کنید (idempotent است).")
+        sys.exit(f"⛔ داده‌های SQLite و D1 یکسان نیستند: {', '.join(bad)}. هیچ داده‌ای از مقصد حذف نشده؛ DB_BACKEND را تغییر ندهید و اختلاف‌ها را جداگانه بررسی کنید.")
     print("✅ مهاجرت کامل و verify شد.")
 
 

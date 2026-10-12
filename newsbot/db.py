@@ -12,7 +12,7 @@ from newsbot.timeutils import now_iso
 _lock = threading.RLock()      # فقط نوشتن‌ها را بین تردها سریال می‌کند
 _tls = threading.local()       # هر ترد کانکشن مخصوص خودش را دارد
 _SCHEMA_READY = False          # اسکیما/مایگریشن فقط یک‌بار در هر پروسه اجرا می‌شود
-SCHEMA_VERSION = 2             # v2: جدول‌های referrals و rate_limits + ستون claimed_at
+SCHEMA_VERSION = 3             # v3: اعتبار ارجاع با trigger اتمیک و جلوگیری از اعتباردهی تکراری
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT, name TEXT, role TEXT DEFAULT 'user', plan_id INTEGER, plan_expires TEXT, next_plan_id INTEGER, next_plan_days INTEGER, free_used INTEGER DEFAULT 0, banned INTEGER DEFAULT 0, lang TEXT, remind_key TEXT, premium INTEGER DEFAULT 0, created_at TEXT, last_seen TEXT);
@@ -55,6 +55,17 @@ CREATE INDEX IF NOT EXISTS idx_ai_cache_created ON ai_cache(created_at);
 CREATE INDEX IF NOT EXISTS idx_ref_referrer ON referrals(referrer_id);
 CREATE INDEX IF NOT EXISTS idx_rate_ts ON rate_limits(ts);
 """
+
+REFERRAL_CREDIT_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS trg_referral_credit_wallet
+AFTER UPDATE OF credited ON referrals
+FOR EACH ROW
+WHEN OLD.credited = 0 AND NEW.credited = 1 AND NEW.credit_amount > 0
+BEGIN
+    UPDATE users SET credit=COALESCE(credit,0)+NEW.credit_amount WHERE id=NEW.referrer_id;
+END
+"""
+
 MIGRATIONS = [("users", "next_plan_id", "INTEGER"), ("users", "next_plan_days", "INTEGER"), ("users", "lang", "TEXT"), ("users", "remind_key", "TEXT"), ("users", "premium", "INTEGER DEFAULT 0"),
               ("plans", "name_en", "TEXT"), ("plans", "price_en", "TEXT DEFAULT ''"), ("plans", "description_en", "TEXT DEFAULT ''"),
               ("channels", "verified_by", "INTEGER"), ("channels", "created_at", "TEXT"), ("channels", "settings", "TEXT"), ("channels", "original_admin_id", "INTEGER"),
@@ -98,9 +109,17 @@ class D1Row:
 
 class D1Cur:
     def __init__(self, rows, rowcount=0, lastrowid=None):
-        self._rows = rows; self.rowcount = rowcount; self.lastrowid = lastrowid
-    def fetchone(self): return self._rows[0] if self._rows else None
-    def fetchall(self): return list(self._rows)
+        self._rows = rows; self._idx = 0
+        self.rowcount = rowcount; self.lastrowid = lastrowid
+    def fetchone(self):
+        if self._idx >= len(self._rows): return None
+        row = self._rows[self._idx]
+        self._idx += 1
+        return row
+    def fetchall(self):
+        rows = self._rows[self._idx:]
+        self._idx = len(self._rows)
+        return list(rows)
 
 class D1Conn:
     """کانکشن D1: هر execute یک درخواست REST است؛ commit/rollback no-op (auto-commit).
@@ -111,19 +130,20 @@ class D1Conn:
         u = s.upper()
         if u.startswith(("BEGIN", "COMMIT", "ROLLBACK")): return D1Cur([], 0, None)
         if u.startswith("PRAGMA"): return D1Cur([], 0, None)
+        # D1 returns last_row_id in this request's metadata. Never issue a separate
+        # last_insert_rowid() query: that value belongs to a database connection/session.
+        is_insert = u.startswith("INSERT")
         r = _d1_client().post(_d1_url(), json={"sql": s, "params": list(params)}, headers=_d1_headers())
         if r.status_code >= 400: raise sqlite3.OperationalError(f"D1 HTTP {r.status_code}: {r.text[:200]}")
         j = r.json()
         if not j.get("success"): raise sqlite3.OperationalError(f"D1 error: {str(j.get('errors'))[:200]}")
         res = (j.get("result") or [{}])[0]
         rows = [D1Row(x) for x in (res.get("results") or [])]
-        changes = int((res.get("meta") or {}).get("changes") or 0)
-        lastrowid = None
-        if u.startswith("INSERT"):
-            # تک‌پروسه و زیر _lock برای نوشتن‌ها ⇒ last_insert_rowid() امن است
-            r2 = _d1_client().post(_d1_url(), json={"sql": "SELECT last_insert_rowid() AS lid", "params": []}, headers=_d1_headers())
-            try: lastrowid = (r2.json().get("result") or [{}])[0].get("results", [{}])[0].get("lid")
-            except Exception: lastrowid = None
+        meta = res.get("meta") or {}
+        changes = int(meta.get("changes") or 0)
+        lastrowid = meta.get("last_row_id") if is_insert else None
+        if is_insert:
+            rows = []  # Preserve sqlite3 cursor behavior for INSERT without RETURNING.
         return D1Cur(rows, rowcount=changes, lastrowid=lastrowid)
     def executescript(self, script):
         for stmt in [x.strip() for x in script.split(";") if x.strip()]:
@@ -184,6 +204,9 @@ def _ensure_schema(conn):
             if col not in have[tbl]:
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
                 have[tbl].add(col)
+        # The wallet credit and referral claim must be one atomic SQL statement.
+        # SQLite/D1 both execute the trigger as part of the UPDATE statement.
+        conn.execute(REFERRAL_CREDIT_TRIGGER)
         conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
         # ژورنال انتشار از جدول عمومی settings به جدول اختصاصی منتقل می‌شود (مایگریشن افزایشی و غیرمخرب)
         conn.execute("INSERT OR REPLACE INTO pub_journal(article_id,journal,updated_at) SELECT CAST(substr(key,6) AS INTEGER), value, ? FROM settings WHERE key LIKE 'pubj:%'", (now_iso(),))
@@ -248,8 +271,9 @@ def gget(k, default=None):
     return json.loads(r["value"]) if r else default
 
 def _trx(fn):
-    """تراکنش اتمیک (BEGIN IMMEDIATE + commit/rollback) روی sqlite؛ روی D1 اجرای ترتیبی
-    (عملیات حساس تک‌دستوره و اتمیک طراحی شده‌اند). خروجی fn بازگردانده می‌شود."""
+    """Atomic callback on SQLite only. NOT atomic on D1 REST: BEGIN/COMMIT/ROLLBACK are no-ops
+    and each execute auto-commits. Do not rely on rollback for D1 callers until each operation
+    is moved to a transaction-safe Worker operation or redesigned as atomic SQL. Returns fn's result."""
     with _lock:
         conn = db()
         try:

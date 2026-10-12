@@ -6,7 +6,8 @@ from datetime import timedelta
 from newsbot import config
 from newsbot.db import q
 from newsbot.timeutils import parse_dt, now_utc, now_iso
-from newsbot.text_format import sanitize_html, split_post_html, clean_ai_text, strip_source_url, ensure_quote, fit_html
+from newsbot.text_format import sanitize_html, split_post_html, clean_ai_text, strip_source_url, fit_html
+from newsbot.generate import ensure_quote
 from newsbot.logutils import redact
 from newsbot.net_http import is_private_host, public_url
 from newsbot.core_discounts import disc_create, disc_use, disc_refund, disc_valid
@@ -46,13 +47,13 @@ def test_strip_source_url_removes_only_source():
     assert "news.example.com" not in out and "other.org" in out
 
 def test_ensure_quote_and_fit():
-    assert "<blockquote>" in ensure_quote("<b>T</b>\n\nparagraph one here\n\nparagraph two here")
+    assert "<blockquote>" in ensure_quote("<b>T</b>\n\nThis paragraph contains an important sentence that is long enough to qualify as a quotation.\n\nThis is the second paragraph, which should remain unchanged.")
     txt, cut = fit_html("y" * 5000, 1000)
     assert cut is True and len(txt) <= 1000
 
 # ── امنیت ──
 def test_redact_masks_bot_token_and_keys():
-    s = redact("err BOT_TOKEN=123456789:AAabcdef and sk-proj-abcdef123456 and Bearer xyzxyzxyzxyz")
+    s = redact("err BOT_TOKEN=123456789:AAabcdefghijklmnopqrstuvwxyz1234567890 and sk-proj-abcdef123456 and Bearer xyzxyzxyzxyz")
     assert "123456789:AA" not in s and "sk-proj-" not in s and "xyzxyzxyzxyz" not in s
 
 def test_private_hosts_rejected():
@@ -80,14 +81,38 @@ def test_payment_claim_cas_and_stuck_recovery():
     assert pay_get(rid)["status"] == "pending"          # پرداخت گیرکرده بازیابی شد
 
 def test_referral_rules():
+    from concurrent.futures import ThreadPoolExecutor
+
+    q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(88001,'r','R','user',?,?)", (now_iso(), now_iso()), commit=True)
+    q("DELETE FROM referrals WHERE referred_id IN (?,?,?)", (88002, 88003, 88004), commit=True)
+    q("UPDATE users SET credit=0 WHERE id=?", (88001,), commit=True)
     assert record_referral(1, 1) is False                # self-referral ممنوع
     assert record_referral(88001, 88002) is True
     assert record_referral(88003, 88002) is False        # انتساب یکتا
-    q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(88001,'r','R','user',?,?)", (now_iso(), now_iso()), commit=True)
-    rid, amt = credit_referral_on_payment(88002, 100.0)
-    assert rid == 88001 and amt == round(100.0 * config.REFERRAL_PERCENT / 100, 2)
-    assert credit_referral_on_payment(88002, 100.0) is None   # idempotent
-    assert referral_stats(88001)[0] == 1
+    assert record_referral(88001, 88004) is True
+    trigger = q("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_referral_credit_wallet'", one=True)
+    assert trigger is not None
+
+    # Simultaneous duplicate confirmations and the per-referrer cap must not over-credit.
+    old_cap = config.REFERRAL_MAX_PER_USER
+    config.REFERRAL_MAX_PER_USER = 1
+    try:
+        calls = [88002] * 4 + [88004] * 4
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda uid: credit_referral_on_payment(uid, 100.0), calls))
+    finally:
+        config.REFERRAL_MAX_PER_USER = old_cap
+    credited = [x for x in results if x is not None]
+    assert len(credited) == 1
+    rid, amt = credited[0]
+    expected = round(100.0 * config.REFERRAL_PERCENT / 100, 2)
+    assert rid == 88001 and amt == expected
+    wallet = q("SELECT credit FROM users WHERE id=?", (88001,), one=True)
+    assert round(float(wallet["credit"] or 0), 2) == expected
+    rows = q("SELECT referred_id,credited,credit_amount FROM referrals WHERE referred_id IN (?,?)", (88002, 88004))
+    assert len(rows) == 2 and all(row["credited"] == 1 for row in rows)
+    assert sum(float(row["credit_amount"] or 0) for row in rows) == expected
+    assert referral_stats(88001)[0] == 2
 
 def test_upgrade_quote_proration():
     pid = create_plan(name="P1", days=30, price_num=30)
@@ -118,8 +143,12 @@ def test_ai_budget_isolated_per_task():
         budget_reset()
         b = _budget(); b["calls"] += 5
         return b["calls"]
-    r = asyncio.get_event_loop().run_until_complete(asyncio.gather(one(), one())) if False else asyncio.run(asyncio.gather(one(), one()))
-    assert r == [5, 5]      # بودجهٔ دو تسک هم‌زمان با هم تداخل ندارد (FIX v4)
+
+    async def run_both():
+        return await asyncio.gather(one(), one())
+
+    # asyncio.run needs a coroutine, not the Future returned directly by gather().
+    assert asyncio.run(run_both()) == [5, 5]      # بودجهٔ دو تسک هم‌زمان با هم تداخل ندارد (FIX v4)
 
 def test_parse_json_multiline_strings():
     j = parse_json('{"post": "line1\nline2", "scores": {"a": 5}}')
@@ -130,3 +159,45 @@ def test_ad_filter_does_not_reject_clean_news():
            "title": "گزارش نشست اقتصادی", "url": "https://example.com/news/1234"}
     is_ad, why, score = heuristic_ad_check(art)
     assert is_ad is False
+
+
+def test_d1_insert_uses_returning_in_single_request(monkeypatch):
+    import importlib
+    db_module = importlib.import_module("newsbot.db")
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"success": True, "result": [{"results": [], "meta": {"changes": 1, "last_row_id": 123}}]}
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, json, headers):
+            self.calls.append(json)
+            return Response()
+
+    client = Client()
+    monkeypatch.setattr(db_module, "_d1_client", lambda: client)
+    cur = db_module.D1Conn().execute("INSERT INTO channels(admin_id) VALUES(?)", (1,))
+
+    assert cur.lastrowid == 123
+    assert cur.rowcount == 1
+    assert cur.fetchall() == []
+    assert len(client.calls) == 1
+    assert client.calls[0]["sql"] == "INSERT INTO channels(admin_id) VALUES(?)"
+
+
+
+def test_d1_cursor_fetch_advances_like_sqlite():
+    from newsbot.db import D1Cur, D1Row
+
+    cur = D1Cur([D1Row({"n": 1}), D1Row({"n": 2}), D1Row({"n": 3})])
+    assert cur.fetchone()["n"] == 1
+    assert [row["n"] for row in cur.fetchall()] == [2, 3]
+    assert cur.fetchone() is None
+    assert cur.fetchall() == []

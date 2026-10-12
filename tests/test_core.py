@@ -6,7 +6,8 @@ from datetime import timedelta
 from newsbot import config
 from newsbot.db import q
 from newsbot.timeutils import parse_dt, now_utc, now_iso
-from newsbot.text_format import sanitize_html, split_post_html, clean_ai_text, strip_source_url, ensure_quote, fit_html
+from newsbot.text_format import sanitize_html, split_post_html, clean_ai_text, strip_source_url, fit_html
+from newsbot.generate import ensure_quote
 from newsbot.logutils import redact
 from newsbot.net_http import is_private_host, public_url
 from newsbot.core_discounts import disc_create, disc_use, disc_refund, disc_valid

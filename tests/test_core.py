@@ -84,17 +84,24 @@ def test_referral_rules():
     from concurrent.futures import ThreadPoolExecutor
 
     q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(88001,'r','R','user',?,?)", (now_iso(), now_iso()), commit=True)
-    q("DELETE FROM referrals WHERE referred_id IN (?,?)", (88002, 88003), commit=True)
+    q("DELETE FROM referrals WHERE referred_id IN (?,?,?)", (88002, 88003, 88004), commit=True)
     q("UPDATE users SET credit=0 WHERE id=?", (88001,), commit=True)
     assert record_referral(1, 1) is False                # self-referral ممنوع
     assert record_referral(88001, 88002) is True
     assert record_referral(88003, 88002) is False        # انتساب یکتا
+    assert record_referral(88001, 88004) is True
     trigger = q("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_referral_credit_wallet'", one=True)
     assert trigger is not None
 
-    # Concurrent payment confirmations must award one credit only.
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(lambda _: credit_referral_on_payment(88002, 100.0), range(8)))
+    # Simultaneous duplicate confirmations and the per-referrer cap must not over-credit.
+    old_cap = config.REFERRAL_MAX_PER_USER
+    config.REFERRAL_MAX_PER_USER = 1
+    try:
+        calls = [88002] * 4 + [88004] * 4
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda uid: credit_referral_on_payment(uid, 100.0), calls))
+    finally:
+        config.REFERRAL_MAX_PER_USER = old_cap
     credited = [x for x in results if x is not None]
     assert len(credited) == 1
     rid, amt = credited[0]
@@ -102,7 +109,10 @@ def test_referral_rules():
     assert rid == 88001 and amt == expected
     wallet = q("SELECT credit FROM users WHERE id=?", (88001,), one=True)
     assert round(float(wallet["credit"] or 0), 2) == expected
-    assert referral_stats(88001)[0] == 1
+    rows = q("SELECT referred_id,credited,credit_amount FROM referrals WHERE referred_id IN (?,?)", (88002, 88004))
+    assert len(rows) == 2 and all(row["credited"] == 1 for row in rows)
+    assert sum(float(row["credit_amount"] or 0) for row in rows) == expected
+    assert referral_stats(88001)[0] == 2
 
 def test_upgrade_quote_proration():
     pid = create_plan(name="P1", days=30, price_num=30)

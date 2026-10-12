@@ -12,7 +12,7 @@ import asyncio, hashlib, json, os, sqlite3, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import httpx
 from newsbot import config
-from newsbot.db import SCHEMA, DB_INDEXES, MIGRATIONS
+from newsbot.db import SCHEMA, DB_INDEXES, MIGRATIONS, REFERRAL_CREDIT_TRIGGER
 
 TABLES = ["users", "plans", "discounts", "channels", "sources", "usage", "articles", "posted",
           "ch_tokens", "ai_models", "deeplinks", "kv_cache", "pub_journal", "ai_cache", "dedup",
@@ -43,6 +43,8 @@ async def ensure_schema(client):
         cols = {row["name"] for row in (res.get("results") or [])}
         if col not in cols:
             await d1(client, f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
+    # Keep the atomic referral-wallet trigger in sync with the application schema.
+    await d1(client, REFERRAL_CREDIT_TRIGGER)
 
 
 async def copy_table(client, con, table):

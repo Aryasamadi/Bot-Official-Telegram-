@@ -109,9 +109,17 @@ class D1Row:
 
 class D1Cur:
     def __init__(self, rows, rowcount=0, lastrowid=None):
-        self._rows = rows; self.rowcount = rowcount; self.lastrowid = lastrowid
-    def fetchone(self): return self._rows[0] if self._rows else None
-    def fetchall(self): return list(self._rows)
+        self._rows = rows; self._idx = 0
+        self.rowcount = rowcount; self.lastrowid = lastrowid
+    def fetchone(self):
+        if self._idx >= len(self._rows): return None
+        row = self._rows[self._idx]
+        self._idx += 1
+        return row
+    def fetchall(self):
+        rows = self._rows[self._idx:]
+        self._idx = len(self._rows)
+        return list(rows)
 
 class D1Conn:
     """کانکشن D1: هر execute یک درخواست REST است؛ commit/rollback no-op (auto-commit).

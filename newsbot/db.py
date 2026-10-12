@@ -271,8 +271,9 @@ def gget(k, default=None):
     return json.loads(r["value"]) if r else default
 
 def _trx(fn):
-    """تراکنش اتمیک (BEGIN IMMEDIATE + commit/rollback) روی sqlite؛ روی D1 اجرای ترتیبی
-    (عملیات حساس تک‌دستوره و اتمیک طراحی شده‌اند). خروجی fn بازگردانده می‌شود."""
+    """Atomic callback on SQLite only. NOT atomic on D1 REST: BEGIN/COMMIT/ROLLBACK are no-ops
+    and each execute auto-commits. Do not rely on rollback for D1 callers until each operation
+    is moved to a transaction-safe Worker operation or redesigned as atomic SQL. Returns fn's result."""
     with _lock:
         conn = db()
         try:

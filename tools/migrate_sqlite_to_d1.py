@@ -107,7 +107,7 @@ async def main():
         bad = await verify(client, con)
     con.close()
     if bad:
-        sys.exit(f"⛔ عدم تطابق در: {', '.join(bad)} — مهاجرت را دوباره اجرا کنید (idempotent است).")
+        sys.exit(f"⛔ داده‌های SQLite و D1 یکسان نیستند: {', '.join(bad)}. هیچ داده‌ای از مقصد حذف نشده؛ DB_BACKEND را تغییر ندهید و اختلاف‌ها را جداگانه بررسی کنید.")
     print("✅ مهاجرت کامل و verify شد.")
 
 

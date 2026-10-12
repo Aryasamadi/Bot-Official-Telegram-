@@ -134,3 +134,34 @@ def test_ad_filter_does_not_reject_clean_news():
            "title": "گزارش نشست اقتصادی", "url": "https://example.com/news/1234"}
     is_ad, why, score = heuristic_ad_check(art)
     assert is_ad is False
+
+
+def test_d1_insert_uses_returning_in_single_request(monkeypatch):
+    import importlib
+    db_module = importlib.import_module("newsbot.db")
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"success": True, "result": [{"results": [{"rowid": 123}], "meta": {"changes": 1}}]}
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, json, headers):
+            self.calls.append(json)
+            return Response()
+
+    client = Client()
+    monkeypatch.setattr(db_module, "_d1_client", lambda: client)
+    cur = db_module.D1Conn().execute("INSERT INTO channels(admin_id) VALUES(?)", (1,))
+
+    assert cur.lastrowid == 123
+    assert cur.rowcount == 1
+    assert cur.fetchall() == []
+    assert len(client.calls) == 1
+    assert client.calls[0]["sql"].endswith("RETURNING rowid")

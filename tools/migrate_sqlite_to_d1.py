@@ -7,7 +7,7 @@ Idempotent: همه‌ی درج‌ها INSERT OR REPLACE هستند؛ اجرای 
     export CF_ACCOUNT_ID=... CF_D1_DATABASE_ID=... CF_D1_TOKEN=... DB_FILE=newsbot.db
     python tools/migrate_sqlite_to_d1.py
 """
-import asyncio, os, sqlite3, sys
+import asyncio, hashlib, json, os, sqlite3, sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import httpx
@@ -60,14 +60,30 @@ async def copy_table(client, con, table):
     return len(rows)
 
 
+def _row_fingerprint(row):
+    """Canonical hash of every column; row counts alone cannot detect same-size data corruption."""
+    value = dict(row)
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 async def verify(client, con):
     bad = []
     for t in TABLES:
-        local = con.execute(f"SELECT COUNT(*) c FROM {t}").fetchone()["c"]
-        res = await d1(client, f"SELECT COUNT(*) c FROM {t}")
-        remote = (res.get("results") or [{}])[0].get("c", 0)
-        print(f"  {t}: local={local} d1={remote} {'OK' if local == remote else 'MISMATCH'}")
-        if local != remote:
+        local_rows = con.execute(f"SELECT * FROM {t}").fetchall()
+        local_hashes = sorted(_row_fingerprint(row) for row in local_rows)
+        remote_hashes, offset = [], 0
+        while True:
+            res = await d1(client, f"SELECT * FROM {t} LIMIT 500 OFFSET {offset}")
+            rows = res.get("results") or []
+            if not rows:
+                break
+            remote_hashes.extend(_row_fingerprint(row) for row in rows)
+            offset += len(rows)
+        remote_hashes.sort()
+        same = local_hashes == remote_hashes
+        print(f"  {t}: local={len(local_hashes)} d1={len(remote_hashes)} {'DATA OK' if same else 'MISMATCH'}")
+        if not same:
             bad.append(t)
     return bad
 

@@ -54,6 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_kvcache_cached ON kv_cache(cached_at);
 CREATE INDEX IF NOT EXISTS idx_ai_cache_created ON ai_cache(created_at);
 CREATE INDEX IF NOT EXISTS idx_ref_referrer ON referrals(referrer_id);
 CREATE INDEX IF NOT EXISTS idx_rate_ts ON rate_limits(ts);
+"""
 
 REFERRAL_CREDIT_TRIGGER = """
 CREATE TRIGGER IF NOT EXISTS trg_referral_credit_wallet

@@ -2,7 +2,7 @@
 """پرامپت، تولید با AI، کش خروجی و ترکیب نهایی.
 FIX v4: بودجه‌ی هر مقاله با ai_models.budget_reset() (ContextVar) شروع می‌شود، نه global.
 """
-import asyncio, hashlib, json, re, time
+import asyncio, hashlib, json, re
 from newsbot import config
 from newsbot.db import q
 from newsbot.logutils import log, redact
@@ -156,11 +156,17 @@ def make_tail(s, ch, url):
     return ("\n" + sig) if sig else ""
 
 def ensure_quote(t):
-    """اجبارِ quote: اگر مدل بلاک‌کوت نگذاشته باشد، یک پاراگراف مهمِ میانی خودکار داخل <blockquote> گذاشته می‌شود."""
+    """اجبارِ quote: اگر مدل بلاک‌کوت نگذاشته باشد، یک پاراگراف مهمِ میانی خودکار داخل <blockquote> گذاشته می‌شود.
+    کاندیدها بر پایهٔ طولِ متنِ پاراگراف انتخاب می‌شوند؛ برچسب‌های ساختاری (بولت، لینک، pre/code) کنار می‌روند.
+    حداقلِ طول در صورت نبودِ پاراگرافِ بلند تا ۱۲ کاراکتر پایین می‌آید تا قیدِ «الزامی» قرارداد پرامپت
+    روی پست‌های چندپاراگرافیِ کوتاه هم برآورده شود (پیش‌تر با آستانهٔ ثابتِ ۳۰، قید بی‌صدا رها می‌شد)."""
     if not t or "<blockquote" in t.lower(): return t
     parts = str(t).split("\n\n")
     if len(parts) < 2: return t
-    cand = [i for i in range(1, len(parts)) if 30 <= len(strip_tags(parts[i]).strip()) <= 500 and not parts[i].lstrip().startswith(("•", "#", "🔗", "<a", "<pre", "<code"))]
+    def _ok(i, lo):
+        txt = strip_tags(parts[i]).strip()
+        return lo <= len(txt) <= 500 and not parts[i].lstrip().startswith(("•", "#", "🔗", "<a", "<pre", "<code"))
+    cand = [i for i in range(1, len(parts)) if _ok(i, 30)] or [i for i in range(1, len(parts)) if _ok(i, 12)]
     if not cand: return t
     i = cand[len(cand) // 2] if len(cand) > 1 else cand[0]; parts[i] = f"<blockquote>{parts[i].strip()}</blockquote>"
     return "\n\n".join(parts)

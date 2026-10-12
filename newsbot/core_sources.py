@@ -4,7 +4,7 @@ import sqlite3
 from datetime import timedelta
 from newsbot import config
 from newsbot.db import q
-from newsbot.logutils import log, log_event, bump, redact
+from newsbot.logutils import log, bump, redact
 from newsbot.timeutils import now_utc, now_iso
 
 

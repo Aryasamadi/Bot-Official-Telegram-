@@ -19,11 +19,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt
+      - name: Static guard (pyflakes — zero undefined names)
+        run: python -m pyflakes newsbot tools run.py tests
       - name: Syntax check (all modules)
         run: python -m py_compile run.py $(find newsbot tools tests -name '*.py')
       - name: Unit + integration tests
         run: pytest -q
+      - name: Independent verification (Phase 10)
+        run: python tools/final_verification.py
       - name: Config self-check (dummy env)
         env:
           BOT_TOKEN: "123456789:AAci_dummy_token_for_preflight_check_only_0000"

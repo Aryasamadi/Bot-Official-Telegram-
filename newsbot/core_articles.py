@@ -8,8 +8,8 @@ from datetime import timedelta
 from telegram.error import BadRequest, RetryAfter, NetworkError, Forbidden
 from newsbot import config
 from newsbot.db import q, db, _lock, _safe_fields, _trx, gget, gset
-from newsbot.logutils import log, bump
-from newsbot.timeutils import now_utc, now_iso, parse_dt, today_str
+from newsbot.logutils import log
+from newsbot.timeutils import now_utc, now_iso, today_str
 from newsbot.ratelimit import rate_mark, rate_cleanup
 from newsbot.core_users import admin_limits, admin_offset
 from newsbot.concurrency import ch_lock
@@ -204,7 +204,9 @@ def cleanup():
         except Exception: log.debug("cleanup hook failed", exc_info=True)
     def _go(conn):
         conn.execute("DELETE FROM articles WHERE created_at <? AND status NOT IN ('ready','published')", (ttl,))
-        conn.execute("DELETE FROM articles WHERE created_at <? AND status='published'", ((now_utc() - timedelta(hours=72)).isoformat(),))
+        # ردیف‌های status='published' هرگز حذف نمی‌شوند.
+        # (قبلاً این‌جا DELETE ... status='published' AND created_at<72h بود که با بخش ۴ مأموریت
+        #  «حفظ دقیق محتوای تولیدشده توسط ایجنت» در تضاد مستقیم بود — تصمیم C4: حذف کامل آن.)
         conn.execute("DELETE FROM posted WHERE posted_at <?", ((now_utc() - timedelta(days=90)).isoformat(),))
         conn.execute("DELETE FROM dedup WHERE ts <?", ((now_utc() - timedelta(hours=config.DEDUP_TTL_HOURS)).isoformat(),))
         conn.execute("DELETE FROM pub_journal WHERE article_id NOT IN (SELECT id FROM articles)")

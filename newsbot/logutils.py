@@ -13,14 +13,27 @@ _logctx = ContextVar("logctx", default=None)   # {op, channel, article, source, 
 
 def redact(x):
     """رازها را از متن پاک می‌کند پیش از ذخیره یا نمایش.
-    ترتیب مهم است: اول طرح‌های اعتبارسنجی (Bearer/Basic) تا خودِ توکن پاک شود نه کلمهٔ طرح."""
+    ترتیب مهم است:
+      ۱) توکن ربات تلگرام (قالب «عدد:رشته») — پیش از الگوی کلیدها، وگرنه الگوی کلیدِ عمومی
+         مقدار «عدد:رشته» را ناقص می‌خورد و پسوندِ توکن (مثل «:AAabcdef») بی‌ماسک می‌ماند.
+      ۲) طرح‌های اعتبارسنجی (Bearer/Basic) — خودِ توکن پاک می‌شود نه کلمهٔ طرح.
+      ۳) کلیدهای نام‌دار (token=، api_key=، ...) — با کوتاه‌ترین پوشش ممکن تا عددِ پیشوندی توکن گیر نکند.
+    """
     t = str(x if x is not None else "")
-    t = re.sub(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9-._~+/=]{8,}", r"\1 •••", t)
-    t = re.sub(r"(?i)\b(apikey|api[-_]?key|access[-_]?token|auth[-_]?token|secret|password|passwd|authorization|token)([=:\s]+)[^\s&\"',;]{6,}", r"\1\2•••", t)
+    # ۱) توکن ربات تلگرام: هم قالب کامل (۳۰+ کاراکتر) و هم قالب کوتاهِ آزمایشی/نمونه.
+    t = re.sub(r"\b\d{6,}:[A-Za-z0-9_-]{6,}", "•••", t)
+    # ۲) Bearer/Basic: کل مقدار پس از طرح ماسک می‌شود (طرح دست‌نخورده می‌ماند)
+    t = re.sub(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9\-._~+/=]{8,}", r"\1 •••", t)
+    # ۳) کلیدهای نام‌دار: پس از «=/:» دقیقاً تا مرز جداسازنده ماسک می‌کند — بدون خوردنِ کاراکترِ بیش از حد.
+    t = re.sub(r"(?i)\b(apikey|api[-_]?key|access[-_]?token|auth[-_]?token|secret|password|passwd|authorization|token|bot[-_]?token)(\s*[=:]\s*)([^\s&\"',;]{4,})", r"\1\2•••", t)
+    # ۴) طرح‌های کلیدِ رایج
     t = re.sub(r"(?i)\bsk-[A-Za-z0-9_-]{12,}|\bAIza[0-9A-Za-z_-]{25,}", "•••", t)
-    t = re.sub(r"\b\d{6,}:[A-Za-z0-9_-]{30,}", "•••", t)   # FIX v4: توکن ربات تلگرام
-    t = re.sub(r"(?<!\d)(?:\d[ -]?){14,18}\d(?!\d)", "•••", t)   # شماره کارت
-    return re.sub(r"(?i)([?](?:key|api_key|apikey|token|access_token)[&](?:key|api_key|apikey|token|access_token)=)[^&\s]+", r"\1•••", t)
+    # ۵) شماره کارت
+    t = re.sub(r"(?<!\d)(?:\d[ -]?){14,18}\d(?!\d)", "•••", t)
+    # ۶) کلیدهای داخل query-string — *هر* جفتِ حساس، نه فقط آخری.
+    # نسخهٔ قبلی الگوی «?key=…&token=…» را یک‌تکه می‌دید و فقط مقدارِ جفتِ *آخر* را ماسک می‌کرد؛
+    # نتیجه: در «?key=AAA&token=BBB» مقدارِ AAA بی‌ماسک می‌ماند (نشت واقعی).
+    return re.sub(r"(?i)([?&](?:key|api[-_]?key|apikey|token|access[-_]?token|auth[-_]?token|secret|password)=)[^&\s\"']+", r"\1•••", t)
 
 def log_ctx(**kw):
     """فیلدهای زمینه را برای لاگ‌های همین تسک می‌چسباند (ContextVar ⇒ بین کانال‌ها قاطی نمی‌شود)."""

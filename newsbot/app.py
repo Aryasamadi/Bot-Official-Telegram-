@@ -5,11 +5,11 @@ FIX v4:
   • preflight بک‌اند D1 و MAX_QUEUE_SIZE و کانال اجباری را هم اعتبارسنجی می‌کند
   • post_init با set_bot() بطریِ تلگرام را به ui_widgets می‌دهد (بدون APP سراسری در لایه‌ی UI)
 """
-import asyncio, html, os, re, sys
+import asyncio, html, os, re
 from telegram import BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 from newsbot import config
-from newsbot.db import db, q, gget, gset
+from newsbot.db import db, gget, gset
 from newsbot.logutils import log, log_event
 from newsbot.ratelimit import _rate_load_persisted
 from newsbot.core_plans import seed_plans

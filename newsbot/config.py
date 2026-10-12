@@ -22,8 +22,8 @@ CF_D1_TOKEN = os.getenv("CF_D1_TOKEN", "").strip() or os.getenv("CF_API_TOKEN", 
 D1_TIMEOUT = float(os.getenv("D1_TIMEOUT", "30"))
 
 # ── نگهداری داده ──
-DATA_TTL_HOURS = int(os.getenv("DATA_TTL_HOURS", "48"))
-DEDUP_TTL_HOURS = int(os.getenv("DEDUP_TTL_HOURS", "48"))
+DATA_TTL_HOURS = int(os.getenv("DATA_TTL_HOURS", "72"))
+DEDUP_TTL_HOURS = int(os.getenv("DEDUP_TTL_HOURS", "72"))
 DEEPLINK_TTL_DAYS = int(os.getenv("DEEPLINK_TTL_DAYS", "30"))
 DEEPLINK_KEEP_MIN = 5000
 
@@ -66,6 +66,9 @@ CF_ENABLED = bool(CF_ACCOUNT_ID and CF_KV_NAMESPACE_ID and CF_API_TOKEN)
 # ── ارجاع (Referral) ──
 REFERRAL_ENABLED = os.getenv("REFERRAL_ENABLED", "1").strip() == "1"
 REFERRAL_PERCENT = max(0.0, min(50.0, float(os.getenv("REFERRAL_PERCENT", "10"))))
+# سقف تعداد اعتبارهای پرداخت‌محور برای هر معرف (core_referrals). قبلاً این متغیر در config نبود
+# و .env.example آن را مستند می‌کرد ⇒ هر مسیر اعتبار ارجاع با AttributeError می‌ترکید.
+REFERRAL_MAX_PER_USER = max(0, int(os.getenv("REFERRAL_MAX_PER_USER", "50")))
 
 # ── کانال اجباری (فقط برای ادمین‌ها) ──
 MANDATORY_CHANNEL_ID = os.getenv("MANDATORY_CHANNEL_ID", "").strip()

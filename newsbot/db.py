@@ -87,6 +87,35 @@ def _d1_url():
     return f"https://api.cloudflare.com/client/v4/accounts/{config.CF_ACCOUNT_ID}/d1/database/{config.CF_D1_DATABASE_ID}/query"
 def _d1_headers(): return {"Authorization": f"Bearer {config.CF_D1_TOKEN}"}
 
+def _d1_batch(stmts):
+    """اجرای چند دستور در یک درخواست D1 به‌صورت *اتمیک* (batch API).
+    D1 تراکنش تعاملی ندارد، ولی batch را «یک تراکنش» می‌بیند: اگر هر دستور شکست بخورد
+    کل batch رول‌بک می‌شود. بنابراین این تابع معادل واقعی BEGIN IMMEDIATE…COMMIT روی D1 است.
+    stmts: فهرست [(sql, params), …] — ترتیب دقیقاً حفظ می‌شود.
+    خروجی: فهرست D1Cur هم‌ترتیب با ورودی (lastrowid برای INSERTها پر می‌شود)."""
+    payload = [{"sql": s.strip(), "params": list(p or ())} for s, p in stmts]
+    r = _d1_client().post(_d1_url(), json={"batch": payload}, headers=_d1_headers())
+    if r.status_code >= 400: raise sqlite3.OperationalError(f"D1 HTTP {r.status_code}: {r.text[:200]}")
+    j = r.json()
+    if not j.get("success"): raise sqlite3.OperationalError(f"D1 batch error: {str(j.get('errors'))[:200]}")
+    results = j.get("result") or []
+    curs, inserts = [], []
+    for i, res in enumerate(results):
+        rows = [D1Row(x) for x in (res.get("results") or [])]
+        changes = int((res.get("meta") or {}).get("changes") or 0)
+        lid = (res.get("meta") or {}).get("last_row_id")
+        curs.append(D1Cur(rows, rowcount=changes, lastrowid=lid))
+        if str(payload[i]["sql"]).upper().startswith("INSERT"): inserts.append((i, i))
+    # اگر D1 شناسهٔ درج را برنگرداند، برای هر INSERT جداگانه last_insert_rowid() خوانده می‌شود.
+    for i, _ in inserts:
+        if curs[i].lastrowid is None:
+            try:
+                r2 = _d1_client().post(_d1_url(), json={"sql": "SELECT last_insert_rowid() AS lid", "params": []}, headers=_d1_headers())
+                curs[i].lastrowid = (r2.json().get("result") or [{}])[0].get("results", [{}])[0].get("lid")
+            except Exception:
+                pass
+    return curs
+
 class D1Row:
     """سطر شبه‌sqlite3.Row: نگاشت کلیدی + پشتیبانی dict() و keys()."""
     __slots__ = ("_d",)
@@ -131,6 +160,27 @@ class D1Conn:
         return self
     def commit(self): pass
     def rollback(self): pass
+    def close(self): pass
+
+class D1BatchConn:
+    """کانکشن موقتِ داخل _trx روی D1: دستورات را جمع می‌کند و در پایان به‌صورت یک batch
+    اتمیک به D1 می‌فرستد. خواندن (SELECT) همان‌جا و بلافاصله انجام می‌شود تا منطق
+    «بخوان-تصمیم بگیر» فقط برای دادهٔ *پیش از* تراکنش باشد (D1 هم همین محدودیت را دارد).
+    تا زمانی که batch ارسال نشده، rollback یعنی «هیچ‌چیز ارسال نشد» — پس اتمیک است."""
+    def __init__(self, base): self._base = base; self._stmts = []
+    def execute(self, sql, params=()):
+        s = sql.strip(); u = s.upper()
+        if u.startswith(("BEGIN", "COMMIT", "ROLLBACK")): return D1Cur([], 0, None)
+        if u.startswith("PRAGMA"): return D1Cur([], 0, None)
+        if u.startswith(("SELECT", "WITH")):
+            return self._base.execute(sql, params)   # خواندن فوری (بدون اثر جانبی)
+        self._stmts.append((s, params))
+        return D1Cur([], 0, None)
+    def flush(self):
+        if not self._stmts: return
+        _d1_batch(self._stmts); self._stmts = []
+    def commit(self): pass
+    def rollback(self): self._stmts = []
     def close(self): pass
 
 def _init_conn():
@@ -248,9 +298,22 @@ def gget(k, default=None):
     return json.loads(r["value"]) if r else default
 
 def _trx(fn):
-    """تراکنش اتمیک (BEGIN IMMEDIATE + commit/rollback) روی sqlite؛ روی D1 اجرای ترتیبی
-    (عملیات حساس تک‌دستوره و اتمیک طراحی شده‌اند). خروجی fn بازگردانده می‌شود."""
+    """تراکنش اتمیک. خروجی fn بازگردانده می‌شود.
+
+    sqlite: BEGIN IMMEDIATE + commit/rollback (اتمیسین حالت ممکن).
+    d1    : دستورات نوشتاریِ fn تا پایان در حافظه جمع می‌شوند و یک‌جا به‌صورت یک batch
+            اتمیک فرستاده می‌شوند؛ اگر fn وسط کار خطا بدهد هیچ دستوری ارسال نمی‌شود.
+            (`BEGIN IMMEDIATE` روی D1 پشتیبانی نمی‌شود و قبلاً no-op بود ⇒ نیمه‌کاره‌ماندن.)
+    """
     with _lock:
+        if config.DB_BACKEND == "d1":
+            conn = D1BatchConn(db())
+            try:
+                result = fn(conn)
+                conn.flush()
+                return result
+            except BaseException:
+                conn.rollback(); raise
         conn = db()
         try:
             conn.execute("BEGIN IMMEDIATE")

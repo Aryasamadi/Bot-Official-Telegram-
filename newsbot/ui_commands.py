@@ -12,7 +12,7 @@ from newsbot.core_payments import support_open
 from newsbot.net_http import load_deeplink
 from newsbot.text_format import fit_html, split_html, downgrade_html, preview_text
 from newsbot.ui_i18n import tr, gtext
-from newsbot.ui_widgets import B, render, popup, operation_text, run_user_operation, go_home, L
+from newsbot.ui_widgets import B, render, popup, operation_text, run_user_operation, go_home
 from newsbot.opctx import _current_operation
 from newsbot.ui_views_user import view_lang, view_plans
 from newsbot.ui_views_admin import view_admin_home

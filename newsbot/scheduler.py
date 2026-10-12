@@ -9,9 +9,9 @@ from newsbot.db import q, gget, gset
 from newsbot.logutils import log, log_event, metrics_text
 from newsbot.timeutils import now_utc, now_iso, parse_dt, fmt_date, ago_text, off_label
 from newsbot.notify import notify_user
-from newsbot.core_users import expiring_users, list_admins, count_users, admin_limits, usage_today, is_super
+from newsbot.core_users import expiring_users, list_admins, count_users, admin_limits, usage_today, is_super, remaining
 from newsbot.core_plans import get_plan, plan_txt, list_plans, recover_stuck_payments
-from newsbot.core_channels import list_channels, get_settings, get_channel
+from newsbot.core_channels import list_channels, get_settings, get_channel, update_settings, in_quiet
 from newsbot.core_sources import list_sources
 from newsbot.core_articles import ready_count, count_articles, recover_publications
 from newsbot.core_payments import pay_pending

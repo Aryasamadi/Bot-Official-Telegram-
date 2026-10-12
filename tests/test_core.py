@@ -6,13 +6,14 @@ from datetime import timedelta
 from newsbot import config
 from newsbot.db import q
 from newsbot.timeutils import parse_dt, now_utc, now_iso
-from newsbot.text_format import sanitize_html, split_post_html, clean_ai_text, strip_source_url, ensure_quote, fit_html
+from newsbot.text_format import sanitize_html, split_post_html, clean_ai_text, strip_source_url, fit_html
+from newsbot.generate import ensure_quote
 from newsbot.logutils import redact
 from newsbot.net_http import is_private_host, public_url
 from newsbot.core_discounts import disc_create, disc_use, disc_refund, disc_valid
 from newsbot.core_plans import (create_plan, assign_plan, upgrade_quote, proration_remaining_days,
-                                recover_stuck_payments, _price_num)
-from newsbot.core_payments import pay_create, pay_claim, pay_get, pay_set
+                                recover_stuck_payments)
+from newsbot.core_payments import pay_create, pay_claim, pay_get
 from newsbot.core_referrals import record_referral, credit_referral_on_payment, referral_stats
 from newsbot.core_users import channel_posts_today
 from newsbot.core_channels import add_channel
@@ -80,10 +81,14 @@ def test_payment_claim_cas_and_stuck_recovery():
     assert pay_get(rid)["status"] == "pending"          # پرداخت گیرکرده بازیابی شد
 
 def test_referral_rules():
+    # referrer (۱) باید واقعاً در جدول کاربران وجود داشته باشد؛ وگرنه record_referral
+    # طبق قاعدهٔ «معرف باید وجود داشته باشد» درست رد می‌کند و تست بی‌جهت شکست می‌خورد.
+    q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(?,?,?,?,?,?)", (1, "ref", "Ref", "user", now_iso(), now_iso()), commit=True)
     assert record_referral(1, 1) is False                # self-referral ممنوع
+    assert record_referral(88001, 88002) is False        # معرف وجود ندارد → رد (fail-closed)
+    q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(?,?,?,?,?,?)", (88001, "r", "R", "user", now_iso(), now_iso()), commit=True)
     assert record_referral(88001, 88002) is True
     assert record_referral(88003, 88002) is False        # انتساب یکتا
-    q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(88001,'r','R','user',?,?)", (now_iso(), now_iso()), commit=True)
     rid, amt = credit_referral_on_payment(88002, 100.0)
     assert rid == 88001 and amt == round(100.0 * config.REFERRAL_PERCENT / 100, 2)
     assert credit_referral_on_payment(88002, 100.0) is None   # idempotent
@@ -114,12 +119,16 @@ def test_channel_posts_today_offset_aware():
     assert channel_posts_today(cid, 3.5) == 1
 
 def test_ai_budget_isolated_per_task():
+    # ContextVar هر تسک را جدا نگه می‌دارد؛ دو تسک هم‌زمان نباید بودجهٔ هم را ببینند.
+    # (نسخهٔ قبلی asyncio.run(asyncio.gather(...)) بود که ValueError می‌داد: gather یک Future است نه coroutine.)
     async def one():
-        budget_reset()
+        budget_reset()               # آغاز تازه برای همین تسک (ContextVar)
         b = _budget(); b["calls"] += 5
-        return b["calls"]
-    r = asyncio.get_event_loop().run_until_complete(asyncio.gather(one(), one())) if False else asyncio.run(asyncio.gather(one(), one()))
-    assert r == [5, 5]      # بودجهٔ دو تسک هم‌زمان با هم تداخل ندارد (FIX v4)
+        await asyncio.sleep(0)       # اجازهٔ interleave تا جداسازی واقعاً آزموده شود
+        return _budget()["calls"]
+    async def main():
+        return await asyncio.gather(one(), one())
+    assert asyncio.run(main()) == [5, 5]   # بودجهٔ دو تسک هم‌زمان با هم تداخل ندارد
 
 def test_parse_json_multiline_strings():
     j = parse_json('{"post": "line1\nline2", "scores": {"a": 5}}')

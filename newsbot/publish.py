@@ -6,7 +6,7 @@ FIX v4:
     (قبلاً ۲ تلاش بدون backoff بود و رسانه‌های سالم بی‌دلیل text-only می‌شدند)
   • media در ابتدای _publish_article_locked مقداردهی می‌شود (بررسی شد: از قبل امن بود؛ صریح نگه داشته شد)
 """
-import asyncio, contextlib, html, json, os, random, tempfile, time
+import asyncio, contextlib, html, json, os, random, re, tempfile, time
 from types import SimpleNamespace
 from urllib.parse import urlparse
 import httpx
@@ -20,7 +20,7 @@ from newsbot.discover import _ext_kind
 from newsbot.core_channels import get_channel, get_settings, msg_link
 from newsbot.core_articles import (get_article, article_update, get_pub_journal, set_pub_journal, reserve_publication,
                                    release_publication, settle_publication, posted_before, PublicationTransport)
-from newsbot.text_format import clean_ai_text, strip_source_url, split_post_html, fit_html, downgrade_html, strip_tags
+from newsbot.text_format import clean_ai_text, strip_source_url, split_post_html, hard_html, downgrade_html, strip_tags
 from newsbot.generate import signature_of
 from newsbot.opctx import operation_checkpoint, _current_operation
 from newsbot.ui_widgets import esc
@@ -176,11 +176,11 @@ async def send_post(bot, chat_id, text, media=None):
             if media:
                 # کپشن هرگز از محدودیت تلگرام نمی‌گذرد؛ اگر گذشت همان‌جا بریده می‌شود نه با پیام دوم (تک‌پیام می‌ماند)
                 cap_ok = len(t) <= config.CAPTION_LIMIT
-                cap = t if cap_ok else fit_html(t, max(200, config.CAPTION_LIMIT - 60))[0]
+                cap = t if cap_ok else hard_html(t, max(200, config.CAPTION_LIMIT - 60))   # سقف سخت: هرگز از محدودیت کپشن رد نمی‌شود
                 if isinstance(bot, PublicationTransport): bot.caption_complete = True
                 m = sent_media or await _send_media(bot, chat_id, cap, pm, media)
                 if m: return m
-            if len(t) > config.MSG_LIMIT: t = fit_html(t, config.MSG_LIMIT - 100)[0]   # وگرنه پست بالای ۴۰۹۶ با «too long» هرگز منتشر نمی‌شد
+            if len(t) > config.MSG_LIMIT: t = hard_html(t, config.MSG_LIMIT - 100)   # وگرنه پست بالای ۴۰۹۶ با «too long» هرگز منتشر نمی‌شد
             return await bot.send_message(chat_id, t, parse_mode=pm, disable_web_page_preview=True, **({"reply_to_message_id": sent_media.message_id} if sent_media else {}))
         except RetryAfter as e:
             wait = float(e.retry_after) + 1

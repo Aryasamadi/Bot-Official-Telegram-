@@ -11,7 +11,7 @@ import asyncio, json, secrets, time
 from datetime import timedelta
 from newsbot import config
 from newsbot.db import q, gset
-from newsbot.logutils import log, log_ctx, log_event, bump, _metrics
+from newsbot.logutils import log_ctx, log_event, bump, _metrics
 from newsbot.timeutils import now_utc, now_iso, parse_dt, url_hash
 from newsbot.concurrency import ch_lock, CYCLE_SEM
 from newsbot.core_users import admin_limits, admin_limits_cached, remaining, usage_today, _LIMITS_TTL

@@ -7,14 +7,14 @@ from newsbot.logutils import log_event
 from newsbot.timeutils import fmt_date
 from newsbot.ui_widgets import notify_supers
 from newsbot.ratelimit import rate_ok, rate_left
-from newsbot.core_users import admin_limits, admin_offset, get_user, is_super, set_lang, user_lang
+from newsbot.core_users import admin_limits, admin_offset, get_user, is_super, set_lang
 from newsbot.core_channels import relocalize_all
 from newsbot.core_plans import get_plan, plan_txt, list_plans, assign_plan, upgrade_quote, _fmt_price
 from newsbot.core_discounts import disc_valid, discount_price
 from newsbot.core_payments import pay_pending_for
 from newsbot.core_referrals import referral_stats, referral_link
 from newsbot.ui_i18n import tr, gtext
-from newsbot.ui_widgets import B, U, pairs, esc, render, popup, ask, L, uname
+from newsbot.ui_widgets import B, esc, render, popup, pairs, L, uname
 from newsbot.ui_views_admin import view_admin_home
 
 

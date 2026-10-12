@@ -16,10 +16,10 @@ from newsbot.ratelimit import rate_ok, rate_free, rate_left, rate_mark, rate_cle
 from newsbot.concurrency import ch_lock
 from newsbot.core_users import (admin_limits, admin_offset, usage_reset, is_super, user_lang,
                                 can_admin, get_user, list_users)
-from newsbot.core_channels import (get_settings, update_settings, get_channel, channel_owned,
+from newsbot.core_channels import (get_settings, update_settings, channel_owned,
                                    publication_pending, reset_channel_queue, del_channel,
-                                   mandatory_membership)
-from newsbot.core_sources import get_source, toggle_source, del_source, count_sources
+                                   mandatory_membership, list_channels)
+from newsbot.core_sources import get_source, toggle_source, del_source, count_sources, set_source_api
 from newsbot.core_articles import get_article, article_update, delete_article
 from newsbot.core_plans import (assign_plan, revoke_plan, get_plan, plan_txt, list_plans,
                                 update_plan, delete_plan)
@@ -30,18 +30,19 @@ from newsbot.discover import probe_source
 from newsbot.publish import publish_article
 from newsbot.cycle import _pub_err
 from newsbot.scheduler import report_text
+from newsbot.logutils import log
 from newsbot.text_format import fit_html, split_html, strip_tags
 from newsbot.ui_i18n import tr, TOGGLABLE, tz_city, FIELD_LABEL, SCHED_FIELDS
-from newsbot.ui_widgets import (B, U, pairs, esc, render, popup, ask, wiz_start, operation_status,
+from newsbot.ui_widgets import (B, pairs, esc, render, popup, ask, wiz_start, operation_status,
                                 operation_text, run_user_operation, run_model_test,
-                                clear_interaction, L, uname)
+                                clear_interaction, L)
 from newsbot.opctx import _current_operation
-from newsbot.ui_views_user import view_lang, set_language, view_user_home, view_plans, view_plan, do_free, do_request
+from newsbot.ui_views_user import view_lang, set_language, view_plans, view_plan, do_free, do_request
 from newsbot.ui_views_admin import (view_admin_home, view_channel, channel_recheck, view_sources, view_source,
                                     view_content, view_cats, view_cat, view_crits, view_crit, hour_grid,
                                     view_sched, view_quiet, view_tz, view_queue, view_article, view_my_ai,
                                     view_my_ai_model, view_my_plan, run_test, mand_gate,
-                                    PLAN_FIELDS, MODEL_FIELDS, TEXT_KEYS, fl)
+                                    PLAN_FIELDS, MODEL_FIELDS, fl)
 from newsbot.ui_views_super import (view_super_home, view_health, view_s_plans, view_s_plan, view_s_discs,
                                     view_s_disc, view_s_users, view_s_user, view_s_models, view_s_model,
                                     view_s_pays, view_s_texts, decide_pay)

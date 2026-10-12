@@ -6,3 +6,7 @@ trafilatura>=2,<3
 beautifulsoup4>=4.12,<5
 lxml>=5,<7
 tzdata
+
+# --- ابزارهای توسعه/تست (در production لازم نیستند) ---
+pytest>=8,<9
+pyflakes>=3,<4

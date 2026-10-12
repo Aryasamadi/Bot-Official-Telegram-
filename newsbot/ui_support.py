@@ -9,7 +9,7 @@ from newsbot.core_payments import support_is_open, support_map_get, support_map_
 from newsbot.ratelimit import rate_ok
 from newsbot.text_format import split_html
 from newsbot.ui_i18n import tr
-from newsbot.ui_widgets import B, esc, popup, stale, L, uname, run_user_operation, go_home, send_temp
+from newsbot.ui_widgets import B, esc, popup, stale, L, run_user_operation, go_home
 from newsbot.ui_views_user import view_lang
 
 

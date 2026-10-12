@@ -22,6 +22,13 @@ DEFAULT_TEXTS = {
             "en": "💳 <b>Payment for “{plan}”</b>\n\n💰 Amount: <b>{price}</b>\n\nTransfer to:\n<code>0000-0000-0000-0000</code>\nName: ...\n\nThen send the <b>receipt image</b> right here."},
 }
 
+# کلیدهای متن‌های قابل‌ویرایش توسط سوپرادمین (منبع یکتا: لایهٔ i18n).
+# قبلاً در ui_views_admin تعریف شده بود و ui_inputs از آن‌جا import می‌کرد که
+# منجر به ImportError هنگام import شدن ui_inputs می‌شد (باگ ریشه‌ای H15).
+# حالا هم‌جا با gtext/gtext_set که روی همین کلیدها کار می‌کنند زندگی می‌کند.
+TEXT_KEYS = ["welcome", "help", "about", "pay"]
+
+
 def gtext(key, lang="fa", **kw):
     v = gget(f"text_{key}_{lang}") or DEFAULT_TEXTS[key].get(lang) or DEFAULT_TEXTS[key]["fa"]
     try: return v.format(**kw) if kw else v

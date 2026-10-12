@@ -9,8 +9,12 @@ from newsbot import config
 ALLOWED = {"b", "strong", "i", "em", "u", "s", "del", "code", "pre", "a", "blockquote", "tg-spoiler", "span"}
 
 # ── لایه‌ی دوم دفاع ضد prompt-injection (لایه‌ی اول قاعده‌ی UNTRUSTED DATA در پرامپت است) ──
-INJ_RE = re.compile(r"(?im)(ignore|disregard|forget)[ \t]+(all[ \t]+|the[ \t]+|any[ \t]+)?(previous|above|prior|earlier)[ \t]+(instruction|instructions|prompt|prompts|rule|rules)|^[ \t]*(system|assistant|user|human|developer)[ \t]*:|<\|?[ \t]*(im_start|im_end|system|assistant|endoftext)[ \t]*\|?>|you[ \t]+are[ \t]+now[ \t]+|new[ \t]+instruction(s)?[ \t]*:")
-INJ_RESIDUE = re.compile(r"(?i)(ignore|disregard)[ \t]+(all[ \t]+|the[ \t]+|any[ \t]+)?(previous|above|prior)[ \t]+(instruction|instructions|prompt|prompts)|</?article_data>|<\|?[ \t]*(im_start|im_end|endoftext)[ \t]*\|?>|\bsk-[A-Za-z0-9_-]{12,}")
+# نکته‌ی امنیتی مهم (فاز ۵): الگوی `</?article_data>` باید *در ورودی* هم خنثی شود، نه فقط در خروجی.
+# اگر متنِ منبع بتواند `</article_data>` را سالم عبور دهد، از جعبهٔ دادهٔ غیرقابل‌اعتماد فرار می‌کند و
+# هرچه بعدش بنویسد در ناحیهٔ «دستور معتبر» پرامپت قرار می‌گیرد (تزریق مستقیم). این مسیر واقعاً
+# قابل‌بهره‌برداری بود؛ حالا جداکننده‌ها هم در INJ_RE خنثی می‌شوند.
+INJ_RE = re.compile(r"(?im)(ignore|disregard|forget)[ \t]+(all[ \t]+|the[ \t]+|any[ \t]+)?(previous|above|prior|earlier)[ \t]+(instruction|instructions|prompt|prompts|rule|rules)|^[ \t]*(system|assistant|user|human|developer)[ \t]*:|<\|?[ \t]*(im_start|im_end|system|assistant|endoftext)[ \t]*\|?>|<[ \t]*/?[ \t]*article_data[ \t]*/?[ \t]*>|you[ \t]+are[ \t]+now[ \t]+|new[ \t]+instruction(s)?[ \t]*:")
+INJ_RESIDUE = re.compile(r"(?i)(ignore|disregard)[ \t]+(all[ \t]+|the[ \t]+|any[ \t]+)?(previous|above|prior)[ \t]+(instruction|instructions|prompt|prompts)|<[ \t]*/?[ \t]*article_data[ \t]*/?[ \t]*>|<\|?[ \t]*(im_start|im_end|endoftext)[ \t]*\|?>|\bsk-[A-Za-z0-9_-]{12,}")
 
 def strip_injection(t):
     """متن منبع هرگز نباید شبیه دستور دیده شود؛ الگوها با […] جایگزین می‌شوند."""
@@ -109,29 +113,59 @@ def _cut_pos(text, limit):
     sp = cut.rfind(" ")
     return sp if sp > limit * 0.4 else len(cut)
 
-def split_post_html(text, limit):
-    """پست را در مرز امن به دو بخش «کانال + ادامه» می‌شکند؛ بخش دوم برای «ادامه در ربات» است و متنِ بخش اول را تکرار نمی‌کند."""
+def _first_blockquote_span(text):
+    """بازهٔ [شروعِ متنِ درون quote, پایانِ کلوزِ quote] نخستین <blockquote>؛ None اگر نبود."""
+    ob = text.lower().find("<blockquote")
+    if ob < 0: return None
+    gt = text.find(">", ob)
+    if gt < 0: return None
+    cb = text.lower().find("</blockquote>", gt + 1)
+    return (ob, gt, cb) if cb > gt else None
+
+def split_post_html(text, limit, hard_ceiling=None):
+    """پست را در مرز امن به دو بخش «کانال + ادامه» می‌شکند؛ بخش دوم برای «ادامه در ربات» است و متنِ بخش اول را تکرار نمی‌کند.
+    قرارداد (حفظ‌شده از نسخهٔ اصلی): اگر پست blockquote دارد، بخش اول باید همان blockquote را داشته باشد
+    (قرارداد پرامپت: هر پست یک blockquote دارد)؛ برای همین مرز برش تا پایانِ نخستین quote جلو می‌رود و بخش اول
+    می‌تواند از limit فراتر رود. سقفِ مطلق با hard_ceiling کنترل می‌شود: اگر داده شود، هیچ شاخه‌ای از آن رد نمی‌شود
+    (مسیر کپشن/پیام تلگرام از hard_html استفاده می‌کند که همین سقف را اعمال می‌کند)."""
     if len(text) <= limit: return text, ""
-    pos = _cut_pos(text, limit); head_raw, rest_raw = text[:pos], text[pos:]
+    ceiling = hard_ceiling if hard_ceiling is not None else max(limit * 2, limit + 512)
+    ELL = " …"
+    # « …» پس از برش اضافه می‌شود؛ پس نقطهٔ برش باید از پیش جای آن را رزرو کند تا شاخهٔ پایه از limit رد نشود.
+    pos = _cut_pos(text, max(1, limit - len(ELL))); head_raw, rest_raw = text[:pos], text[pos:]
     if rest_raw[:1] not in (" ", "\n", "") and ">" in rest_raw[:80]:
         gt = rest_raw.find(">")
         if "<" not in rest_raw[:gt]: rest_raw = rest_raw[gt + 1:]   # تکه‌ی نیمه‌تمامِ یک تگ از ابتدای ادامه حذف می‌شود
-    head = sanitize_html(re.sub(r"<[^>]*$", "", head_raw)).rstrip() + " …"
-    # اگر برشِ فعلی (اگر وسطِ Quote واقع شده باشد، sanitize تگِ ناقص را حذف می‌کند) Quote را از بخشِ «کانال» برداشته باشد
-    # و Quote در ادامهٔ «ادامه در ربات» مانده باشد، مرزِ برش را به پایانِ نخستین Quote می‌رانیم تا Quote با کانال بماند؛
-    # Quote‌های بعدی و متنِ اضافی به بخشِ ربات می‌روند.
-    if "<blockquote" not in head.lower() and "<blockquote" in text.lower():
-        bq = text.lower().find("</blockquote>")
-        if 0 <= bq and _cut_pos(text, limit) < bq:
-            pos = bq + len("</blockquote>")
-            head_raw, rest_raw = text[:pos], text[pos:]
-            head = sanitize_html(re.sub(r"<[^>]*$", "", head_raw)).rstrip() + " …"
+    head = sanitize_html(re.sub(r"<[^>]*$", "", head_raw)).rstrip() + ELL
+    # اگر مرزِ اولیه نخستین quote را از بخش «کانال» انداخته باشد، آن را با بخش کانال نگه می‌داریم؛
+    # اما هرگز از سقفِ مطلق (hard_ceiling) رد نمی‌شویم — وگرنه تلگرام کپشن/پیام را رد می‌کند.
+    if "<blockquote" not in head.lower():
+        span = _first_blockquote_span(text)
+        if span:
+            ob, gt, cb = span
+            full = sanitize_html(text[:cb + len("</blockquote>")]).rstrip() + ELL
+            if len(full) <= ceiling:
+                head, rest_raw = full, text[cb + len("</blockquote>"):]
+            else:
+                # quote در بودجهٔ سقف جا نمی‌شود: متنِ درون آن را می‌بریم و تگ را معتبر می‌بندیم.
+                prefix = sanitize_html(text[:gt + 1])
+                room = ceiling - len(prefix) - len("</blockquote>") - len(ELL)
+                if room >= 12:
+                    head = prefix + sanitize_html(text[gt + 1:gt + 1 + room]).rstrip() + "</blockquote>" + ELL
+                    rest_raw = text[gt + 1 + room:]
     rest = sanitize_html(rest_raw).strip()
     return head, rest
 
+def hard_html(text, limit):
+    """نسخهٔ «سقف سخت»: هرگز از limit رد نمی‌شود (برای کپشن/پیام تلگرام که عبور از حد = خطای ارسال).
+    اگر quoted باشد، ابتدا تلاش می‌کند quote را داخل سقف نگه دارد؛ در غیر این‌صورت برشِ سادهٔ امن."""
+    if len(text) <= limit: return text
+    return split_post_html(text, limit, hard_ceiling=limit)[0]
+
 def fit_html(text, limit):
+    """(متن بریده, آیا بریده شد؟) — سقفِ سخت رعایت می‌شود: خروجی هرگز از limit رد نمی‌شود."""
     if len(text) <= limit: return text, False
-    return split_post_html(text, limit)[0], True
+    return hard_html(text, limit), True
 
 def clean_ai_text(t, s=None):
     """زباله‌های مدل حذف می‌شود: دیکشنری امتیازها («معیار»: ۹، ...) و تکه‌های JSON چسبیده به متن پست — هرگز به کانال یا ربات نمی‌رسد."""
@@ -140,8 +174,16 @@ def clean_ai_text(t, s=None):
     t = re.sub(r"[^\S\n]{2,}", " ", t)   # اجرای طولانی فاصله/نویسهٔ نامرئی یک‌بار جمع می‌شود؛ وگرنه الگوی امتیازها عقب‌نشینی فاجعه‌بار می‌کند
     names = [str(c.get("name", "")).strip() for c in (s or {}).get("criteria", []) if c.get("name")]
     names += ["ارزش محتوایی", "غیرتبلیغاتی بودن", "کیفیت و کامل بودن", "ارتباط با موضوع کانال", "تازگی", "Content value", "Non-promotional", "Quality & completeness", "Relevance to channel topic", "Relevance", "Freshness"]
-    num = r'(?:10|[0-9۰-۹])(?:[.,][0-9۰-۹])?'
-    pat = re.compile(r'["“«\']?([^"”»:\n]{2,40})(?:[\t ]:[\t ]["”»\']?[\t ]|[\t ]["”»\']?[\t ]:[\t ])' + num + r'[\t ]*[,،.؛;]?')
+    num = r'(?:10|[0-9۰-۹٠-٩])(?:[.,][0-9۰-۹٠-٩])?'
+    # الگوی «برچسب: عدد» — نسخهٔ قبلی دو شاخهٔ alternation کاملاً یکسان داشت ([\\t ]:[\\t ])
+    # و همیشه «فاصله پیش از دونقطه» را الزامی می‌کرد؛ پس شکلِ رایجِ «برچسب: ۹» هیچ‌وقت مچ نمی‌شد
+    # (نه به‌خاطر ارقام فارسی، بلکه به‌خاطر ساختار الگو). حالا فاصله‌ها اختیاری‌اند.
+    # دو اصلاح ریشه‌ای دیگر (فاز ۲):
+    #  الف) کوتیشنِ بازِ ابتدای برچسب در «گروه ۱» مصرف می‌شد و کوتیشنِ بستهٔ انتهایی
+    #      مانع از رسیدن برچسب به انتهای خودش می‌شد → «"Content value": 5» مچ نمی‌شد.
+    #      حالا کوتیشن‌های جفت‌شده در ابتدا/انتهای برچسب به‌صورت اختیاری بلعیده می‌شوند.
+    #  ب) ارقام عربی-هندی (٠-٩) هم اضافه شد؛ قبلاً فقط ۰-۹ (فارسی) پوشش داشت و «٤» عبور می‌کرد.
+    pat = re.compile(r'[“«"\']?\s*([^“«"”»\':\n]{2,40}?)\s*[”»"\']?\s*:\s*[“«"\']?\s*' + num + r'\s*[,،.؛;]?')
     def rep(m):
         label = m.group(1).strip()
         return "" if any(label and (label in n or n in label) for n in names) else m.group(0)

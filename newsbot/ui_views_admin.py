@@ -4,38 +4,36 @@
 فیلدهای ویرایشی (PLAN_FIELDS/MODEL_FIELDS/TEXT_KEYS/fl) این‌جا تعریف می‌شوند و
 ui_views_super و ui_dispatch از همین‌جا import می‌کنند.
 """
-import asyncio, html, json, time
+import asyncio, json, time
 from newsbot import config
-from newsbot.db import q, gget
-from newsbot.logutils import log, log_event, redact
-from newsbot.timeutils import now_utc, ago_text, fmt_date, local_clock, utc_clock, today_str, off_label
+from newsbot.db import gget
+from newsbot.logutils import log_event, redact
+from newsbot.timeutils import ago_text, fmt_date, local_clock, utc_clock, off_label
 from newsbot.ui_widgets import notify_user_fn, notify_supers
-from newsbot.ratelimit import rate_free, rate_left, rate_mark, rate_clear
+from newsbot.ratelimit import rate_left, rate_free, rate_mark, rate_clear
 from newsbot.concurrency import ch_lock
 from newsbot.core_users import (admin_limits, admin_offset, usage_today, get_user, is_super,
                                 user_lang, channel_posts_today)
-from newsbot.core_plans import get_plan, plan_txt, revoke_plan, assign_plan
+from newsbot.core_plans import plan_txt
 from newsbot.core_channels import (list_channels, get_settings, get_channel, channel_owned, first_registrant,
-                                   issue_transfer_token, revert_channel_owner, publication_pending,
-                                   update_channel_meta, save_settings, update_settings, TRANSFER_TTL_MIN,
+                                   issue_transfer_token, revert_channel_owner, TRANSFER_TTL_MIN,
                                    mandatory_configured, mandatory_membership)
 from newsbot.core_sources import list_sources, get_source, count_sources
-from newsbot.discover import _has_api, probe_source
-from newsbot.ai_models import (hostname, list_models, get_model, update_model, delete_model, test_model,
-                               _model_label, ai_err_text, err_code, _ai_events)
-from newsbot.core_articles import ready_count, count_articles, articles_by_status, get_article, article_update, delete_article
+from newsbot.discover import _has_api
+from newsbot.ai_models import (hostname, list_models, get_model, ai_err_text, err_code, _ai_events)
+from newsbot.core_articles import ready_count, count_articles, articles_by_status, get_article
 from newsbot.cycle import run_channel_cycle, Diag
-from newsbot.scheduler import report_text
-from newsbot.text_format import strip_tags, sanitize_html, fit_html, split_html
-from newsbot.ui_i18n import tr, STATUS, reason_text, TZ_NAMES, tz_city, INT_FIELDS, FIELD_LABEL, SCHED_FIELDS
-from newsbot.ui_widgets import (B, U, pairs, esc, onoff, cap, L, uname, render, popup, ask, wiz_start,
-                                operation_status, _ai_status_reporter, run_model_test)
+from newsbot.text_format import strip_tags, fit_html
+from newsbot.ui_i18n import tr, STATUS, reason_text, TZ_NAMES, tz_city
+from newsbot.ui_widgets import (B, U, pairs, esc, onoff, cap, L, uname, render, popup,
+                                operation_status, _ai_status_reporter)
 from newsbot.opctx import _current_operation
 
 # ── فیلدهای ویرایشی پنل‌ها (منبع یکتا برای super/dispatch/inputs) ──
 PLAN_FIELDS = [("name", "نام (فا)", "Name (fa)"), ("name_en", "نام (en)", "Name (en)"), ("days", "مدت (روز)", "Days"), ("daily_posts", "پست/روز", "Posts/day"), ("max_sources", "منابع", "Sources"), ("max_channels", "کانال‌ها", "Channels"), ("daily_tests", "تست/روز", "Tests/day"), ("price", "قیمت (فا)", "Price (fa)"), ("price_en", "قیمت (en)", "Price (en)"), ("price_num", "قیمت عددی (برای proration)", "Numeric price (proration)"), ("description", "توضیح (فا)", "Description (fa)"), ("description_en", "توضیح (en)", "Description (en)")]
 MODEL_FIELDS = [("model", "نام مدل", "Model"), ("base_url", "Base URL", "Base URL"), ("api_key", "کلید API", "API key"), ("name", "نام نمایشی", "Display name"), ("priority", "اولویت", "Priority"), ("temperature", "دما (0–2)", "Temperature (0–2)"), ("max_tokens", "حداکثر توکن", "Max tokens")]
-TEXT_KEYS = ["welcome", "help", "about", "pay"]
+# TEXT_KEYS منبع یکتایش ui_i18n است (هم‌جا با gtext/gtext_set) و صرفاً برای سازگاری
+# importهای قدیمی از این ماژول دوباره صادر می‌شود. رجوع به باگ H15.
 
 def fl(fields, key, lang): return next((f[2] if lang == "en" else f[1] for f in fields if f[0] == key), key)
 def _mic(m): return "⏸" if not m["active"] else "🟢" if m["status"] == "ok" else "🔴"
@@ -156,7 +154,6 @@ async def view_sources(update, context, cid):
     await render(update, context, text, kb)
 
 async def view_source(update, context, sid):
-    from newsbot.core_sources import toggle_source, del_source, set_source_api
     lang = L(update); s = get_source(sid)
     if not s or (s["admin_id"] != update.effective_user.id and not is_super(update.effective_user.id)): return await view_admin_home(update, context)
     bot_on = s["bot_active"] is None or s["bot_active"]

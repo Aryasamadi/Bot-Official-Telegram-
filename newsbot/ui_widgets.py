@@ -6,7 +6,7 @@ FIX v4:
   • sweep_temp_overflow() در CLEANUP_HOOKS ثبت می‌شود تا cleanup() هسته آن را صدا بزند
   • esc() این‌جا تعریف می‌شود (publish.py و همه‌ی viewها از همین‌جا می‌گیرند)
 """
-import asyncio, html, random, re, secrets, time
+import asyncio, html, re, secrets, time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
@@ -14,10 +14,10 @@ from newsbot import config
 from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc
 from newsbot.text_format import strip_tags
-from newsbot.core_users import user_lang, is_super, can_admin, role_of
-from newsbot.ai_models import (ai_err_text, err_code, test_model, get_model, _model_label,
+from newsbot.core_users import user_lang, is_super, can_admin
+from newsbot.ai_models import (ai_err_text, test_model, get_model, _model_label,
                                _ai_events, ai_chat, _validate_ready)
-from newsbot.opctx import (Operation, _current_operation, _operations, _user_controls,
+from newsbot.opctx import (Operation, _current_operation, _operations,
                            user_control, operation_checkpoint, clear_interaction, step_add, CLEANUP_HOOKS)
 from newsbot.ui_i18n import tr, WIZ, DIAG
 

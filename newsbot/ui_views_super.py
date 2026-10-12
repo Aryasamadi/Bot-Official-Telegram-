@@ -4,27 +4,25 @@ NEW v4: پس از تأیید پرداخت، اعتبار ارجاع (referral) �
 شکست ارجاع هرگز جریان پرداخت را نمی‌شکند (فقط لاگ).
 فیلدهای ویرایشی (PLAN_FIELDS/MODEL_FIELDS/TEXT_KEYS/fl/_mic/_mname) از ui_views_admin می‌آیند.
 """
-import asyncio, html, json, os
+import json, os
 from newsbot import config
-from newsbot.db import q, gget, gset
+from newsbot.db import q, gget
 from newsbot.logutils import log, log_event, metrics_text, redact
 from newsbot.timeutils import now_utc, parse_dt, fmt_date, ago_text
 from newsbot.core_users import list_users, get_user, admin_limits, admin_offset, usage_today, is_super, user_lang
-from newsbot.core_plans import (get_plan, plan_txt, list_plans, assign_plan, revoke_plan,
-                                update_plan, delete_plan, _price_num)
-from newsbot.core_discounts import disc_list, disc_get, disc_valid, disc_update, disc_delete
+from newsbot.core_plans import get_plan, plan_txt, list_plans, assign_plan, _price_num
+from newsbot.core_discounts import disc_list, disc_get, disc_valid, disc_use
 from newsbot.core_channels import list_channels
 from newsbot.core_sources import count_sources
 from newsbot.core_articles import count_articles
 from newsbot.core_payments import pay_pending, pay_get, pay_set, pay_claim
 from newsbot.core_referrals import credit_referral_on_payment
-from newsbot.ai_models import list_models, get_model, update_model, delete_model, test_model, ai_err_text, err_code
-from newsbot.scheduler import report_text
+from newsbot.ai_models import list_models, get_model
 from newsbot.text_format import strip_tags
-from newsbot.ui_i18n import tr, gtext, gtext_set
-from newsbot.ui_widgets import (B, U, pairs, esc, onoff, L, uname, render, popup, ask, wiz_start,
-                                operation_status, notify_user_fn, run_model_test)
-from newsbot.ui_views_admin import PLAN_FIELDS, MODEL_FIELDS, TEXT_KEYS, fl, _mic, _mname
+from newsbot.ui_i18n import tr, gtext, TEXT_KEYS
+from newsbot.ui_widgets import (B, pairs, esc, onoff, L, uname, render, popup,
+                                notify_user_fn)
+from newsbot.ui_views_admin import PLAN_FIELDS, MODEL_FIELDS, _mic, _mname
 
 
 def rss_mb():

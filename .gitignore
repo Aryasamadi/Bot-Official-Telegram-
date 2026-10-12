@@ -1,0 +1,43 @@
+# ── رازها ──
+# .env کلیدهای API و توکن ربات را متن ساده دارد؛ هرگز نباید commit شود.
+.env
+.env.*
+!.env.example
+
+# ── دیتابیس و قفل ──
+# newsbot.db کلیدهای مدل‌های AI را متن ساده در خود دارد (chmod 600 در app.py).
+# WAL/SHM کنار آن هم داده‌ی زنده‌ی دیتابیس‌اند.
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.lock
+
+# ── محیط مجازی و کش پایتون ──
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── ابزار و سیستم ──
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
+*.bak
+*.tmp
+*.orig
+*.rej
+
+# ── اسنپ‌شات‌های موقت ممیزی/تحلیل ──
+/_audit_tmp/
+/probe_*.py
+/_probe*.py

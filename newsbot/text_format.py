@@ -109,35 +109,28 @@ def _cut_pos(text, limit):
     sp = cut.rfind(" ")
     return sp if sp > limit * 0.4 else len(cut)
 
-def split_post_html(text, limit):
+def split_post_html(text, limit, preserve_quote=True):
     """پست را در مرز امن به دو بخش «کانال + ادامه» می‌شکند؛ بخش دوم برای «ادامه در ربات» است و متنِ بخش اول را تکرار نمی‌کند."""
     if len(text) <= limit: return text, ""
-    # Reserve room for the appended ellipsis so the returned Telegram text stays within limit.
-    cut_limit = max(1, limit - 2)
-    pos = _cut_pos(text, cut_limit)
-    # Keep the first quote in the channel only when the whole quote fits within the reserved limit.
-    if "<blockquote" not in sanitize_html(text[:pos]).lower() and "<blockquote" in text.lower():
-        bq = text.lower().find("</blockquote>")
-        quote_end = bq + len("</blockquote>")
-        if 0 <= bq and pos < bq and quote_end <= cut_limit:
-            pos = quote_end
-    def _make_head(p):
-        return sanitize_html(re.sub(r"<[^>]*$", "", text[:p])).rstrip() + " …"
-    head = _make_head(pos)
-    # Closing an open HTML tag can add characters; shorten safely until the markup plus ellipsis fits.
-    while len(head) > limit and pos > 1:
-        pos = max(1, pos - max(1, len(head) - limit))
-        head = _make_head(pos)
-    head_raw, rest_raw = text[:pos], text[pos:]
+    pos = _cut_pos(text, limit); head_raw, rest_raw = text[:pos], text[pos:]
     if rest_raw[:1] not in (" ", "\n", "") and ">" in rest_raw[:80]:
         gt = rest_raw.find(">")
         if "<" not in rest_raw[:gt]: rest_raw = rest_raw[gt + 1:]   # تکه‌ی نیمه‌تمامِ یک تگ از ابتدای ادامه حذف می‌شود
+    head = sanitize_html(re.sub(r"<[^>]*$", "", head_raw)).rstrip() + " …"
+    # Keep the first quote with the channel when requested, even if this requires extending the first chunk.
+    if preserve_quote and "<blockquote" not in head.lower() and "<blockquote" in text.lower():
+        bq = text.lower().find("</blockquote>")
+        if 0 <= bq and _cut_pos(text, limit) < bq:
+            pos = bq + len("</blockquote>")
+            head_raw, rest_raw = text[:pos], text[pos:]
+            head = sanitize_html(re.sub(r"<[^>]*$", "", head_raw)).rstrip() + " …"
     rest = sanitize_html(rest_raw).strip()
     return head, rest
 
 def fit_html(text, limit):
     if len(text) <= limit: return text, False
-    return split_post_html(text, limit)[0], True
+    # Unlike split_post_html (which may keep a quote with the channel), fit_html is a hard cap.
+    return split_post_html(text, max(1, limit - 2), preserve_quote=False)[0], True
 
 def clean_ai_text(t, s=None):
     """زباله‌های مدل حذف می‌شود: دیکشنری امتیازها («معیار»: ۹، ...) و تکه‌های JSON چسبیده به متن پست — هرگز به کانال یا ربات نمی‌رسد."""

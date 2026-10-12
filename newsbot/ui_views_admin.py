@@ -9,7 +9,7 @@ from newsbot import config
 from newsbot.db import q, gget
 from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc, ago_text, fmt_date, local_clock, utc_clock, today_str, off_label
-from newsbot.notify import notify_user_fn, notify_supers
+from newsbot.ui_widgets import notify_user_fn, notify_supers
 from newsbot.ratelimit import rate_free, rate_left, rate_mark, rate_clear
 from newsbot.concurrency import ch_lock
 from newsbot.core_users import (admin_limits, admin_offset, usage_today, get_user, is_super,

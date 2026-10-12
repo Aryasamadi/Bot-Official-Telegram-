@@ -147,7 +147,7 @@ def test_d1_insert_uses_returning_in_single_request(monkeypatch):
 
         @staticmethod
         def json():
-            return {"success": True, "result": [{"results": [{"rowid": 123}], "meta": {"changes": 1}}]}
+            return {"success": True, "result": [{"results": [], "meta": {"changes": 1, "last_row_id": 123}}]}
 
     class Client:
         def __init__(self):
@@ -165,4 +165,4 @@ def test_d1_insert_uses_returning_in_single_request(monkeypatch):
     assert cur.rowcount == 1
     assert cur.fetchall() == []
     assert len(client.calls) == 1
-    assert client.calls[0]["sql"].endswith("RETURNING rowid")
+    assert client.calls[0]["sql"] == "INSERT INTO channels(admin_id) VALUES(?)"

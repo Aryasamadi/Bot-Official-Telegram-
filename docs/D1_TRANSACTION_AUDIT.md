@@ -10,6 +10,12 @@ Cloudflare explicitly documents rollback semantics for the Workers binding's `D1
 - https://developers.cloudflare.com/d1/worker-api/d1-database/
 - https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/query/
 
+## Event-loop blocking and request amplification
+
+The adapter uses synchronous `httpx.Client.post()` for D1 calls, while the Telegram application is asynchronous and invokes the shared synchronous `q()` interface from handlers and scheduled work. A remote D1 round trip therefore blocks the event loop. Multi-step operations also multiply the number of HTTP round trips. This is a responsiveness/throughput blocker independent of transaction correctness.
+
+A production D1 design needs an explicit async database boundary or a durable local write queue/outbox with clearly defined consistency semantics. Simply wrapping individual HTTP calls in a thread and waiting for each result would still block the caller and would not solve the transaction problem.
+
 ## Remaining multi-statement transaction sites
 
 | Location | Operation | Risk if a later statement fails |

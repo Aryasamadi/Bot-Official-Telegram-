@@ -103,7 +103,7 @@ PAY_STUCK_MIN = int(os.getenv("PAY_STUCK_MIN", "10"))        # بازیابی پ
 RATE_PERSIST_PREFIXES = ("test:", "req:", "rcpt:", "tok:", "cmd:", "sup:", "srcadd:", "srcr:", "dl:")
 
 # ── ابزارهای مشترک ──
-_FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٤٥٦٧٨٩", "01234567890123456789")
+_FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 
 # ── ContextVarها (ایزوله per-task / per-cycle) ──
 SCHED_NOTIF_FAILURES = ContextVar("sched_notif_failures", default=False)

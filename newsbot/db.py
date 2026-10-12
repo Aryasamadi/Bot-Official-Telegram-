@@ -12,7 +12,7 @@ from newsbot.timeutils import now_iso
 _lock = threading.RLock()      # فقط نوشتن‌ها را بین تردها سریال می‌کند
 _tls = threading.local()       # هر ترد کانکشن مخصوص خودش را دارد
 _SCHEMA_READY = False          # اسکیما/مایگریشن فقط یک‌بار در هر پروسه اجرا می‌شود
-SCHEMA_VERSION = 2             # v2: جدول‌های referrals و rate_limits + ستون claimed_at
+SCHEMA_VERSION = 3             # v3: اعتبار ارجاع با trigger اتمیک و جلوگیری از اعتباردهی تکراری
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT, name TEXT, role TEXT DEFAULT 'user', plan_id INTEGER, plan_expires TEXT, next_plan_id INTEGER, next_plan_days INTEGER, free_used INTEGER DEFAULT 0, banned INTEGER DEFAULT 0, lang TEXT, remind_key TEXT, premium INTEGER DEFAULT 0, created_at TEXT, last_seen TEXT);
@@ -54,7 +54,17 @@ CREATE INDEX IF NOT EXISTS idx_kvcache_cached ON kv_cache(cached_at);
 CREATE INDEX IF NOT EXISTS idx_ai_cache_created ON ai_cache(created_at);
 CREATE INDEX IF NOT EXISTS idx_ref_referrer ON referrals(referrer_id);
 CREATE INDEX IF NOT EXISTS idx_rate_ts ON rate_limits(ts);
+
+REFERRAL_CREDIT_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS trg_referral_credit_wallet
+AFTER UPDATE OF credited ON referrals
+FOR EACH ROW
+WHEN OLD.credited = 0 AND NEW.credited = 1 AND NEW.credit_amount > 0
+BEGIN
+    UPDATE users SET credit=COALESCE(credit,0)+NEW.credit_amount WHERE id=NEW.referrer_id;
+END
 """
+
 MIGRATIONS = [("users", "next_plan_id", "INTEGER"), ("users", "next_plan_days", "INTEGER"), ("users", "lang", "TEXT"), ("users", "remind_key", "TEXT"), ("users", "premium", "INTEGER DEFAULT 0"),
               ("plans", "name_en", "TEXT"), ("plans", "price_en", "TEXT DEFAULT ''"), ("plans", "description_en", "TEXT DEFAULT ''"),
               ("channels", "verified_by", "INTEGER"), ("channels", "created_at", "TEXT"), ("channels", "settings", "TEXT"), ("channels", "original_admin_id", "INTEGER"),
@@ -185,6 +195,9 @@ def _ensure_schema(conn):
             if col not in have[tbl]:
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
                 have[tbl].add(col)
+        # The wallet credit and referral claim must be one atomic SQL statement.
+        # SQLite/D1 both execute the trigger as part of the UPDATE statement.
+        conn.execute(REFERRAL_CREDIT_TRIGGER)
         conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
         # ژورنال انتشار از جدول عمومی settings به جدول اختصاصی منتقل می‌شود (مایگریشن افزایشی و غیرمخرب)
         conn.execute("INSERT OR REPLACE INTO pub_journal(article_id,journal,updated_at) SELECT CAST(substr(key,6) AS INTEGER), value, ? FROM settings WHERE key LIKE 'pubj:%'", (now_iso(),))

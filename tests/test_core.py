@@ -47,13 +47,13 @@ def test_strip_source_url_removes_only_source():
     assert "news.example.com" not in out and "other.org" in out
 
 def test_ensure_quote_and_fit():
-    assert "<blockquote>" in ensure_quote("<b>T</b>\n\nparagraph one here\n\nparagraph two here")
+    assert "<blockquote>" in ensure_quote("<b>T</b>\n\nThis paragraph contains an important sentence that is long enough to qualify as a quotation.\n\nThis is the second paragraph, which should remain unchanged.")
     txt, cut = fit_html("y" * 5000, 1000)
     assert cut is True and len(txt) <= 1000
 
 # ── امنیت ──
 def test_redact_masks_bot_token_and_keys():
-    s = redact("err BOT_TOKEN=123456789:AAabcdef and sk-proj-abcdef123456 and Bearer xyzxyzxyzxyz")
+    s = redact("err BOT_TOKEN=123456789:AAabcdefghijklmnopqrstuvwxyz1234567890 and sk-proj-abcdef123456 and Bearer xyzxyzxyzxyz")
     assert "123456789:AA" not in s and "sk-proj-" not in s and "xyzxyzxyzxyz" not in s
 
 def test_private_hosts_rejected():
@@ -81,10 +81,10 @@ def test_payment_claim_cas_and_stuck_recovery():
     assert pay_get(rid)["status"] == "pending"          # پرداخت گیرکرده بازیابی شد
 
 def test_referral_rules():
+    q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(88001,'r','R','user',?,?)", (now_iso(), now_iso()), commit=True)
     assert record_referral(1, 1) is False                # self-referral ممنوع
     assert record_referral(88001, 88002) is True
     assert record_referral(88003, 88002) is False        # انتساب یکتا
-    q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(88001,'r','R','user',?,?)", (now_iso(), now_iso()), commit=True)
     rid, amt = credit_referral_on_payment(88002, 100.0)
     assert rid == 88001 and amt == round(100.0 * config.REFERRAL_PERCENT / 100, 2)
     assert credit_referral_on_payment(88002, 100.0) is None   # idempotent

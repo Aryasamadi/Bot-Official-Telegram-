@@ -111,25 +111,20 @@ class D1Conn:
         u = s.upper()
         if u.startswith(("BEGIN", "COMMIT", "ROLLBACK")): return D1Cur([], 0, None)
         if u.startswith("PRAGMA"): return D1Cur([], 0, None)
-        # SQLite rowid is connection-local; a second REST request to last_insert_rowid()
-        # is not reliable. Use RETURNING in the same statement, then hide those rows to
-        # preserve sqlite3's usual INSERT cursor behavior.
+        # D1 returns last_row_id in this request's metadata. Never issue a separate
+        # last_insert_rowid() query: that value belongs to a database connection/session.
         is_insert = u.startswith("INSERT")
-        query = s.rstrip().rstrip(";")
-        if is_insert and " RETURNING " not in u:
-            query += " RETURNING rowid"
-        r = _d1_client().post(_d1_url(), json={"sql": query, "params": list(params)}, headers=_d1_headers())
+        r = _d1_client().post(_d1_url(), json={"sql": s, "params": list(params)}, headers=_d1_headers())
         if r.status_code >= 400: raise sqlite3.OperationalError(f"D1 HTTP {r.status_code}: {r.text[:200]}")
         j = r.json()
         if not j.get("success"): raise sqlite3.OperationalError(f"D1 error: {str(j.get('errors'))[:200]}")
         res = (j.get("result") or [{}])[0]
         rows = [D1Row(x) for x in (res.get("results") or [])]
-        changes = int((res.get("meta") or {}).get("changes") or 0)
-        lastrowid = None
+        meta = res.get("meta") or {}
+        changes = int(meta.get("changes") or 0)
+        lastrowid = meta.get("last_row_id") if is_insert else None
         if is_insert:
-            if rows and "rowid" in rows[0]:
-                lastrowid = rows[0]["rowid"]
-            rows = []  # INSERT without RETURNING returns no result rows in sqlite3
+            rows = []  # Preserve sqlite3 cursor behavior for INSERT without RETURNING.
         return D1Cur(rows, rowcount=changes, lastrowid=lastrowid)
     def executescript(self, script):
         for stmt in [x.strip() for x in script.split(";") if x.strip()]:

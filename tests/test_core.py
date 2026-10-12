@@ -180,3 +180,14 @@ def test_d1_insert_uses_returning_in_single_request(monkeypatch):
     assert cur.fetchall() == []
     assert len(client.calls) == 1
     assert client.calls[0]["sql"] == "INSERT INTO channels(admin_id) VALUES(?)"
+
+
+
+def test_d1_cursor_fetch_advances_like_sqlite():
+    from newsbot.db import D1Cur, D1Row
+
+    cur = D1Cur([D1Row({"n": 1}), D1Row({"n": 2}), D1Row({"n": 3})])
+    assert cur.fetchone()["n"] == 1
+    assert [row["n"] for row in cur.fetchall()] == [2, 3]
+    assert cur.fetchone() is None
+    assert cur.fetchall() == []

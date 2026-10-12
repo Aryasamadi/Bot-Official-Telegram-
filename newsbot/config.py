@@ -66,6 +66,7 @@ CF_ENABLED = bool(CF_ACCOUNT_ID and CF_KV_NAMESPACE_ID and CF_API_TOKEN)
 # ── ارجاع (Referral) ──
 REFERRAL_ENABLED = os.getenv("REFERRAL_ENABLED", "1").strip() == "1"
 REFERRAL_PERCENT = max(0.0, min(50.0, float(os.getenv("REFERRAL_PERCENT", "10"))))
+REFERRAL_MAX_PER_USER = max(1, min(1000, int(os.getenv("REFERRAL_MAX_PER_USER", "20"))))  # سقف اعتبارهای ارجاعیِ پرداخت‌شده برای هر معرف
 
 # ── کانال اجباری (فقط برای ادمین‌ها) ──
 MANDATORY_CHANNEL_ID = os.getenv("MANDATORY_CHANNEL_ID", "").strip()

@@ -81,13 +81,27 @@ def test_payment_claim_cas_and_stuck_recovery():
     assert pay_get(rid)["status"] == "pending"          # پرداخت گیرکرده بازیابی شد
 
 def test_referral_rules():
+    from concurrent.futures import ThreadPoolExecutor
+
     q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(88001,'r','R','user',?,?)", (now_iso(), now_iso()), commit=True)
+    q("DELETE FROM referrals WHERE referred_id IN (?,?)", (88002, 88003), commit=True)
+    q("UPDATE users SET credit=0 WHERE id=?", (88001,), commit=True)
     assert record_referral(1, 1) is False                # self-referral ممنوع
     assert record_referral(88001, 88002) is True
     assert record_referral(88003, 88002) is False        # انتساب یکتا
-    rid, amt = credit_referral_on_payment(88002, 100.0)
-    assert rid == 88001 and amt == round(100.0 * config.REFERRAL_PERCENT / 100, 2)
-    assert credit_referral_on_payment(88002, 100.0) is None   # idempotent
+    trigger = q("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_referral_credit_wallet'", one=True)
+    assert trigger is not None
+
+    # Concurrent payment confirmations must award one credit only.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: credit_referral_on_payment(88002, 100.0), range(8)))
+    credited = [x for x in results if x is not None]
+    assert len(credited) == 1
+    rid, amt = credited[0]
+    expected = round(100.0 * config.REFERRAL_PERCENT / 100, 2)
+    assert rid == 88001 and amt == expected
+    wallet = q("SELECT credit FROM users WHERE id=?", (88001,), one=True)
+    assert round(float(wallet["credit"] or 0), 2) == expected
     assert referral_stats(88001)[0] == 1
 
 def test_upgrade_quote_proration():

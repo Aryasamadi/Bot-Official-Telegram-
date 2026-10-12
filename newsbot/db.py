@@ -111,7 +111,14 @@ class D1Conn:
         u = s.upper()
         if u.startswith(("BEGIN", "COMMIT", "ROLLBACK")): return D1Cur([], 0, None)
         if u.startswith("PRAGMA"): return D1Cur([], 0, None)
-        r = _d1_client().post(_d1_url(), json={"sql": s, "params": list(params)}, headers=_d1_headers())
+        # SQLite rowid is connection-local; a second REST request to last_insert_rowid()
+        # is not reliable. Use RETURNING in the same statement, then hide those rows to
+        # preserve sqlite3's usual INSERT cursor behavior.
+        is_insert = u.startswith("INSERT")
+        query = s.rstrip().rstrip(";")
+        if is_insert and " RETURNING " not in u:
+            query += " RETURNING rowid"
+        r = _d1_client().post(_d1_url(), json={"sql": query, "params": list(params)}, headers=_d1_headers())
         if r.status_code >= 400: raise sqlite3.OperationalError(f"D1 HTTP {r.status_code}: {r.text[:200]}")
         j = r.json()
         if not j.get("success"): raise sqlite3.OperationalError(f"D1 error: {str(j.get('errors'))[:200]}")
@@ -119,11 +126,10 @@ class D1Conn:
         rows = [D1Row(x) for x in (res.get("results") or [])]
         changes = int((res.get("meta") or {}).get("changes") or 0)
         lastrowid = None
-        if u.startswith("INSERT"):
-            # تک‌پروسه و زیر _lock برای نوشتن‌ها ⇒ last_insert_rowid() امن است
-            r2 = _d1_client().post(_d1_url(), json={"sql": "SELECT last_insert_rowid() AS lid", "params": []}, headers=_d1_headers())
-            try: lastrowid = (r2.json().get("result") or [{}])[0].get("results", [{}])[0].get("lid")
-            except Exception: lastrowid = None
+        if is_insert:
+            if rows and "rowid" in rows[0]:
+                lastrowid = rows[0]["rowid"]
+            rows = []  # INSERT without RETURNING returns no result rows in sqlite3
         return D1Cur(rows, rowcount=changes, lastrowid=lastrowid)
     def executescript(self, script):
         for stmt in [x.strip() for x in script.split(";") if x.strip()]:

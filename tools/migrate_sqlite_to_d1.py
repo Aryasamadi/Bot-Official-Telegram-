@@ -36,6 +36,8 @@ async def d1(client, sql, params=()):
 async def ensure_schema(client):
     for stmt in [s.strip() for s in (SCHEMA + "\n" + DB_INDEXES).split(";") if s.strip()]:
         await d1(client, stmt)
+    # meta is created by db._ensure_schema(), not included in SCHEMA; migration copies it too.
+    await d1(client, "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
     for tbl, col, decl in MIGRATIONS:
         res = await d1(client, "SELECT name FROM pragma_table_info(?)", (tbl,))
         cols = {row["name"] for row in (res.get("results") or [])}

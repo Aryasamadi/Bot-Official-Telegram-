@@ -8,35 +8,80 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: production-vps-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy to VPS
+      - name: Deploy and validate on VPS
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.VPS_HOST }}
           username: root
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           port: 22
+          command_timeout: 20m
           script: |
-            set -e
-            cd /opt/bot-ai-automatic
-            # 1) بک‌اپ دیتابیس محلی پیش از هر تغییر (بک‌اند d1 نیازی به بک‌اپ محلی ندارد)
+            set -euo pipefail
+            cd /opt/bot-official-telegram
+            test -f .env
+            test -x venv/bin/python
             mkdir -p /opt/backups
-            if [ -f newsbot.db ]; then
-              cp newsbot.db "/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
-              # فقط 7 بک‌اپ اخیر نگه داشته می‌شود
-              ls -1t /opt/backups/newsbot-*.db | tail -n +8 | xargs -r rm --
+
+            # Make a consistent SQLite backup without stopping the running service.
+            if [ -f data/newsbot.db ]; then
+              backup="/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
+              /usr/bin/python3 - "data/newsbot.db" "$backup" <<'PY'
+            import sqlite3, sys
+            src = sqlite3.connect(sys.argv[1], timeout=30)
+            dst = sqlite3.connect(sys.argv[2])
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+                src.close()
+            PY
+              chmod 600 "$backup"
+              find /opt/backups -maxdepth 1 -type f -name 'newsbot-*.db' -printf '%T@ %p\n' | sort -nr | awk 'NR > 7 {sub(/^[^ ]+ /, ""); print}' | xargs -r rm --
             fi
-            # 2) همگام‌سازی کد (reset --hard فقط فایل‌های tracked را می‌برد؛ .env و newsbot.db ignore شده‌اند)
+
+            # Update tracked source only; .env and local data remain untouched.
             git fetch origin main
             git reset --hard origin/main
-            # 3) وابستگی‌ها
-            /opt/bot-ai-automatic/.venv/bin/pip install -r requirements.txt
-            # 4) گیت سلامت پیش از restart: اگر پیکربندی/اسکیما خراب باشد، سرویس قدیمی دست‌نخورده می‌ماند
-            /opt/bot-ai-automatic/.venv/bin/python run.py --check
-            # 5) راه‌اندازی مجدد و تأیید
-            systemctl restart bot-ai-automatic
+            venv/bin/pip install -r requirements.txt
+            venv/bin/python -m compileall -q newsbot run.py
+            venv/bin/python run.py --check
+
+            # Keep systemd's entry point aligned with the modular application.
+            cat > /etc/systemd/system/newsbot.service <<'UNIT'
+            [Unit]
+            Description=Bot Official Telegram
+            After=network-online.target
+            Wants=network-online.target
+
+            [Service]
+            Type=simple
+            User=root
+            WorkingDirectory=/opt/bot-official-telegram
+            EnvironmentFile=/opt/bot-official-telegram/.env
+            ExecStartPre=/opt/bot-official-telegram/venv/bin/python /opt/bot-official-telegram/run.py --check
+            ExecStart=/opt/bot-official-telegram/venv/bin/python /opt/bot-official-telegram/run.py
+            Restart=always
+            RestartSec=5
+            KillSignal=SIGTERM
+            TimeoutStopSec=40
+            UMask=0077
+            ProtectSystem=strict
+            ReadWritePaths=/opt/bot-official-telegram/data
+
+            [Install]
+            WantedBy=multi-user.target
+            UNIT
+            systemctl daemon-reload
+            systemctl enable newsbot
+            systemctl restart newsbot
             sleep 3
-            systemctl is-active --quiet bot-ai-automatic
+            systemctl is-active --quiet newsbot

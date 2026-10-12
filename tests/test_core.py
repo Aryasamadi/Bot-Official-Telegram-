@@ -126,7 +126,7 @@ def test_ai_budget_isolated_per_task():
     assert asyncio.run(run_both()) == [5, 5]      # بودجهٔ دو تسک هم‌زمان با هم تداخل ندارد (FIX v4)
 
 def test_parse_json_multiline_strings():
-    j = parse_json('{"post": "line1\\nline2", "scores": {"a": 5}}')
+    j = parse_json('{"post": "line1\nline2", "scores": {"a": 5}}')
     assert j and j["post"].startswith("line1")
 
 def test_ad_filter_does_not_reject_clean_news():

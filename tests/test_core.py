@@ -41,7 +41,7 @@ def test_clean_ai_text_removes_score_dict():
     assert "ارزش محتوایی" not in out and "متن خبر" in out
 
 def test_strip_source_url_removes_only_source():
-    t = 'خبر <a href="https://news.example.com/a">منبع</a> و <a href="https://other.org/x">دیگر</a>'
+    t = '<a href="https://news.example.com/a">منبع</a> و <a href="https://other.org/x">دیگر</a>'
     out = strip_source_url(t, "https://news.example.com/a")
     assert "news.example.com" not in out and "other.org" in out
 
@@ -74,19 +74,19 @@ def test_discount_atomic_use_and_refund():
 def test_payment_claim_cas_and_stuck_recovery():
     rid = pay_create(777001, 1, note="t")
     assert pay_claim(rid) is True
-    assert pay_claim(rid) is False                      # CAS: دومین تأیید برنده نمی‌شود
+    assert pay_claim(rid) is False
     q("UPDATE pay_requests SET claimed_at=? WHERE id=?", ((now_utc() - timedelta(minutes=config.PAY_STUCK_MIN + 1)).isoformat(), rid), commit=True)
     assert recover_stuck_payments() >= 1
-    assert pay_get(rid)["status"] == "pending"          # پرداخت گیرکرده بازیابی شد
+    assert pay_get(rid)["status"] == "pending"
 
 def test_referral_rules():
-    assert record_referral(1, 1) is False                # self-referral ممنوع
+    assert record_referral(1, 1) is False
     assert record_referral(88001, 88002) is True
-    assert record_referral(88003, 88002) is False        # انتساب یکتا
+    assert record_referral(88003, 88002) is False
     q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(88001,'r','R','user',?,?)", (now_iso(), now_iso()), commit=True)
     rid, amt = credit_referral_on_payment(88002, 100.0)
     assert rid == 88001 and amt == round(100.0 * config.REFERRAL_PERCENT / 100, 2)
-    assert credit_referral_on_payment(88002, 100.0) is None   # idempotent
+    assert credit_referral_on_payment(88002, 100.0) is None
     assert referral_stats(88001)[0] == 1
 
 def test_upgrade_quote_proration():
@@ -116,13 +116,18 @@ def test_channel_posts_today_offset_aware():
 def test_ai_budget_isolated_per_task():
     async def one():
         budget_reset()
-        b = _budget(); b["calls"] += 5
+        b = _budget()
+        b["calls"] += 5
         return b["calls"]
-    r = asyncio.get_event_loop().run_until_complete(asyncio.gather(one(), one())) if False else asyncio.run(asyncio.gather(one(), one()))
-    assert r == [5, 5]      # بودجهٔ دو تسک هم‌زمان با هم تداخل ندارد (FIX v4)
+
+    async def run_both():
+        return await asyncio.gather(one(), one())
+
+    # asyncio.run needs a coroutine, not the Future returned directly by gather().
+    assert asyncio.run(run_both()) == [5, 5]
 
 def test_parse_json_multiline_strings():
-    j = parse_json('{"post": "line1\nline2", "scores": {"a": 5}}')
+    j = parse_json('{"post": "line1\\nline2", "scores": {"a": 5}}')
     assert j and j["post"].startswith("line1")
 
 def test_ad_filter_does_not_reject_clean_news():

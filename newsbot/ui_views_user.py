@@ -5,7 +5,7 @@
 from newsbot import config
 from newsbot.logutils import log_event
 from newsbot.timeutils import fmt_date
-from newsbot.notify import notify_supers
+from newsbot.ui_widgets import notify_supers
 from newsbot.ratelimit import rate_ok, rate_left
 from newsbot.core_users import admin_limits, admin_offset, get_user, is_super, set_lang, user_lang
 from newsbot.core_channels import relocalize_all

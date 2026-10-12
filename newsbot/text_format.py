@@ -141,7 +141,7 @@ def clean_ai_text(t, s=None):
     names = [str(c.get("name", "")).strip() for c in (s or {}).get("criteria", []) if c.get("name")]
     names += ["ارزش محتوایی", "غیرتبلیغاتی بودن", "کیفیت و کامل بودن", "ارتباط با موضوع کانال", "تازگی", "Content value", "Non-promotional", "Quality & completeness", "Relevance to channel topic", "Relevance", "Freshness"]
     num = r'(?:10|[0-9۰-۹])(?:[.,][0-9۰-۹])?'
-    pat = re.compile(r'["“«\']?([^"”»:\n]{2,40})(?:[\t ]:[\t ]["”»\']?[\t ]|[\t ]["”»\']?[\t ]:[\t ])' + num + r'[\t ]*[,،.؛;]?')
+    pat = re.compile(r'["“«\']?([^"”»:\n]{2,40}?)[\t ]*:[\t ]*["”»\']?[\t ]*' + num + r'[\t ]*[,،.؛;]?')
     def rep(m):
         label = m.group(1).strip()
         return "" if any(label and (label in n or n in label) for n in names) else m.group(0)

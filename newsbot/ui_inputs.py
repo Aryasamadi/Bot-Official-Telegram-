@@ -23,7 +23,8 @@ from newsbot.core_users import admin_limits, get_user, is_super, user_lang, can_
 from newsbot.core_channels import (channel_owned, channel_by_chat, add_channel, update_channel_meta,
                                    get_channel, publication_pending, check_transfer_token,
                                    consume_transfer_token, transfer_channel, first_registrant,
-                                   TRANSFER_TTL_MIN, get_settings, save_settings, update_settings)
+                                   TRANSFER_TTL_MIN, get_settings, save_settings, update_settings,
+                                   mandatory_set)
 from newsbot.core_sources import add_source, get_source, set_source_api, set_source_active, count_sources
 from newsbot.core_articles import article_update, get_article
 from newsbot.core_plans import create_plan, get_plan
@@ -165,7 +166,7 @@ def _input_access(st, uid, lang):
     kind = st.get("kind"); wiz = st.get("wiz") if kind == "wiz" else None
     user = get_user(uid)
     if user and user["banned"] and not is_super(uid): return tr(lang, "banned")
-    if kind in ("plan_field", "disc_field", "gtext", "umsg", "bc") or wiz in ("plan_new", "model_add", "disc_add") or (kind == "model_field" and not st.get("own")):
+    if kind in ("plan_field", "disc_field", "gtext", "umsg", "bc", "mand_field") or wiz in ("plan_new", "model_add", "disc_add") or (kind == "model_field" and not st.get("own")):
         if not is_super(uid): return tr(lang, "no_admin")
     if kind in ("field", "cat_style", "crit_weight", "src_add", "src_api_url", "src_api_key", "ch_add", "chtoken", "art_edit") or wiz in ("cat_add", "crit_add", "my_ai_add") or (kind == "model_field" and st.get("own")):
         if not can_admin(uid): return tr(lang, "no_admin")
@@ -199,14 +200,14 @@ async def handle_input(update, context, st):
         if current is st: ud.pop("await", None)
         if notice and (current is st or current is None): ud["notice"] = notice
     denied = _input_access(st, uid, lang)
-    if denied: return await popup(update, context, denied, alert=True)
+    if denied: return await popup(update, context, denied)
     # ---- ویزاردها
     if kind == "wiz":
         steps = WIZ.get(st.get("wiz"), ()); step = st.get("step")
         if type(step) is not int or not 0 <= step < len(steps): done(); return
         key = steps[step][0]
         try: val = _input_value(key, raw_text, lang, name_limit=40 if st["wiz"] in ("cat_add", "crit_add") else 100)
-        except (ValueError, TypeError) as e: return await popup(update, context, str(e), alert=True)
+        except (ValueError, TypeError) as e: return await popup(update, context, str(e))
         st["data"][key] = val; st["step"] += 1
         if st["step"] < len(steps): return await wiz_prompt(update, context)
         # Consume the terminal state before the first finalization await.
@@ -220,78 +221,78 @@ async def handle_input(update, context, st):
             model = get_model(mid); name = model["name"] if model else dta["model"]
             await operation_status(context, tr(lang, "s_model_testing"))
             if not get_model(mid):
-                await popup(update, context, tr(lang, "notfound"), alert=True)
+                await popup(update, context, tr(lang, "notfound"))
                 return await dispatch(update, context, back)
             ok, out, t = await test_model(mid)
             model = get_model(mid)
             if not model:
-                await popup(update, context, tr(lang, "notfound"), alert=True)
+                await popup(update, context, tr(lang, "notfound"))
                 return await dispatch(update, context, back)
             result = tr(lang, "my_ai_added" if own else "s_model_added", name=esc(name), res=(tr(lang, "saved") if ok else ai_err_text(err_code(out), lang)) + f" ({t}s)")
             await operation_status(context, result, failed=not ok)
-            await popup(update, context, result, alert=not ok)
+            await popup(update, context, result)
             return await dispatch(update, context, f"a:myai_v:{mid}" if own else back)
         elif st["wiz"] == "disc_add":
             exp = parse_dt(dta["expires"])
             if not exp or exp <= now_utc():
                 st["step"] = next(i for i, item in enumerate(steps) if item[0] == "expires")
                 ud["await"] = st
-                return await popup(update, context, "انقضا گذشته است؛ تاریخ آینده وارد کنید." if lang != "en" else "Expiry has passed; enter a future date.", alert=True)
+                return await popup(update, context, "انقضا گذشته است؛ تاریخ آینده وارد کنید." if lang != "en" else "Expiry has passed; enter a future date.")
             code = disc_create(dta["code"], dta["percent"], dta["expires"], dta["max_uses"]); done(tr(lang, "s_disc_created", code=code) if code else tr(lang, "s_disc_dup"))
         return await dispatch(update, context, back)
     # ---- فیلد تنظیمات کانال
     if kind == "field":
         f = st["field"]; cid = st["cid"]
-        if f not in FIELD_LABEL: return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if f not in FIELD_LABEL: return await popup(update, context, tr(lang, "notfound"))
         label = FIELD_LABEL[f][1 if lang == "en" else 0]
         try: v = _input_value(f, raw_text, lang)
-        except (ValueError, TypeError) as e: return await popup(update, context, str(e), alert=True)
+        except (ValueError, TypeError) as e: return await popup(update, context, str(e))
         if f == "daily_posts_cap" and v is not None:          # سقف روزانهٔ کانال هرگز از پلن کاربر بالاتر نمی‌رود
             cap = admin_limits(uid).get("daily_posts")
             if cap is not None and v > cap:
-                return await popup(update, context, tr(lang, "cap_over_plan", n=cap), alert=True)
+                return await popup(update, context, tr(lang, "cap_over_plan", n=cap))
         if f == "signature": v = sanitize_html(text_html)[:200]
         elif isinstance(v, str): v = v[:3000]
         update_settings(cid, **{f: v}); done(f"{tr(lang, 'saved')} · {label}: {esc(strip_tags(str(v))[:40])}"); return await dispatch(update, context, back)
     if kind == "cat_style":
         s = get_settings(st["cid"]); i = st["idx"]
-        if not text: return await popup(update, context, tr(lang, "empty"), alert=True)
-        if not 0 <= i < len(s["categories"]): return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if not text: return await popup(update, context, tr(lang, "empty"))
+        if not 0 <= i < len(s["categories"]): return await popup(update, context, tr(lang, "notfound"))
         s["categories"][i]["style"] = text[:400]; save_settings(st["cid"], s); done(tr(lang, "cat_updated"))
         return await dispatch(update, context, back)
     if kind == "crit_weight":
         s = get_settings(st["cid"]); i = st["idx"]
-        if not 0 <= i < len(s["criteria"]): return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if not 0 <= i < len(s["criteria"]): return await popup(update, context, tr(lang, "notfound"))
         try: weight = _input_value("weight", raw_text, lang)
-        except (ValueError, TypeError) as e: return await popup(update, context, str(e), alert=True)
+        except (ValueError, TypeError) as e: return await popup(update, context, str(e))
         s["criteria"][i]["weight"] = weight; save_settings(st["cid"], s); done(tr(lang, "crit_updated"))
         return await dispatch(update, context, back)
     # ---- منبع
     if kind == "src_add":
         if not is_super(uid) and not rate_ok(f"srcadd:{uid}", config.ABUSE_RATE_SEC * 2):
-            return await popup(update, context, tr(lang, "test_wait", n=rate_left(f"srcadd:{uid}", config.ABUSE_RATE_SEC * 2)), alert=True)
+            return await popup(update, context, tr(lang, "test_wait", n=rate_left(f"srcadd:{uid}", config.ABUSE_RATE_SEC * 2)))
         cid = st["cid"]
         try: url = _input_value("source_url", raw_text, lang).rstrip("/")
-        except (ValueError, TypeError) as e: return await popup(update, context, str(e), alert=True)
+        except (ValueError, TypeError) as e: return await popup(update, context, str(e))
         sid = add_source(uid, cid, url)
-        if not sid: return await popup(update, context, tr(lang, "src_dup"), alert=True)
+        if not sid: return await popup(update, context, tr(lang, "src_dup"))
         done()
         await operation_status(context, tr(lang, "src_checking"))
         source = get_source(sid)
-        if not source or not channel_owned(cid, uid): return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if not source or not channel_owned(cid, uid): return await popup(update, context, tr(lang, "notfound"))
         ok, note = await probe_source(source, lang, added=True)
         source = get_source(sid)
-        if not source or not channel_owned(cid, uid): return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if not source or not channel_owned(cid, uid): return await popup(update, context, tr(lang, "notfound"))
         if ok: q("UPDATE sources SET title=? WHERE id=?", (hostname(url), sid), commit=True)
         else: log_event("WARN", f"منبع جدید {hostname(url)}: تست بارگذاری ناموفق", uid)
         await operation_status(context, note, failed=not ok)
-        await popup(update, context, note, alert=not ok)
+        await popup(update, context, note)
         return await dispatch(update, context, f"a:srcv:{sid}")
     if kind == "src_api_url":
         sid = st["sid"]
         if text in ("-", "—", "‑"): set_source_api(sid, "", "", ""); done(tr(lang, "src_api_del")); return await dispatch(update, context, back)
         try: api = _input_value("api_url", raw_text, lang)
-        except (ValueError, TypeError) as e: return await popup(update, context, str(e), alert=True)
+        except (ValueError, TypeError) as e: return await popup(update, context, str(e))
         ud["await"] = {"kind": "src_api_key", "sid": sid, "api": api, "back": back}
         return await render(update, context, f"✏️ {tr(lang, 'src_api_key')}\n\n<i>{tr(lang, 'send_value')}</i>", [[B(tr(lang, "cancel"), "c:cancel")]])
     if kind == "src_api_key":
@@ -299,19 +300,19 @@ async def handle_input(update, context, st):
         try:
             key = _input_value("api_key", raw_text, lang)
             api = _input_value("api_url", st["api"], lang)
-        except (ValueError, TypeError) as e: return await popup(update, context, str(e), alert=True)
+        except (ValueError, TypeError) as e: return await popup(update, context, str(e))
         set_source_api(sid, api, key, ""); done()
         await operation_status(context, tr(lang, "src_checking"))
         source = get_source(sid)
-        if not source or (source["admin_id"] != uid and not is_super(uid)) or not channel_owned(source["channel_id"], uid): return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if not source or (source["admin_id"] != uid and not is_super(uid)) or not channel_owned(source["channel_id"], uid): return await popup(update, context, tr(lang, "notfound"))
         try: items, _, _ = await _api_discover(source, 10); n = len(items)
         except (httpx.HTTPError, FetchError, RuntimeError, ValueError, TypeError, KeyError) as e: n = 0; log_event("WARN", f"API منبع {hostname(api)}: {err_code(e)}", uid)
         source = get_source(sid)
-        if not source or (source["admin_id"] != uid and not is_super(uid)) or not channel_owned(source["channel_id"], uid): return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if not source or (source["admin_id"] != uid and not is_super(uid)) or not channel_owned(source["channel_id"], uid): return await popup(update, context, tr(lang, "notfound"))
         if not n: set_source_active(sid, False, "active")
         note = tr(lang, "src_api_ok", n=n) if n else tr(lang, "src_api_bad")
         await operation_status(context, note, failed=not n)
-        await popup(update, context, note, alert=not n)
+        await popup(update, context, note)
         return await dispatch(update, context, f"a:srcv:{sid}")
     # ---- افزودن کانال + لایه‌ی امنیتی + دروازه‌ی کانال اجباری (NEW v4)
     if kind == "ch_add":
@@ -319,14 +320,14 @@ async def handle_input(update, context, st):
         if fo and getattr(fo, "chat", None) and fo.chat.type == ChatType.CHANNEL: chat = fo.chat
         else:
             try: identifier = _input_value("channel", raw_text, lang)
-            except (ValueError, TypeError) as e: return await popup(update, context, str(e), alert=True)
+            except (ValueError, TypeError) as e: return await popup(update, context, str(e))
             try: chat = await context.bot.get_chat(identifier)
             except Exception:
                 log.warning("channel lookup failed for %s", uid, exc_info=True)
-                return await popup(update, context, "به کانال دسترسی ندارم؛ شناسه و دسترسی ربات را بررسی کنید." if lang != "en" else "Cannot access this channel; check its ID and the bot's access.", alert=True)
+                return await popup(update, context, "به کانال دسترسی ندارم؛ شناسه و دسترسی ربات را بررسی کنید." if lang != "en" else "Cannot access this channel; check its ID and the bot's access.")
         if ud.get("await") is not st: return
-        if not chat or chat.type != ChatType.CHANNEL: return await popup(update, context, tr(lang, "ch_need_fwd"), alert=True)
-        if not await bot_can_post(context.bot, chat.id): return await popup(update, context, tr(lang, "ch_bot_not_admin"), alert=True)
+        if not chat or chat.type != ChatType.CHANNEL: return await popup(update, context, tr(lang, "ch_need_fwd"))
+        if not await bot_can_post(context.bot, chat.id): return await popup(update, context, tr(lang, "ch_bot_not_admin"))
         if ud.get("await") is not st: return
         user_is_admin = False
         try: user_is_admin = any(m.user.id == uid for m in await context.bot.get_chat_administrators(chat.id))
@@ -337,9 +338,9 @@ async def handle_input(update, context, st):
         if not user_is_admin:
             log_event("WARN", f"ثبت کانال «{chat.title}» ({chat.id}) بدون ادمین‌بودن", uid)
             await notify_supers(f"<b>هشدار امنیتی</b>\n<code>{uid}</code> تلاش کرد «{esc(chat.title)}» را بدون ادمین‌بودن ثبت کند.")
-            return await popup(update, context, tr(lang, "ch_user_not_admin"), alert=True)
+            return await popup(update, context, tr(lang, "ch_user_not_admin"))
         denied = _input_access(st, uid, lang)
-        if denied: return await popup(update, context, denied, alert=True)
+        if denied: return await popup(update, context, denied)
         done()
         if await mand_gate(update, context, uid, lang): return   # NEW v4: تا تأیید عضویت، ثبت کانال متوقف است
         existing = channel_by_chat(chat.id)
@@ -347,47 +348,47 @@ async def handle_input(update, context, st):
             if existing["admin_id"] == uid: update_channel_meta(existing["id"], chat.title, chat.username or ""); done(tr(lang, "ch_exists_mine")); return await dispatch(update, context, f"a:ch:{existing['id']}")
             return await channel_claim_flow(update, context, existing, uid, lang, back, ud)
         lim = admin_limits(uid)
-        if lim["max_channels"] is not None and len(list_channels_wrap(uid)) >= lim["max_channels"]: return await popup(update, context, tr(lang, "limit_channels", n=lim["max_channels"]), alert=True)
+        if lim["max_channels"] is not None and len(list_channels_wrap(uid)) >= lim["max_channels"]: return await popup(update, context, tr(lang, "limit_channels", n=lim["max_channels"]))
         cid = add_channel(uid, chat.id, chat.title or str(chat.id), chat.username or "", uid, lang); log_event("INFO", f"کانال ثبت شد: {chat.title} ({chat.id})", uid)
         done(tr(lang, "ch_added", title=esc(chat.title))); return await dispatch(update, context, f"a:ch:{cid}")
     if kind == "chtoken":
         # ضد brute-force روی توکن ۱۰ رقمی: برخلاف سقف ۳ تلاش در هر نشست، این‌جا نرخ هم محدود می‌شود
         if not is_super(uid) and not rate_ok(f"tok:{uid}", config.ABUSE_RATE_SEC * 2):
-            return await popup(update, context, tr(lang, "test_wait", n=rate_left(f"tok:{uid}", config.ABUSE_RATE_SEC * 2)), alert=True)
+            return await popup(update, context, tr(lang, "test_wait", n=rate_left(f"tok:{uid}", config.ABUSE_RATE_SEC * 2)))
         cid = st["cid"]; ch = get_channel(cid)
-        if not ch: return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if not ch: return await popup(update, context, tr(lang, "notfound"))
         # ۱) اعتبارسنجی بدون مصرف: توکن باطل نباید سهمیه/حالت را هدر بدهد
         if not check_transfer_token(cid, text):
             st["tries"] = int(st.get("tries") or 0) + 1
             log_event("WARN", f"توکن انتقال نادرست/منقضی برای «{ch['title']}» توسط {uid}", uid)
             if st["tries"] >= 3:
-                done(); await popup(update, context, tr(lang, "ch_token_bad"), alert=True)
+                done(); await popup(update, context, tr(lang, "ch_token_bad"))
                 return await dispatch(update, context, back)
-            await popup(update, context, tr(lang, "ch_token_bad"), alert=True)
+            await popup(update, context, tr(lang, "ch_token_bad"))
             if ud.get("await") is st:
                 return await render(update, context, tr(lang, "ch_token_sent", who=esc(uname(get_user(first_registrant(cid)))), min=TRANSFER_TTL_MIN), [[B(tr(lang, "cancel"), "c:cancel")]])
             return
         # ۲) همهٔ بررسی‌ها پیش از مصرف توکن تا یک تلاشِ ناقص، توکن را نسوزاند
-        if not await bot_can_post(context.bot, ch["chat_id"]): return await popup(update, context, tr(lang, "ch_bot_not_admin"), alert=True)
+        if not await bot_can_post(context.bot, ch["chat_id"]): return await popup(update, context, tr(lang, "ch_bot_not_admin"))
         try: mem = await context.bot.get_chat_member(ch["chat_id"], uid); user_is_admin = mem.status in ("administrator", "creator")
         except Exception: user_is_admin = False
         if ud.get("await") is not st: return
-        if not user_is_admin: return await popup(update, context, tr(lang, "ch_user_not_admin"), alert=True)
+        if not user_is_admin: return await popup(update, context, tr(lang, "ch_user_not_admin"))
         denied = _input_access(st, uid, lang)
-        if denied: return await popup(update, context, denied, alert=True)
+        if denied: return await popup(update, context, denied)
         done()
         if await mand_gate(update, context, uid, lang): return   # NEW v4: دریافت کانال منتقل‌شده هم از دروازه می‌گذرد
         ch = get_channel(cid)
-        if not ch: return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if not ch: return await popup(update, context, tr(lang, "notfound"))
         lim = admin_limits(uid)
-        if lim["max_channels"] is not None and len(list_channels_wrap(uid)) >= lim["max_channels"]: return await popup(update, context, tr(lang, "limit_channels", n=lim["max_channels"]), alert=True)
-        if publication_pending(cid): return await popup(update, context, tr(lang, "test_busy"), alert=True)
+        if lim["max_channels"] is not None and len(list_channels_wrap(uid)) >= lim["max_channels"]: return await popup(update, context, tr(lang, "limit_channels", n=lim["max_channels"]))
+        if publication_pending(cid): return await popup(update, context, tr(lang, "test_busy"))
         # ۳) مصرف اتمی یک‌بارمصرف؛ تنها برندهٔ UPDATE منتقل می‌کند
-        if not consume_transfer_token(cid, text): return await popup(update, context, tr(lang, "ch_token_bad"), alert=True)
+        if not consume_transfer_token(cid, text): return await popup(update, context, tr(lang, "ch_token_bad"))
         me = get_user(uid); who = f"{esc(uname(me))} (<code>{uid}</code>)"
         old_uid = ch["admin_id"]; ol = user_lang(old_uid) or "fa"
         try: transfer_channel(cid, uid, lang)
-        except RuntimeError: return await popup(update, context, tr(lang, "test_busy"), alert=True)
+        except RuntimeError: return await popup(update, context, tr(lang, "test_busy"))
         done(); log_event("WARN", f"کانال {ch['title']} از {old_uid} به {uid} منتقل شد", uid)
         await notify_user_fn(old_uid, tr(ol, "ch_owner_moved", title=esc(ch["title"]), who=who)); await notify_supers(f"«{esc(ch['title'])}» transferred {old_uid} → {uid}")
         done(tr(lang, "ch_token_ok", title=esc(ch["title"]))); return await dispatch(update, context, f"a:ch:{cid}")
@@ -395,23 +396,23 @@ async def handle_input(update, context, st):
     if kind == "art_edit":
         art = get_article(st["aid"])
         if not art or (art["admin_id"] != uid and not is_super(uid)) or art["status"] == "published":
-            return await popup(update, context, tr(lang, "notfound"), alert=True)
-        if publication_pending(art["channel_id"]): return await popup(update, context, tr(lang, "test_busy"), alert=True)
-        if not text_html: return await popup(update, context, tr(lang, "empty"), alert=True)
+            return await popup(update, context, tr(lang, "notfound"))
+        if publication_pending(art["channel_id"]): return await popup(update, context, tr(lang, "test_busy"))
+        if not text_html: return await popup(update, context, tr(lang, "empty"))
         article_update(st["aid"], post_html=sanitize_html(text_html)); done(tr(lang, "art_updated"))
         return await dispatch(update, context, back)
     # ---- کد تخفیف
     if kind == "disc":
         d, why = disc_valid(text); pid = str(st["pid"])
-        if not d: return await popup(update, context, tr(lang, {"expired": "disc_expired", "exhausted": "disc_exhausted"}.get(why, "disc_bad")), alert=True)
+        if not d: return await popup(update, context, tr(lang, {"expired": "disc_expired", "exhausted": "disc_exhausted"}.get(why, "disc_bad")))
         ud.setdefault("disc", {})[pid] = d["code"]; done(tr(lang, "disc_ok", p=d["percent"]))
         return await dispatch(update, context, back)
     # ---- رسید پرداخت
     if kind == "receipt":
         if not is_super(uid) and not rate_ok(f"rcpt:{uid}", config.ABUSE_RATE_SEC * 5):
-            return await popup(update, context, tr(lang, "test_wait", n=rate_left(f"rcpt:{uid}", config.ABUSE_RATE_SEC * 5)), alert=True)
+            return await popup(update, context, tr(lang, "test_wait", n=rate_left(f"rcpt:{uid}", config.ABUSE_RATE_SEC * 5)))
         pid = st["pid"]; p = get_plan(pid); u = get_user(uid)
-        if not p or not p["active"]: return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if not p or not p["active"]: return await popup(update, context, tr(lang, "notfound"))
         if not (msg.photo or msg.document or text): await popup(update, context, tr(lang, "receipt_empty")); return
         if pay_pending_for(uid, pid): done(tr(lang, "req_pending")); return await dispatch(update, context, back)
         # st["final"] is the single source of truth (prorated amount for upgrades, full price text otherwise)
@@ -426,28 +427,34 @@ async def handle_input(update, context, st):
             except Exception as e: log.warning(f"pay notify {sid}: {e}")
         log_event("INFO", f"درخواست پرداخت #{rid} برای پلن {p['name']}", uid); return await view_receipt_ok(update, context)
     # ---- مدیر کلان
+    if kind == "mand_field":
+        lg, f = st.get("lg"), st.get("field")
+        if lg not in config.LANGS or f not in ("id", "user"): return await popup(update, context, tr(lang, "notfound"))
+        val = re.sub(r"\s+", "", strip_tags(text_html or "")).lstrip("@") if f == "user" else re.sub(r"\s+", "", strip_tags(text_html or ""))
+        if f == "id" and val and not re.fullmatch(r"-?\d+", val): return await popup(update, context, tr(lang, "s_mand_bad_id"))
+        mandatory_set(lg, **{f: val}); done(tr(lang, "saved")); return await dispatch(update, context, back)
     if kind in ("plan_field", "disc_field", "model_field"):
         from newsbot.core_discounts import disc_get, disc_update
         f = st["field"]; rec = st[{"plan_field": "pid", "disc_field": "code", "model_field": "mid"}[kind]]
         fields = {"plan_field": {i[0] for i in PLAN_FIELDS}, "disc_field": ("percent", "max_uses", "expires"), "model_field": {i[0] for i in MODEL_FIELDS}}[kind]
         if f not in fields or (kind == "plan_field" and not get_plan(rec)) or (kind == "disc_field" and not disc_get(rec)):
-            return await popup(update, context, tr(lang, "notfound"), alert=True)
+            return await popup(update, context, tr(lang, "notfound"))
         try: v = _input_value(f, raw_text, lang)
-        except (ValueError, TypeError) as e: return await popup(update, context, str(e), alert=True)
+        except (ValueError, TypeError) as e: return await popup(update, context, str(e))
         if kind == "plan_field": update_plan_wrap(rec, **{f: v})
         elif kind == "disc_field": disc_update(rec, **{f: v})
         else: update_model(rec, **{f: v})
         done(tr(lang, "saved")); return await dispatch(update, context, back)
     if kind == "gtext":
-        if st["key"] not in TEXT_KEYS or st["lg"] not in config.LANGS: return await popup(update, context, tr(lang, "notfound"), alert=True)
+        if st["key"] not in TEXT_KEYS or st["lg"] not in config.LANGS: return await popup(update, context, tr(lang, "notfound"))
         gtext_set(st["key"], st["lg"], sanitize_html(text_html)); done(tr(lang, "s_text_saved")); return await dispatch(update, context, back)
     if kind == "umsg":
-        if not text_html: return await popup(update, context, tr(lang, "empty"), alert=True)
+        if not text_html: return await popup(update, context, tr(lang, "empty"))
         tl = user_lang(st["target"]) or "fa"
         try: await context.bot.send_message(st["target"], tr(tl, "s_umsg_head") + sanitize_html(text_html), parse_mode="HTML")
         except Exception:
             log.warning("admin message send failed for %s", uid, exc_info=True)
-            return await popup(update, context, "پیام ارسال نشد؛ دوباره تلاش کنید." if lang != "en" else "Message could not be sent; please try again.", alert=True)
+            return await popup(update, context, "پیام ارسال نشد؛ دوباره تلاش کنید." if lang != "en" else "Message could not be sent; please try again.")
         done(tr(lang, "s_umsg_sent")); return await dispatch(update, context, back)
     if kind == "bc": done(); ud["bc_src"] = (msg.chat_id, msg.message_id); return await render(update, context, tr(lang, "s_bc_confirm", n=len(list_users_wrap())), [[B(tr(lang, "s_bc_go"), "s:bc_go"), B(tr(lang, "cancel"), "s:home")]], force_new=True)
     done(); return await dispatch(update, context, back)

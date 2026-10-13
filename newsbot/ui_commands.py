@@ -14,7 +14,7 @@ from newsbot.text_format import fit_html, split_html, downgrade_html, preview_te
 from newsbot.ui_i18n import tr, gtext
 from newsbot.ui_widgets import B, render, popup, operation_text, run_user_operation, go_home
 from newsbot.opctx import _current_operation
-from newsbot.ui_views_user import view_lang, view_plans
+from newsbot.ui_views_user import view_lang, view_plans, view_referral
 from newsbot.ui_views_admin import view_admin_home
 from newsbot.ui_views_super import view_super_home
 
@@ -58,10 +58,13 @@ async def cmd_start(update, context):
     lang = await _prep(update, context)
     if context.args:
         arg = context.args[0]
-        if arg.startswith("ref_"):   # NEW v4: انتساب ارجاع — بی‌صدا و idempotent (record خودش تکراری را رد می‌کند)
+        if arg.startswith("ref_"):   # انتساب ارجاع — idempotent؛ معرف از دعوت موفق باخبر می‌شود
             from newsbot.core_referrals import record_referral
-            try: record_referral(int(arg[4:]), update.effective_user.id)
-            except (TypeError, ValueError): pass
+            from newsbot.notify import notify_user
+            try: ref = int(arg[4:])
+            except (TypeError, ValueError): ref = 0
+            if ref and record_referral(ref, update.effective_user.id):
+                await notify_user(ref, tr(user_lang(ref) or "fa", "ref_joined"))
         elif arg.startswith("r_"):
             if not rate_ok(f"dl:{update.effective_user.id}", config.CB_RATE): return   # جلوی تقویتِ درخواست بیرونی با /start تکراری را می‌گیرد
             return await send_deeplink(update, context, arg[2:])
@@ -101,9 +104,15 @@ async def cmd_cancel(update, context):
     lang = await _prep(update, context)
     op = _current_operation.get()
     if not op or not op.replaced_status:
-        await popup(update, context, operation_text(lang or "fa", "cancelled"), alert=True)
+        await popup(update, context, operation_text(lang or "fa", "cancelled"))
     if not lang: return await view_lang(update, context)
     await go_home(update, context)
+
+async def cmd_ref(update, context):
+    """بنر دعوت: لینک یکتا، تعداد دعوت‌شده‌ها و اعتبار کسب‌شده."""
+    lang = await _prep(update, context)
+    if not lang: return await view_lang(update, context)
+    return await view_referral(update, context)
 
 async def cmd_unknown(update, context):
     lang = await _prep(update, context)

@@ -43,10 +43,9 @@ def _mname(m): return str(m["name"] or m["model"] or f"#{m['id']}")
 # NEW v4 — دروازه‌ی کانال اجباری (فقط برای ادمین‌ها)
 # ══════════════════════════════════════════════════════════════════════════
 async def mand_gate(update, context, uid, lang):
-    """دروازه‌ی عضویت در کانال اجباری — فقط در مسیرهای ادمین (افزودن/فعال‌سازی کانال) نصب شده است.
-    کاربر عادی هرگز به این تابع نمی‌رسد. خروجی True یعنی جریان باید همین‌جا متوقف شود."""
-    if not mandatory_configured(): return False
-    ok, join = await mandatory_membership(context.bot, uid)
+    """دروازه‌ی عضویت در کانال اجباریِ همان زبان کاربر. خروجی True یعنی جریان باید همین‌جا متوقف شود."""
+    if not mandatory_configured(lang): return False
+    ok, join = await mandatory_membership(context.bot, uid, lang)
     if ok: return False
     kb = []
     if join: kb.append([U(tr(lang, "mand_join"), join)])
@@ -68,7 +67,7 @@ async def view_admin_home(update, context):
     if not lim["active"]: text += "\n\n" + tr(lang, "plan_inactive")
     text += "\n\n" + (tr(lang, "pick_channel") if chs else tr(lang, "no_channels"))
     kb = pairs([B(f"{'🟢' if get_settings(c['id'])['enabled'] else '🔴'} {c['title'][:22]}", f"a:ch:{c['id']}") for c in chs])
-    kb.append([B(tr(lang, "ch_add"), "a:chadd")]); kb.append([B(tr(lang, "my_plan"), "a:plan"), B(tr(lang, "my_ai"), "a:myai")])
+    kb.append([B(tr(lang, "ch_add"), "a:chadd")]); kb.append([B(tr(lang, "my_plan"), "a:plan")])
     if is_super(uid): kb.append([B(tr(lang, "super_panel"), "s:home")])
     await render(update, context, text, kb)
 
@@ -87,10 +86,11 @@ async def view_channel(update, context, cid):
           [B(tr(lang, "sources", n=len(list_sources(cid))), f"a:src:{cid}"), B(tr(lang, "queue", n=ready_count(cid)), f"a:que:{cid}")],
           [B(tr(lang, "sched"), f"a:sch:{cid}"), B(tr(lang, "content"), f"a:con:{cid}")],
           [B(tr(lang, "rejected"), f"a:rej:{cid}"), B(tr(lang, "automation", i="🟢" if on else "🔴"), f"a:tog:{cid}:enabled")],
-          [B(tr(lang, "ch_del"), f"a:chdel:{cid}"), B(tr(lang, "back"), "a:home")]]
+          [B(tr(lang, "my_ai"), f"a:myai:{cid}"), B(tr(lang, "ch_del"), f"a:chdel:{cid}")],
+          [B(tr(lang, "back"), "a:home")]]
     # NEW v4: اگر کانال اجباری تنظیم شده و این ادمین عضو نیست، هشدار + دکمه‌های Join/Check بالای پنل
-    if mandatory_configured():
-        okm, join = await mandatory_membership(context.bot, uid)
+    if mandatory_configured(lang):
+        okm, join = await mandatory_membership(context.bot, uid, lang)
         if not okm:
             row = ([U(tr(lang, "mand_join"), join)] if join else []) + [B(tr(lang, "mand_check"), "a:mand")]
             kb.insert(0, row)
@@ -100,7 +100,7 @@ async def view_channel(update, context, cid):
 async def channel_claim(update, context, existing, uid, lang, back, ud):
     """کانالی که در پنل دیگری است: ثبت‌کنندهٔ نخست «بررسی» می‌گیرد؛ دیگران باید توکن ۱۰ رقمی مالک را بیاورند."""
     cid = existing["id"]; owner = first_registrant(cid)
-    if owner is None: return await popup(update, context, tr(lang, "notfound"), alert=True)
+    if owner is None: return await popup(update, context, tr(lang, "notfound"))
     cur = existing["admin_id"]; ow = get_user(cur)
     owho = f"{esc(uname(ow))} (<code>{cur}</code>)"
     ud.pop("await", None)
@@ -108,7 +108,7 @@ async def channel_claim(update, context, existing, uid, lang, back, ud):
         return await render(update, context, tr(lang, "ch_recover_text", title=esc(existing["title"]), who=owho),
                             [[B(tr(lang, "b_recheck"), f"a:chrec:{cid}")], [B(tr(lang, "cancel"), "c:cancel")]])
     tok = issue_transfer_token(cid, owner)
-    if not tok: return await popup(update, context, tr(lang, "ch_recheck_err"), alert=True)
+    if not tok: return await popup(update, context, tr(lang, "ch_recheck_err"))
     me = get_user(uid); who_me = f"{esc(uname(me))} (<code>{uid}</code>)"
     await notify_user_fn(owner, tr(user_lang(owner) or "fa", "ch_token_dm", title=esc(existing["title"]), who=who_me, token=tok, min=TRANSFER_TTL_MIN))
     await notify_supers(f"«{esc(existing['title'])}» transfer token issued for {who_me}")
@@ -123,7 +123,7 @@ async def channel_recheck(update, context, cid):
     uid = update.effective_user.id; lang = L(update)
     ch = get_channel(cid); owner = first_registrant(cid)
     if not ch or owner is None or (uid != owner and not is_super(uid)):
-        return await popup(update, context, tr(lang, "notfound"), alert=True)
+        return await popup(update, context, tr(lang, "notfound"))
     cur = ch["admin_id"]
     if cur == uid:
         await popup(update, context, tr(lang, "ch_exists_mine")); return await view_channel(update, context, cid)
@@ -131,10 +131,10 @@ async def channel_recheck(update, context, cid):
     try:
         mem = await context.bot.get_chat_member(ch["chat_id"], cur); still = mem.status in ("administrator", "creator")
     except Exception:
-        return await popup(update, context, tr(lang, "ch_recheck_err"), alert=True)
-    if still: return await popup(update, context, tr(lang, "ch_recheck_still", who=owho), alert=True)
+        return await popup(update, context, tr(lang, "ch_recheck_err"))
+    if still: return await popup(update, context, tr(lang, "ch_recheck_still", who=owho))
     try: old = revert_channel_owner(cid, uid)
-    except RuntimeError: return await popup(update, context, tr(lang, "test_busy"), alert=True)
+    except RuntimeError: return await popup(update, context, tr(lang, "test_busy"))
     log_event("WARN", f"مالکیت «{ch['title']}» از {old} به ثبت‌کنندهٔ نخست {uid} برگشت", uid)
     await notify_user_fn(cur, tr(user_lang(cur) or "fa", "ch_reverted", title=esc(ch["title"]), who=owho))
     await notify_supers(f"«{esc(ch['title'])}» ownership reverted {old} → {uid}")
@@ -264,10 +264,11 @@ async def view_article(update, context, aid):
 # هوش مصنوعی شخصی + پلن من
 # ══════════════════════════════════════════════════════════════════════════
 async def view_my_ai(update, context):
-    """مدل‌های شخصیِ همین مدیر (جدا از مدل‌های عمومی مدیر کلان)."""
+    """مدل‌های شخصیِ همین مدیر — مشترک بین همهٔ کانال‌های او (جدا از مدل‌های عمومی مدیر کلان)."""
     uid = update.effective_user.id; lang = L(update); ms = list_models(owner_id=uid)
     text = tr(lang, "my_ai_title") + ("".join(tr(lang, "my_ai_line", i=_mic(m), name=esc(_mname(m)), model=esc(m["model"]), ok=m["ok_count"] or 0) for m in ms) if ms else tr(lang, "my_ai_none"))
-    kb = pairs([B(f"{_mic(m)} {_mname(m)[:20]}", f"a:myai_v:{m['id']}") for m in ms]) + [[B(tr(lang, "my_ai_add"), "a:myai_add")], [B(tr(lang, "back"), "a:home")]]
+    back = context.user_data.get("myai_back") or "a:home"
+    kb = pairs([B(f"{_mic(m)} {_mname(m)[:20]}", f"a:myai_v:{m['id']}") for m in ms]) + [[B(tr(lang, "my_ai_add"), "a:myai_add")], [B(tr(lang, "back"), back)]]
     await render(update, context, text, kb)
 
 async def view_my_ai_model(update, context, mid):
@@ -294,9 +295,9 @@ async def run_test(update, context, cid):
     # NEW v4: تست فوری هم از دروازه‌ی کانال اجباری می‌گذرد (عملیات ادمین است)
     if await mand_gate(update, context, uid, lang): return
     rem = remaining(uid, "tests")
-    if rem is not None and rem <= 0: await popup(update, context, tr(lang, "limit_tests", n=admin_limits(uid)["daily_tests"]), alert=True); return await view_channel(update, context, cid)
-    if ch_lock(cid).locked(): await popup(update, context, tr(lang, "test_busy"), alert=True); return await view_channel(update, context, cid)
-    if not is_super(uid) and not rate_free(f"test:{cid}", config.TEST_COOLDOWN_SEC): await popup(update, context, tr(lang, "test_wait", n=rate_left(f"test:{cid}", config.TEST_COOLDOWN_SEC)), alert=True); return await view_channel(update, context, cid)
+    if rem is not None and rem <= 0: await popup(update, context, tr(lang, "limit_tests", n=admin_limits(uid)["daily_tests"])); return await view_channel(update, context, cid)
+    if ch_lock(cid).locked(): await popup(update, context, tr(lang, "test_busy")); return await view_channel(update, context, cid)
+    if not is_super(uid) and not rate_free(f"test:{cid}", config.TEST_COOLDOWN_SEC): await popup(update, context, tr(lang, "test_wait", n=rate_left(f"test:{cid}", config.TEST_COOLDOWN_SEC))); return await view_channel(update, context, cid)
     try: await qy.answer(); context._callback_answered = True
     except Exception: pass
     last = [0.0]

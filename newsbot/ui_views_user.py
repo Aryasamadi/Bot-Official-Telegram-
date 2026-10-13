@@ -8,13 +8,13 @@ from newsbot.timeutils import fmt_date
 from newsbot.ui_widgets import notify_supers
 from newsbot.ratelimit import rate_ok, rate_left
 from newsbot.core_users import admin_limits, admin_offset, get_user, is_super, set_lang
-from newsbot.core_channels import relocalize_all
+from newsbot.core_channels import relocalize_all, mandatory_configured, mandatory_membership
 from newsbot.core_plans import get_plan, plan_txt, list_plans, assign_plan, upgrade_quote, _fmt_price
 from newsbot.core_discounts import disc_valid, discount_price
 from newsbot.core_payments import pay_pending_for
 from newsbot.core_referrals import referral_stats, referral_link
 from newsbot.ui_i18n import tr, gtext
-from newsbot.ui_widgets import B, esc, render, popup, pairs, L, uname
+from newsbot.ui_widgets import B, U, esc, render, popup, pairs, L, uname
 from newsbot.ui_views_admin import view_admin_home
 
 
@@ -33,9 +33,14 @@ async def go_home_safe(update, context):
 
 async def view_user_home(update, context):
     lang = L(update); u = update.effective_user
-    kb = [[B(tr(lang, "plans_btn"), "u:plans")]]
-    if config.REFERRAL_ENABLED: kb.append([B(tr(lang, "ref_btn"), "u:ref")])   # NEW v4
-    await render(update, context, gtext("welcome", lang, name=esc(u.first_name)), kb)
+    text = gtext("welcome", lang, name=esc(u.first_name)); kb = [[B(tr(lang, "plans_btn"), "u:plans")]]
+    # کانال اجباریِ همین زبان: کاربر آن را می‌بیند، عضو می‌شود و عضویتش را بررسی می‌کند
+    if mandatory_configured(lang):
+        ok, join = await mandatory_membership(context.bot, u.id, lang)
+        if not ok:
+            kb.insert(0, ([U(tr(lang, "mand_join"), join)] if join else []) + [B(tr(lang, "mand_check"), "a:mand")])
+            text += "\n\n" + tr(lang, "mand_user_notice")
+    await render(update, context, text, kb)
 
 async def view_referral(update, context):
     """NEW v4: صفحه‌ی دعوت — لینک یکتا، شمار دعوت‌شده‌ها و اعتبار کسب‌شده."""
@@ -85,19 +90,19 @@ async def view_plan(update, context, pid):
 
 async def do_free(update, context, pid):
     uid = update.effective_user.id; lang = L(update); u = get_user(uid); p = get_plan(pid)
-    if not p or not p["is_free"] or u["free_used"]: await popup(update, context, tr(lang, "free_once"), alert=True); return await view_plans(update, context)
-    assign_plan(uid, pid); log_event("INFO", f"پلن رایگان فعال شد برای {uid}", uid); await popup(update, context, tr(lang, "free_done", name=plan_txt(p, "name", lang)), alert=True)
+    if not p or not p["is_free"] or u["free_used"]: await popup(update, context, tr(lang, "free_once")); return await view_plans(update, context)
+    assign_plan(uid, pid); log_event("INFO", f"پلن رایگان فعال شد برای {uid}", uid); await popup(update, context, tr(lang, "free_done", name=plan_txt(p, "name", lang)))
     await notify_supers(f"🎁 {esc(uname(u))} (<code>{uid}</code>) پلن رایگان را فعال کرد."); await view_admin_home(update, context)
 
 async def do_request(update, context, pid):
     uid = update.effective_user.id; lang = L(update); p = get_plan(pid)
     if not is_super(uid) and not rate_ok(f"req:{uid}", config.ABUSE_RATE_SEC * 3):
-        await popup(update, context, tr(lang, "test_wait", n=rate_left(f"req:{uid}", config.ABUSE_RATE_SEC * 3)), alert=True); return await view_plans(update, context)
+        await popup(update, context, tr(lang, "test_wait", n=rate_left(f"req:{uid}", config.ABUSE_RATE_SEC * 3))); return await view_plans(update, context)
     if not p: await popup(update, context, tr(lang, "plan_notfound")); return await view_plans(update, context)
     if p["is_free"]: return await do_free(update, context, pid)          # پلن رایگان مسیر خودش را دارد (قاعدهٔ یک‌بار دور زده نمی‌شود)
     if "active" in p.keys() and not p["active"]:
-        await popup(update, context, tr(lang, "plan_notfound"), alert=True); return await view_plans(update, context)
-    if pay_pending_for(uid, pid): await popup(update, context, tr(lang, "req_pending"), alert=True); return await view_plan(update, context, pid)
+        await popup(update, context, tr(lang, "plan_notfound")); return await view_plans(update, context)
+    if pay_pending_for(uid, pid): await popup(update, context, tr(lang, "req_pending")); return await view_plan(update, context, pid)
     lim = admin_limits(uid); cur = get_plan(lim["plan_id"]) if lim["plan_id"] else None
     d = _applied_disc(context, pid); new_price, _ = _price_text(p, lang, d)
     qt = upgrade_quote(uid, p, cur, d["percent"] if d else None); amt, rv = (qt["payable"] if qt["payable_num"] else None), qt["credit"]

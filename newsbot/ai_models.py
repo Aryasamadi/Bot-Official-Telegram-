@@ -140,7 +140,8 @@ AI_ERR = {"ai_busy": ("سرویس هوش مصنوعی موقتاً شلوغ اس
           "ai_timeout": ("سرویس هوش مصنوعی پاسخ نداد", "AI service did not respond"), "ai_empty": ("پاسخ خالی از سرویس هوش مصنوعی", "Empty response from AI service"),
           "ai_none": ("سرویس هوش مصنوعی در دسترس نیست", "AI service unavailable"), "ai_error": ("خطای موقت سرویس هوش مصنوعی", "Temporary AI service error"),
           "ai_budget": ("سقف هزینهٔ هوش مصنوعی برای این مقاله پر شد", "AI cost budget reached for this article"),
-          "ai_invalid": ("خروجی مدل‌ها نامعتبر بود", "The model output was rejected as invalid")}
+          "ai_invalid": ("خروجی مدل‌ها نامعتبر بود", "The model output was rejected as invalid"),
+          "ai_all_failed": ("هیچ‌یک از مدل‌ها پاسخ نداد", "None of the models responded")}
 
 def err_code(e):
     t = str(e or "").lower()
@@ -255,8 +256,11 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                     await _mark_fail(m, e)
                     await _ai_event("failure", label, last)
         if stop: break
-    await _ai_event("failed", code=last)
-    return None, None, last
+    # هر مدل فقط یک‌بار امتحان می‌شود (بدون تکرار)؛ این‌جا یعنی همهٔ مدل‌های کاربر و مدیر تمام شدند.
+    code = last if last == "ai_none" else "ai_all_failed"
+    log.warning("all models exhausted (tried=%d, last=%s) — stopping", len(tried), last)
+    await _ai_event("failed", code=code)
+    return None, None, code
 
 # ── FIX v4: بودجه‌ی per-article با ContextVar (نه global) ──
 def budget_reset():

@@ -20,7 +20,7 @@ from newsbot.net_http import close_http
 from newsbot import ui_widgets
 from newsbot.ui_widgets import notify_supers, notify_user_fn, set_bot
 from newsbot.ui_commands import (managed_command, cmd_start, cmd_create, cmd_admin, cmd_man,
-                                 cmd_help, cmd_about, cmd_lang, cmd_cancel, cmd_unknown)
+                                 cmd_help, cmd_about, cmd_lang, cmd_cancel, cmd_ref, cmd_unknown)
 from newsbot.ui_support import on_message
 from newsbot.ui_dispatch import on_callback
 from newsbot.ui_views_super import cmd_health
@@ -44,8 +44,8 @@ async def post_init(app: Application):
     me = await app.bot.get_me(); config.BOT_USERNAME = me.username
     config.NOTIFY_SUPER = notify_supers; config.NOTIFY_USER = notify_user_fn
     set_bot(app.bot)   # FIX v4: لایه‌ی UI بدون APP سراسری، بطری را از این‌جا می‌گیرد
-    await app.bot.set_my_commands([BotCommand("start", "منوی اصلی"), BotCommand("create", "پنل مدیریت / پلن"), BotCommand("man", "پشتیبانی"), BotCommand("about", "درباره"), BotCommand("lang", "زبان"), BotCommand("help", "راهنما"), BotCommand("cancel", "لغو عملیات")], language_code="fa")
-    await app.bot.set_my_commands([BotCommand("start", "Main menu"), BotCommand("create", "Admin panel / plan"), BotCommand("man", "Support"), BotCommand("about", "About"), BotCommand("lang", "Language"), BotCommand("help", "Help"), BotCommand("cancel", "Cancel action")])
+    await app.bot.set_my_commands([BotCommand("start", "منوی اصلی"), BotCommand("create", "پنل مدیریت"), BotCommand("ref", "دعوت دوستان"), BotCommand("man", "پشتیبانی"), BotCommand("lang", "زبان"), BotCommand("about", "درباره"), BotCommand("help", "راهنما"), BotCommand("cancel", "لغو عملیات")], language_code="fa")
+    await app.bot.set_my_commands([BotCommand("start", "Main menu"), BotCommand("create", "Admin panel"), BotCommand("ref", "Invite friends"), BotCommand("man", "Support"), BotCommand("lang", "Language"), BotCommand("about", "About"), BotCommand("help", "Help"), BotCommand("cancel", "Cancel")])
     app.job_queue.run_repeating(job_tick, interval=config.TICK_SECONDS, first=15, name="tick")
     _dup = gget("db_dup_warn")
     if _dup:
@@ -149,7 +149,7 @@ def main():
     init_core(); _bld = Application.builder().token(config.BOT_TOKEN)
     if config.API_BASE: _bld = _bld.base_url(config.API_BASE)          # سرور محلی Bot API (اختیاری) → پشتیبانی از فایل‌های تا ۲ گیگ
     APP = _bld.post_init(post_init).post_shutdown(post_shutdown).concurrent_updates(True).build()
-    for cmd, fn in (("start", cmd_start), ("create", cmd_create), ("admin", cmd_admin), ("man", cmd_man), ("help", cmd_help), ("about", cmd_about), ("lang", cmd_lang), ("cancel", cmd_cancel), ("health", cmd_health)): APP.add_handler(CommandHandler(cmd, managed_command(fn)))
+    for cmd, fn in (("start", cmd_start), ("create", cmd_create), ("admin", cmd_admin), ("man", cmd_man), ("help", cmd_help), ("about", cmd_about), ("lang", cmd_lang), ("ref", cmd_ref), ("cancel", cmd_cancel), ("health", cmd_health)): APP.add_handler(CommandHandler(cmd, managed_command(fn)))
     APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.COMMAND, managed_command(cmd_unknown)))
     APP.add_handler(CallbackQueryHandler(on_callback)); APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, on_message)); APP.add_error_handler(on_error)
     # drop_pending_updates=False: پیام‌هایی که کاربر در زمان خاموشی فرستاده از دست نمی‌روند؛ کهنه‌ها با stale() رد می‌شوند.

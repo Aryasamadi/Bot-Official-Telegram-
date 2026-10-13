@@ -58,7 +58,7 @@ async def on_message(update, context):
     from newsbot.opctx import _operations
     if uid in _operations:
         from newsbot.ui_widgets import operation_text
-        return await popup(update, context, operation_text(lang, "busy"), alert=True)
+        return await popup(update, context, operation_text(lang, "busy"))
     if is_super(uid) and msg.reply_to_message:
         target = support_map_get(uid * 10 ** 8 + msg.reply_to_message.message_id)
         if target:

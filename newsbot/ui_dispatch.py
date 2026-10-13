@@ -18,7 +18,7 @@ from newsbot.core_users import (admin_limits, admin_offset, usage_reset, is_supe
                                 can_admin, get_user, list_users)
 from newsbot.core_channels import (get_settings, update_settings, channel_owned,
                                    publication_pending, reset_channel_queue, del_channel,
-                                   mandatory_membership, list_channels)
+                                   mandatory_membership, mandatory_cfg, mandatory_set, list_channels)
 from newsbot.core_sources import get_source, toggle_source, del_source, count_sources, set_source_api
 from newsbot.core_articles import get_article, article_update, delete_article
 from newsbot.core_plans import (assign_plan, revoke_plan, get_plan, plan_txt, list_plans,
@@ -45,7 +45,7 @@ from newsbot.ui_views_admin import (view_admin_home, view_channel, channel_reche
                                     PLAN_FIELDS, MODEL_FIELDS, fl)
 from newsbot.ui_views_super import (view_super_home, view_health, view_s_plans, view_s_plan, view_s_discs,
                                     view_s_disc, view_s_users, view_s_user, view_s_models, view_s_model,
-                                    view_s_pays, view_s_texts, decide_pay)
+                                    view_s_pays, view_s_texts, view_s_mand, decide_pay)
 
 
 async def dispatch(update, context, data):
@@ -55,7 +55,7 @@ async def dispatch(update, context, data):
     if not user_lang(uid): return await view_lang(update, context)
     if data == "home": return await go_home_safe(update, context)
     if data == "c:cancel":
-        st = ud.pop("await", None); await popup(update, context, operation_text(lang, "cancelled"), alert=True)
+        st = ud.pop("await", None); await popup(update, context, operation_text(lang, "cancelled"))
         return await dispatch(update, context, (st or {}).get("back", "home"))
     # ---------------- کاربر
     if a == "u":
@@ -70,27 +70,30 @@ async def dispatch(update, context, data):
         if b == "discx": ud.setdefault("disc", {}).pop(c, None); return await view_plan(update, context, int(c))
         if b == "man_close": support_close(uid); return await render(update, context, tr(lang, "sup_closed"), [[B(tr(lang, "home"), "home")]])
         return await go_home_safe(update, context)
+    # ---------------- کانال اجباری (همهٔ کاربران، پیش از دروازهٔ ادمین)
+    if a == "a" and b == "mand":
+        okm, _j = await mandatory_membership(context.bot, uid, lang)
+        if okm:
+            await popup(update, context, tr(lang, "mand_ok"))
+            return await go_home_safe(update, context)
+        await popup(update, context, tr(lang, "mand_still"))
+        return await mand_gate(update, context, uid, lang)
     # ---------------- مدیر میانی
     if a == "a":
-        if not can_admin(uid): await popup(update, context, tr(lang, "no_admin"), alert=True); return await view_plans(update, context)
-        # NEW v4: بررسی دوباره‌ی عضویت کانال اجباری (فقط ادمین به این‌جا می‌رسد)
-        if b == "mand":
-            okm, _j = await mandatory_membership(context.bot, uid)
-            if okm:
-                await popup(update, context, tr(lang, "mand_ok"))
-                return await view_admin_home(update, context)
-            await popup(update, context, tr(lang, "mand_still"), alert=True)
-            return await mand_gate(update, context, uid, lang)
+        if not can_admin(uid): await popup(update, context, tr(lang, "no_admin")); return await view_plans(update, context)
         lim = admin_limits(uid)
         # عملیاتی که محتوا تولید/منتشر می‌کنند فقط با پلن فعال (مشاهده و تنظیمات آزاد می‌ماند)
-        if b in ("test", "pub", "srca", "chadd") and not lim["active"]: await popup(update, context, tr(lang, "plan_inactive"), alert=True); return await view_my_plan(update, context)
+        if b in ("test", "pub", "srca", "chadd") and not lim["active"]: await popup(update, context, tr(lang, "plan_inactive")); return await view_my_plan(update, context)
         if b == "home": return await view_admin_home(update, context)
         if b == "plan": return await view_my_plan(update, context)
-        if b == "myai": return await view_my_ai(update, context)
+        if b == "myai":
+            cid = int(c) if c.lstrip("-").isdigit() else 0
+            ud["myai_back"] = f"a:ch:{cid}" if cid and channel_owned(cid, uid) else "a:home"
+            return await view_my_ai(update, context)
         if b == "myai_add": return await wiz_start(update, context, "my_ai_add", "a:myai")
         if b in ("myai_v", "myai_t", "myai_o", "myai_d", "myai_e"):
             mid = int(c); m = get_model(mid)
-            if not m or (m["owner_id"] != uid and not is_super(uid)): await popup(update, context, tr(lang, "notfound"), alert=True); return await view_my_ai(update, context)
+            if not m or (m["owner_id"] != uid and not is_super(uid)): await popup(update, context, tr(lang, "notfound")); return await view_my_ai(update, context)
             if b == "myai_v": return await view_my_ai_model(update, context, mid)
             if b == "myai_o": update_model(mid, active=0 if m["active"] else 1, status="ok", fail_count=0); await popup(update, context, tr(lang, "s_model_off" if m["active"] else "s_model_on")); return await view_my_ai_model(update, context, mid)
             if b == "myai_d": delete_model(mid); await popup(update, context, tr(lang, "deleted")); return await view_my_ai(update, context)
@@ -98,7 +101,7 @@ async def dispatch(update, context, data):
             await run_model_test(update, context, mid, personal=True)
             return await view_my_ai_model(update, context, mid)
         if b == "chadd":
-            if lim["max_channels"] is not None and len(list_channels(uid)) >= lim["max_channels"]: await popup(update, context, tr(lang, "limit_channels", n=lim["max_channels"]), alert=True); return await view_admin_home(update, context)
+            if lim["max_channels"] is not None and len(list_channels(uid)) >= lim["max_channels"]: await popup(update, context, tr(lang, "limit_channels", n=lim["max_channels"])); return await view_admin_home(update, context)
             return await ask(update, context, tr(lang, "ch_add_prompt"), "ch_add", "a:home")
         if b in ("srcv", "srct", "srctb", "srcd", "srcr", "srcapi", "srcapix"):
             sid = int(c); s = get_source(sid)
@@ -109,21 +112,21 @@ async def dispatch(update, context, data):
             if b == "srcapi": return await ask(update, context, tr(lang, "src_api_url"), "src_api_url", f"a:srcv:{sid}", sid=sid)
             if b == "srcapix": set_source_api(sid, "", "", ""); await popup(update, context, tr(lang, "src_api_del")); return await view_source(update, context, sid)
             if b == "srcr":
-                if not is_super(uid) and not rate_free(f"srcr:{sid}", 60): await popup(update, context, tr(lang, "test_wait", n=rate_left(f"srcr:{sid}", 60)), alert=True); return await view_source(update, context, sid)
+                if not is_super(uid) and not rate_free(f"srcr:{sid}", 60): await popup(update, context, tr(lang, "test_wait", n=rate_left(f"srcr:{sid}", 60))); return await view_source(update, context, sid)
                 await render(update, context, tr(lang, "src_checking"))
                 ok, msg = await probe_source(s, lang)
                 if ok: rate_mark(f"srcr:{sid}")
                 else: rate_clear(f"srcr:{sid}")
-                await popup(update, context, msg, alert=True); return await view_source(update, context, sid)
+                await popup(update, context, msg); return await view_source(update, context, sid)
             del_source(sid, s["admin_id"]); await popup(update, context, tr(lang, "src_deleted")); return await view_sources(update, context, s["channel_id"])
         if b in ("art", "arte", "artd", "artr", "artf", "pub"):
             aid = int(c); art = get_article(aid)
             if not art or (art["admin_id"] != uid and not is_super(uid)): await popup(update, context, tr(lang, "notfound")); return await view_admin_home(update, context)
             cid = art["channel_id"]
             if b in ("arte", "artd", "artr") and publication_pending(cid):
-                return await popup(update, context, tr(lang, "test_busy"), alert=True)
+                return await popup(update, context, tr(lang, "test_busy"))
             if b == "artr" and art["status"] not in ("rejected", "failed", "skipped"):
-                return await popup(update, context, tr(lang, "notfound"), alert=True)
+                return await popup(update, context, tr(lang, "notfound"))
             if b == "art": return await view_article(update, context, aid)
             if b == "arte": return await ask(update, context, tr(lang, "art_edit_prompt"), "art_edit", f"a:art:{aid}", aid=aid)
             if b == "artd": delete_article(aid, art["admin_id"]); await popup(update, context, tr(lang, "deleted")); return await view_queue(update, context, cid, "ready" if art["status"] in ("ready", "published") else "rejected")
@@ -136,8 +139,8 @@ async def dispatch(update, context, data):
                 return await view_article(update, context, aid)
             if b == "pub":
                 rem = remaining_pub(uid, cid)
-                if rem is not None and rem <= 0: await popup(update, context, tr(lang, "limit_posts", n=lim["daily_posts"]), alert=True); return await view_queue(update, context, cid)
-                if ch_lock(cid).locked(): await popup(update, context, tr(lang, "test_busy"), alert=True); return await view_queue(update, context, cid)
+                if rem is not None and rem <= 0: await popup(update, context, tr(lang, "limit_posts", n=lim["daily_posts"])); return await view_queue(update, context, cid)
+                if ch_lock(cid).locked(): await popup(update, context, tr(lang, "test_busy")); return await view_queue(update, context, cid)
                 if await mand_gate(update, context, uid, lang): return   # NEW v4: انتشار دستی هم از دروازه‌ی کانال اجباری می‌گذرد
                 await render(update, context, tr(lang, "publishing"))
                 try:
@@ -145,7 +148,7 @@ async def dispatch(update, context, data):
                 except Exception as e:
                     log.exception("manual publish failed article=%s channel=%s", aid, cid)
                     ok, out = False, f"send_failed:{str(e)[:120]}"
-                await popup(update, context, tr(lang, "published_ok") if ok else tr(lang, "pub_failed", e=_pub_err(out, lang)), alert=not ok); return await view_queue(update, context, cid)
+                await popup(update, context, tr(lang, "published_ok") if ok else tr(lang, "pub_failed", e=_pub_err(out, lang))); return await view_queue(update, context, cid)
         if b == "chrec":
             cid = int(c) if c.lstrip("-").isdigit() else 0
             return await channel_recheck(update, context, cid)
@@ -157,14 +160,14 @@ async def dispatch(update, context, data):
         if b == "test": return await run_test(update, context, cid)
         if b == "qreset": return await render(update, context, tr(lang, "queue_reset_q"), [[B(tr(lang, "yes"), f"a:qreset2:{cid}"), B(tr(lang, "no"), f"a:que:{cid}")]])
         if b in ("qreset2", "chdel2") and publication_pending(cid):
-            return await popup(update, context, tr(lang, "test_busy"), alert=True)
+            return await popup(update, context, tr(lang, "test_busy"))
         if b == "qreset2":
             n = reset_channel_queue(cid); log_event_warn(uid, f"ریست صف کانال {ch['title']}")
-            await popup(update, context, tr(lang, "queue_reset_ok", n=n), alert=True); return await view_queue(update, context, cid)
+            await popup(update, context, tr(lang, "queue_reset_ok", n=n)); return await view_queue(update, context, cid)
         if b == "chdel": return await render(update, context, tr(lang, "ch_del_q", title=esc(ch["title"])), [[B(tr(lang, "yes"), f"a:chdel2:{cid}"), B(tr(lang, "no"), f"a:ch:{cid}")]])
         if b == "chdel2": del_channel(cid, ch["admin_id"]); await popup(update, context, tr(lang, "ch_deleted")); return await view_admin_home(update, context)
         if b == "tog":
-            if d not in TOGGLABLE: return await popup(update, context, tr(lang, "notfound"), alert=True)
+            if d not in TOGGLABLE: return await popup(update, context, tr(lang, "notfound"))
             new = not s.get(d)
             if d == "enabled" and new and await mand_gate(update, context, uid, lang): return   # NEW v4: روشن‌کردن اتوماسیون بدون عضویت تأییدشده ممکن نیست
             update_settings(cid, **{d: new})
@@ -172,7 +175,7 @@ async def dispatch(update, context, data):
             else: await popup(update, context, f"{tr(lang, 'tog_' + d)}: {'✅' if new else '⛔'}\n{tr(lang, 'togd_' + d)}")
             return await (view_sched if d == "allow_undated" else view_content)(update, context, cid)
         if b == "set":
-            if d not in FIELD_LABEL: return await popup(update, context, tr(lang, "notfound"), alert=True)
+            if d not in FIELD_LABEL: return await popup(update, context, tr(lang, "notfound"))
             shown = (tr(lang, "unlimited") if s.get(d) is None else strip_tags(str(s.get(d)))) if d == "daily_posts_cap" else strip_tags(str(s.get(d)))
             extra = ""
             if d == "daily_posts_cap":
@@ -187,7 +190,7 @@ async def dispatch(update, context, data):
         if b == "qoff": update_settings(cid, quiet_start=None, quiet_end=None); await popup(update, context, tr(lang, "quiet_cleared")); return await view_sched(update, context, cid)
         if b == "tz": return await view_tz(update, context, cid)
         if b == "tzs":
-            if not d.isdigit() or int(d) >= len(TZ_ZONES): return await popup(update, context, tr(lang, "notfound"), alert=True)
+            if not d.isdigit() or int(d) >= len(TZ_ZONES): return await popup(update, context, tr(lang, "notfound"))
             z, off = TZ_ZONES[int(d)]; old_day, new_day = today_str(s["utc_offset"]), today_str(off)
             update_settings(cid, utc_offset=off)
             if old_day != new_day:      # جابه‌جایی مرزِ روز نباید سهمیهٔ امروز را صفر کند (سوءاستفاده و بی‌اعتباری شمارش)
@@ -203,7 +206,7 @@ async def dispatch(update, context, data):
         if b == "catd":
             cats = s["categories"]; i = int(d)
             if 0 <= i < len(cats) and len(cats) > 1: cats.pop(i); update_settings(cid, categories=cats); await popup(update, context, tr(lang, "deleted"))
-            else: await popup(update, context, tr(lang, "cat_min"), alert=True)
+            else: await popup(update, context, tr(lang, "cat_min"))
             return await view_cats(update, context, cid)
         if b == "cri": return await view_crits(update, context, cid)
         if b == "cria": return await wiz_start(update, context, "crit_add", f"a:cri:{cid}", cid=cid)
@@ -212,11 +215,11 @@ async def dispatch(update, context, data):
         if b == "crid":
             cr = s["criteria"]; i = int(d)
             if 0 <= i < len(cr) and len(cr) > 1: cr.pop(i); update_settings(cid, criteria=cr); await popup(update, context, tr(lang, "deleted"))
-            else: await popup(update, context, tr(lang, "crit_min"), alert=True)
+            else: await popup(update, context, tr(lang, "crit_min"))
             return await view_crits(update, context, cid)
         if b == "src": return await view_sources(update, context, cid)
         if b == "srca":
-            if lim["max_sources"] is not None and count_sources(uid) >= lim["max_sources"]: await popup(update, context, tr(lang, "limit_sources", n=lim["max_sources"]), alert=True); return await view_sources(update, context, cid)
+            if lim["max_sources"] is not None and count_sources(uid) >= lim["max_sources"]: await popup(update, context, tr(lang, "limit_sources", n=lim["max_sources"])); return await view_sources(update, context, cid)
             return await ask(update, context, tr(lang, "src_add_prompt"), "src_add", f"a:src:{cid}", cid=cid)
         if b in ("que", "rej"): return await view_queue(update, context, cid, "ready" if b == "que" else "rejected")
         return await view_channel(update, context, cid)
@@ -228,6 +231,13 @@ async def dispatch(update, context, data):
         if b == "health": return await view_health(update, context)
         if b == "auto": new = not gget("automation_enabled", True); gset("automation_enabled", new); await popup(update, context, tr(lang, "s_auto_on" if new else "s_auto_off")); return await view_super_home(update, context)
         if b == "texts": return await view_s_texts(update, context)
+        if b == "mand": return await view_s_mand(update, context)
+        if b == "mand_t":
+            if c not in config.LANGS: return
+            cur = mandatory_cfg(c); mandatory_set(c, on=not cur.get("on")); await popup(update, context, tr(lang, "saved")); return await view_s_mand(update, context)
+        if b == "mand_e":
+            if c not in config.LANGS or d not in ("id", "user"): return
+            return await ask(update, context, tr(lang, "s_field_prompt", f=tr(lang, "s_mand_id" if d == "id" else "s_mand_user")), "mand_field", "s:mand", lg=c, field=d)
         if b == "txt": return await ask(update, context, tr(lang, "s_text_prompt", k=c, lg=d), "gtext", "s:texts", key=c, lg=d)
         if b == "txtr": gtext_set_wrap(c, d); await popup(update, context, tr(lang, "s_text_reset_done")); return await view_s_texts(update, context)
         if b == "bc": return await ask(update, context, tr(lang, "s_bc_prompt"), "bc", "s:home")
@@ -247,7 +257,7 @@ async def dispatch(update, context, data):
         if b == "plan_e": return await ask(update, context, tr(lang, "s_field_prompt", f=fl(PLAN_FIELDS, d, lang)), "plan_field", f"s:plan:{c}", pid=int(c), field=d)
         if b == "plan_t":
             pl = get_plan(int(c))
-            if not pl: await popup(update, context, tr(lang, "notfound"), alert=True); return await view_s_plans(update, context)
+            if not pl: await popup(update, context, tr(lang, "notfound")); return await view_s_plans(update, context)
             update_plan(int(c), active=0 if pl["active"] else 1); await popup(update, context, tr(lang, "saved")); return await view_s_plan(update, context, int(c))
         if b == "plan_free": q("UPDATE plans SET is_free=0", commit=True); update_plan(int(c), is_free=1); await popup(update, context, tr(lang, "s_plan_free_done")); return await view_s_plan(update, context, int(c))
         if b == "plan_d": delete_plan(int(c)); await popup(update, context, tr(lang, "s_plan_deleted")); return await view_s_plans(update, context)
@@ -282,7 +292,7 @@ async def dispatch(update, context, data):
         if b == "model_add": return await wiz_start(update, context, "model_add", "s:models")
         if b == "model_t":
             m = get_model(int(c))
-            if not m: await popup(update, context, tr(lang, "notfound"), alert=True); return await view_s_models(update, context)
+            if not m: await popup(update, context, tr(lang, "notfound")); return await view_s_models(update, context)
             turning_off = m["active"]
             update_model(int(c), active=0 if m["active"] else 1, status="ok", fail_count=0)
             if turning_off and gget("test_model_id") == m["id"]: gset("test_model_id", None)
@@ -298,7 +308,7 @@ async def dispatch(update, context, data):
         if b == "model_test_pick":
             m = get_model(int(c))
             if not m or m["owner_id"] is not None or not m["active"]:
-                return await popup(update, context, tr(lang, "notfound"), alert=True)
+                return await popup(update, context, tr(lang, "notfound"))
             selected = gget("test_model_id") == m["id"]
             gset("test_model_id", None if selected else m["id"])
             await popup(update, context, ("Test Model cleared" if selected else "Test Model selected") if lang == "en" else ("انتخاب Test Model برداشته شد" if selected else "Test Model انتخاب شد"))
@@ -382,7 +392,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "c:cancel":
             op = _current_operation.get()
             if op and not op.replaced_status:
-                await popup(update, context, operation_text(L(update), "cancelled"), alert=True)
+                await popup(update, context, operation_text(L(update), "cancelled"))
             return await dispatch(update, context, back)
         clear_interaction(context, keep=keep)
         return await dispatch(update, context, data)

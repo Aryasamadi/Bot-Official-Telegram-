@@ -123,9 +123,9 @@ async def _cycle(bot, uid, cid, test_mode, progress):
     field = "tests" if test_mode else "posts"; rem = remaining(uid, field, cid if field == "posts" else None)
     if rem is not None and rem <= 0: D.add("quota_tests" if test_mode else "quota_posts", used=usage_today(uid)[field], cap=lim["daily_tests" if test_mode else "daily_posts"]); D.hint("hint_quota"); return fin()
     if not await bot_can_post(bot, ch["chat_id"]): D.add("bot_not_admin"); D.hint("hint_admin"); return fin()
-    # NEW v4: دروازه‌ی کانال اجباری — فقط برای ادمینِ کانال؛ کاربر عادی هرگز به چرخه نمی‌رسد
-    if mandatory_configured():
-        okm, _join = await mandatory_membership(bot, uid)
+    # دروازه‌ی کانال اجباری — کانالِ همان زبانِ کاربر (fa/en مستقل)
+    if mandatory_configured(lang):
+        okm, _join = await mandatory_membership(bot, uid, lang)
         if not okm: D.add("mand_missing"); D.hint("hint_mand"); return fin()
     target = 1 if test_mode else min(rem if rem is not None else 99, int(s["posts_per_cycle"])); update_settings(cid, last_run=now_iso()); await p(5, P["start"])
     # ══ stage 1/5: discover ══ منابع هم‌زمان (FETCH_SEM) و هر منبع مستقل خطا می‌دهد
@@ -300,8 +300,8 @@ async def flush_ready(bot, uid, cid, max_n=2):
         s = get_settings(cid); ch = get_channel(cid)
         if not ch or ch["admin_id"] != uid or not admin_limits_cached(uid)["active"]: return 0
         if s["mode"] != "auto" or in_quiet(s) or not s["enabled"]: return 0
-        if mandatory_configured():   # NEW v4: اتوماسیون بدون عضویت تأییدشدهٔ ادمین در کانال اجباری اجرا نمی‌شود
-            okm, _join = await mandatory_membership(bot, uid)
+        if mandatory_configured(s["ui_lang"]):   # اتوماسیون بدون عضویت تأییدشدهٔ ادمین در کانال اجباری اجرا نمی‌شود
+            okm, _join = await mandatory_membership(bot, uid, s["ui_lang"])
             if not okm: return 0
         ru = parse_dt(s.get("_retry_until") or "")
         if ru and now_utc() < ru: return 0

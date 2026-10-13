@@ -130,8 +130,8 @@ async def create_temp(bot, chat_id, text, temporary=True):
     return msg.message_id
 
 async def send_temp(context, chat_id, text, seconds=None):
-    """پیام موقت: seconds=None → همیشه ۵ ثانیه (قانون فاز ۱)؛ مقدار صریح فقط برای جایی که واقعاً لازم است."""
-    seconds = 5 if seconds is None else max(1, int(seconds))
+    """پیام موقت: پیش‌فرض ۱۰ ثانیه (قاعدهٔ نمایش)؛ مقدار صریح فقط جایی که واقعاً لازم است."""
+    seconds = 10 if seconds is None else max(1, int(seconds))
     try: mid = await create_temp(context.bot, chat_id, text)
     except Exception:
         log.debug("temporary message send failed", exc_info=True); return
@@ -328,7 +328,7 @@ async def run_user_operation(update, context, kind, channel, work, show_status=F
             replaced_status = await cancel_user_operation(uid)
             clear_interaction(context, keep=keep)
         if uid in _operations:
-            await popup(update, context, operation_text(lang, "busy"), alert=True)
+            await popup(update, context, operation_text(lang, "busy"))
             return
         op = Operation(uid, channel, kind, update.effective_chat.id, replaced_status=replaced_status)
         op.oid = secrets.token_hex(2); 
@@ -449,7 +449,7 @@ async def run_model_test(update, context, mid, personal=False):
     uid = update.effective_user.id; lang = L(update); m = get_model(mid)
     op = _current_operation.get()
     if not m or (personal and m["owner_id"] != uid):
-        return await popup(update, context, tr(lang, "notfound"), alert=True)
+        return await popup(update, context, tr(lang, "notfound"))
     started = time.monotonic(); label = _model_label(m, uid if personal else None)
     token = _ai_events.set(_ai_status_reporter(context, lang))
     try:
@@ -467,7 +467,7 @@ async def run_model_test(update, context, mid, personal=False):
             result = ("Test failed — " if lang == "en" else "تست ناموفق — ") + ai_err_text(error, lang)
         await operation_status(context, result, failed=not ok, terminal=True)
         if op: op.final_status = True
-        await popup(update, context, result, alert=True)
+        await popup(update, context, result)
         return ok
     finally:
         _ai_events.reset(token)
@@ -475,19 +475,20 @@ async def run_model_test(update, context, mid, personal=False):
 # ══════════════════════════════════════════════════════════════════════════
 # popup / render / ask / wizard
 # ══════════════════════════════════════════════════════════════════════════
-async def popup(update, context, text, alert=False):
-    plain = strip_tags(text); temp = None
-    # Policy یکتا (فاز ۱): کوتاه → پاپ‌آپ / بلند → پیامِ ۵ ثانیه‌ای
-    if not alert and len(plain) > 200:
-        alert = False; temp = 5
+POPUP_MAX_CHARS = 35     # کوتاه‌تر از این ⇒ پاپ‌آپ بالای صفحه
+POPUP_TEMP_SECONDS = 10  # بلندتر ⇒ پیام معمولی که پس از این مدت حذف می‌شود
+
+async def popup(update, context, text):
+    """قاعدهٔ یکتای نمایش پیام: کوتاه‌تر از ۳۵ کاراکتر ⇒ پاپ‌آپ بالای صفحه؛
+    بلندتر ⇒ پیام معمولی در چت که پس از ۱۰ ثانیه خودش حذف می‌شود."""
+    plain = strip_tags(text).strip()
     qy = update.callback_query
-    if qy and temp is None:
+    if qy and len(plain) < POPUP_MAX_CHARS:
         try:
-            # قاعده: هشدار/وضعیت همیشه نوتیفیکیشن آبی بالای چت (show_alert=False) تا چت را نپوشاند
-            await qy.answer(plain[:200], show_alert=False); context._callback_answered = True
+            await qy.answer(plain, show_alert=False); context._callback_answered = True
             return
         except Exception: pass
-    await send_temp(context, update.effective_chat.id, text, seconds=temp)
+    await send_temp(context, update.effective_chat.id, text, seconds=POPUP_TEMP_SECONDS)
 
 async def render(update, context, text, kb=None, force_new=False):
     operation_checkpoint()

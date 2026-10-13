@@ -10,9 +10,9 @@ from newsbot.db import q, gget
 from newsbot.logutils import log, log_event, metrics_text, redact
 from newsbot.timeutils import now_utc, parse_dt, fmt_date, ago_text
 from newsbot.core_users import list_users, get_user, admin_limits, admin_offset, usage_today, is_super, user_lang
-from newsbot.core_plans import get_plan, plan_txt, list_plans, assign_plan, _price_num
+from newsbot.core_plans import get_plan, plan_txt, list_plans, assign_plan, _price_num, _fmt_price
 from newsbot.core_discounts import disc_list, disc_get, disc_valid, disc_use
-from newsbot.core_channels import list_channels
+from newsbot.core_channels import list_channels, mandatory_cfg
 from newsbot.core_sources import count_sources
 from newsbot.core_articles import count_articles
 from newsbot.core_payments import pay_pending, pay_get, pay_set, pay_claim
@@ -63,9 +63,20 @@ async def cmd_health(update, context):
 async def view_super_home(update, context):
     lang = L(update); models = list_models(); down = sum(1 for m in models if m["active"] and m["status"] == "down"); auto = gget("automation_enabled", True); n_pay = len(pay_pending())
     text = tr(lang, "s_title", m=len(models), ms=tr(lang, "s_all_ok") if not down else tr(lang, "s_down", n=down), a=len(list_users("admin")), u=len(list_users()), p=n_pay, dc=len(disc_list()), due=gget("load_due", 0), hb=ago_text(gget("heartbeat"), lang))
-    kb = [[B(tr(lang, "s_report"), "s:report"), B("🩺 سلامت / Health", "s:health")], [B(tr(lang, "s_plans"), "s:plans"), B(tr(lang, "s_discs"), "s:discs")], [B(tr(lang, "s_users"), "s:users:0"), B(tr(lang, "s_admins"), "s:admins:0")],
-          [B(tr(lang, "s_models"), "s:models"), B(tr(lang, "s_pays", n=n_pay), "s:pays")], [B(tr(lang, "s_bc"), "s:bc"), B(tr(lang, "s_texts"), "s:texts")], [B(tr(lang, "s_auto", i="🟢" if auto else "🔴"), "s:auto"), B(tr(lang, "s_me"), "a:home")]]
+    kb = [[B(tr(lang, "s_report"), "s:report"), B(tr(lang, "s_health"), "s:health")], [B(tr(lang, "s_plans"), "s:plans"), B(tr(lang, "s_discs"), "s:discs")], [B(tr(lang, "s_users"), "s:users:0"), B(tr(lang, "s_admins"), "s:admins:0")],
+          [B(tr(lang, "s_models"), "s:models"), B(tr(lang, "s_pays", n=n_pay), "s:pays")], [B(tr(lang, "s_mand"), "s:mand"), B(tr(lang, "s_texts"), "s:texts")], [B(tr(lang, "s_bc"), "s:bc"), B(tr(lang, "s_auto", i=onoff(auto)), "s:auto")], [B(tr(lang, "s_me"), "a:home")]]
     await render(update, context, text, kb)
+
+async def view_s_mand(update, context):
+    """کانال اجباری — تنظیم مستقل برای هر زبان."""
+    lang = L(update); lines, kb = [], []
+    for lg in config.LANGS:
+        c = mandatory_cfg(lg); on = bool(c.get("on")); tgt = (str(c.get("id") or "").strip() or (("@" + str(c.get("user")).lstrip("@")) if c.get("user") else "") or "—")
+        lines.append(tr(lang, "s_mand_line", lg=lg.upper(), i=onoff(on), tgt=esc(tgt)))
+        kb.append([B(f"{onoff(on)} {lg.upper()}", f"s:mand_t:{lg}"), B(tr(lang, "s_mand_id"), f"s:mand_e:{lg}:id")])
+        kb.append([B(tr(lang, "s_mand_user"), f"s:mand_e:{lg}:user")])
+    kb.append([B(tr(lang, "back"), "s:home")])
+    await render(update, context, tr(lang, "s_mand_title") + "".join(lines), kb)
 
 async def view_s_plans(update, context):
     lang = L(update); plans = list_plans(active_only=False)
@@ -161,16 +172,16 @@ async def decide_pay(update, context, rid, approve, from_list):
     if not r or r["status"] != "pending": await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
     ul = user_lang(r["user_id"]) or "fa"; p = get_plan(r["plan_id"])
     if not p or p["is_free"] or ("active" in p.keys() and not p["active"]):
-        pay_set(rid, "pending"); await popup(update, context, tr(lang, "notfound"), alert=True); return await view_s_pays(update, context) if from_list else None
+        pay_set(rid, "pending"); await popup(update, context, tr(lang, "notfound")); return await view_s_pays(update, context) if from_list else None
     # claim the payment first (CAS) so a double-approve callback assigns the plan exactly once
     if not pay_claim(rid):
         await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
     if approve:
         if not p:
-            pay_set(rid, "pending"); await popup(update, context, tr(lang, "notfound"), alert=True); return await view_s_pays(update, context) if from_list else None
+            pay_set(rid, "pending"); await popup(update, context, tr(lang, "notfound")); return await view_s_pays(update, context) if from_list else None
         # مصرف اتمیک کد تخفیف پیش از واگذاری پلن؛ rowcount=0 یعنی ظرفیت تمام شده ⇒ تأیید لغو و پرداخت به بازبینی برمی‌گردد
         if r["discount"] and not disc_use(r["discount"]):
-            pay_set(rid, "pending"); await popup(update, context, tr(lang, "disc_exhausted"), alert=True); return await view_s_pays(update, context) if from_list else None
+            pay_set(rid, "pending"); await popup(update, context, tr(lang, "disc_exhausted")); return await view_s_pays(update, context) if from_list else None
         try:
             pc = json.loads(r["pc"]) if ("pc" in r.keys() and r["pc"]) else {}
         except Exception:
@@ -185,7 +196,7 @@ async def decide_pay(update, context, rid, approve, from_list):
             if r["discount"]:
                 from newsbot.core_discounts import disc_refund
                 disc_refund(r["discount"])
-            pay_set(rid, "pending"); await popup(update, context, tr(lang, "s_pay_seen"), alert=True); return await view_s_pays(update, context) if from_list else None
+            pay_set(rid, "pending"); await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
         def rollback_payment(why):
             """تا وقتی پلن واگذار نشده، هر شکستی قابل برگشت است: موجودی، ردیف سابقه و مصرف کد تخفیف برمی‌گردند."""
             used = float(pc.get("used_balance") or 0); surplus = float(pc.get("surplus") or 0)
@@ -206,10 +217,10 @@ async def decide_pay(update, context, rid, approve, from_list):
         except Exception:
             log.exception("plan assignment failed rid=%s uid=%s", rid, r["user_id"])
             rollback_payment("assign")
-            await popup(update, context, tr(lang, "s_pay_seen"), alert=True); return await view_s_pays(update, context) if from_list else None
+            await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
         if exp is None:
             rollback_payment("no_plan")
-            await popup(update, context, tr(lang, "notfound"), alert=True); return await view_s_pays(update, context) if from_list else None
+            await popup(update, context, tr(lang, "notfound")); return await view_s_pays(update, context) if from_list else None
         pay_set(rid, "approved")
         # NEW v4: اعتبار ارجاع — اتمیک و idempotent (فقط ردیف credited=0 حرکت می‌کند)؛
         # شکست آن هرگز پرداخت تأییدشده را خراب نمی‌کند.
@@ -218,7 +229,10 @@ async def decide_pay(update, context, rid, approve, from_list):
             try: paid_num = float(str(r["final_price"] or "").strip())
             except (TypeError, ValueError): paid_num = None
             if paid_num is None: paid_num = _price_num(p)
-            credit_referral_on_payment(r["user_id"], paid_num)
+            res = credit_referral_on_payment(r["user_id"], paid_num)
+            if res:   # معرف مطلع می‌شود: مبلغ دقیق واریزشده به کیف پول
+                ref_id, amt = res
+                await notify_user_fn(ref_id, tr(user_lang(ref_id) or "fa", "ref_reward", amount=_fmt_price(amt)))
         except Exception: log.exception("referral credit failed rid=%s", rid)
         await notify_user_fn(r["user_id"], tr(ul, "pay_approved", name=esc(plan_txt(p, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=fmt_date(exp, admin_offset(r["user_id"])))))
         await popup(update, context, tr(lang, "s_pay_done_ok"))

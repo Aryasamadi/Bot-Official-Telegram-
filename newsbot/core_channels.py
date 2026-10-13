@@ -6,7 +6,7 @@ NEW v4: بررسی عضویت کانال اجباری فقط برای ادمین
 import json, random, sqlite3
 from datetime import datetime, timedelta
 from newsbot import config
-from newsbot.db import q, db, _lock, _trx
+from newsbot.db import q, db, _lock, _trx, gget, gset
 from newsbot.logutils import log
 from newsbot.timeutils import now_utc, now_iso, parse_dt, tz_of
 from newsbot.core_users import user_lang, is_super
@@ -141,40 +141,70 @@ def update_channel_meta(cid, title=None, username=None):
 def msg_link(ch, msg): return f"https://t.me/{ch['username']}/{msg.message_id}" if ch["username"] else f"https://t.me/c/{str(ch['chat_id'])[4:]}/{msg.message_id}"
 
 # ══════════════════════════════════════════════════════════════════════════
-# NEW v4 — کانال اجباری (فقط برای ادمین‌ها)
+# کانال اجباری — مستقل برای هر زبان (fa/en)
+# مدیر کلان می‌تواند برای هر زبان جدا فعال/غیرفعال و شناسه/یوزرنیم تعیین کند.
+# مقادیر در جدول settings ذخیره می‌شوند؛ env فقط پیش‌فرضِ سازگاری برای زبان فارسی است.
 # ══════════════════════════════════════════════════════════════════════════
-def mandatory_configured():
-    """آیا کانال اجباری در پیکربندی ست شده است؟"""
-    return bool(config.MANDATORY_CHANNEL_ID or config.MANDATORY_CHANNEL_USERNAME)
+MANDATORY_KEY = "mandatory_channels"
+MANDATORY_DB_KEY = MANDATORY_KEY   # نام عمومی برای تست و ابزارها
+MANDATORY_FIELDS = (("on", "bool"), ("id", "str"), ("user", "str"))
 
-def mandatory_target():
-    """شناسهٔ عددی یا یوزرنیم کانال اجباری؛ None اگر تنظیم نشده یا نامعتبر."""
-    if config.MANDATORY_CHANNEL_ID:
-        try: return int(config.MANDATORY_CHANNEL_ID)
+def _mand_env_default(lang):
+    """پیش‌فرض سازگاری: نصب‌های قدیمی کانال اجباری را از env می‌خواندند (تک‌کاناله ⇒ زبان فارسی)."""
+    if lang == "fa" and (config.MANDATORY_CHANNEL_ID or config.MANDATORY_CHANNEL_USERNAME):
+        return {"on": True, "id": config.MANDATORY_CHANNEL_ID or "", "user": config.MANDATORY_CHANNEL_USERNAME or ""}
+    return {"on": False, "id": "", "user": ""}
+
+def mandatory_cfg(lang="fa"):
+    """پیکربندی کانال اجباری همان زبان؛ نبودِ ردیف ⇒ پیش‌فرض env."""
+    all_cfg = gget(MANDATORY_KEY) or {}
+    cur = all_cfg.get(lang) if isinstance(all_cfg, dict) else None
+    if isinstance(cur, dict):
+        base = _mand_env_default(lang); base.update({k: cur[k] for k in base if k in cur}); return base
+    return _mand_env_default(lang)
+
+def mandatory_set(lang, **kw):
+    """به‌روزرسانی پیکربندی یک زبان (بقیهٔ زبان‌ها دست‌نخورده می‌مانند)."""
+    all_cfg = gget(MANDATORY_KEY) or {}
+    if not isinstance(all_cfg, dict): all_cfg = {}
+    cur = dict(mandatory_cfg(lang)); cur.update({k: v for k, v in kw.items() if k in dict(MANDATORY_FIELDS)})
+    all_cfg[lang] = cur; gset(MANDATORY_KEY, all_cfg); return cur
+
+def mandatory_configured(lang="fa"):
+    """آیا برای این زبان کانال اجباریِ فعال و معتبری تعریف شده است؟"""
+    c = mandatory_cfg(lang)
+    return bool(c.get("on") and (str(c.get("id") or "").strip() or str(c.get("user") or "").strip()))
+
+def mandatory_target(lang="fa"):
+    """شناسهٔ عددی یا یوزرنیم کانال اجباری همان زبان؛ None اگر غیرفعال یا نامعتبر."""
+    c = mandatory_cfg(lang)
+    if not c.get("on"): return None
+    raw = str(c.get("id") or "").strip()
+    if raw:
+        try: return int(raw)
         except (ValueError, TypeError): pass
-    if config.MANDATORY_CHANNEL_USERNAME:
-        return "@" + config.MANDATORY_CHANNEL_USERNAME.lstrip("@")
-    return None
+    user = str(c.get("user") or "").strip()
+    return "@" + user.lstrip("@") if user else None
 
-async def mandatory_membership(bot, uid):
-    """بررسی عضویت در کانال اجباری — فقط برای ادمین/مدیر کلان فراخوانی می‌شود.
-    خروجی: (ok, join_url). ok=False یعنی عضو نیست (یا بررسی ناموفق بود) و جریان باید متوقف شود.
-    کاربر عادی هرگز به این تابع نمی‌رسد (دروازه فقط در مسیرهای ادمین نصب شده است)."""
-    tgt = mandatory_target()
+async def mandatory_membership(bot, uid, lang="fa"):
+    """بررسی عضویت در کانال اجباریِ زبان کاربر.
+    خروجی: (ok, join_url). ok=False یعنی عضو نیست (یا بررسی ناموفق بود)."""
+    tgt = mandatory_target(lang)
     if tgt is None: return True, None
+    c = mandatory_cfg(lang); user = str(c.get("user") or "").strip().lstrip("@")
     join = None
     try:
         ch = await bot.get_chat(tgt)
         join = f"https://t.me/{ch.username}" if getattr(ch, "username", None) else None
     except Exception:
-        join = f"https://t.me/{config.MANDATORY_CHANNEL_USERNAME.lstrip('@')}" if config.MANDATORY_CHANNEL_USERNAME else None
+        join = f"https://t.me/{user}" if user else None
     try:
         mem = await bot.get_chat_member(tgt, uid)
         st = getattr(mem, "status", "")
         return (st not in ("left", "kicked")), join
     except Exception as e:
-        # fail-closed فقط برای ادمین: تا عضویت قطعاً تأیید نشود اجازهٔ ادامه داده نمی‌شود
-        log.warning("mandatory membership check failed uid=%s target=%s: %s", uid, tgt, e)
+        # fail-closed: تا عضویت قطعاً تأیید نشود اجازهٔ ادامه داده نمی‌شود
+        log.warning("mandatory membership check failed uid=%s lang=%s target=%s: %s", uid, lang, tgt, e)
         return False, join
 
 # ══════════════════════════════════════════════════════════════════════════

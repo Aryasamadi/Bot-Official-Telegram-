@@ -176,7 +176,7 @@ TXT = {
     "test_retry_note": ("ℹ️ سهمیه و محدودیت زمانی اعمال نشد؛ می‌توانید همین حالا دوباره تست کنید.", "ℹ️ No quota or cooldown was applied; you can retry right away."),
     "test_src": ("🌐 تولید از منبع: <b>{name}</b>", "🌐 Generated from source: <b>{name}</b>"),
     # --- پنل مدل/قیمت، پشتیبانی، دیپ‌لینک و متن‌های صف
-    "s_title": ("👑 <b>مدیر کلان</b>\n🤖 مدل‌ها {m} ({ms}) · 👥 مدیران {a} / کاربران {u}\n🛎 پرداخت معلق {p} · 🎟 کد تخفیف {dc} · ⚖️ صف {due}\n💓 {hb}", "👑 <b>Super admin</b>\n🤖 models {m} ({ms}) · 👥 admins {a} / users {u}\n🛎 pending payments {p} · 🎟 discount codes {dc} · ⚖️ queue {due}\n💓 {hb}"),
+    "s_title": ("👑 <b>مدیر کلان</b>\n\n🤖 مدل‌ها: {m} ({ms})\n👥 مدیران: {a} / کاربران: {u}\n🛎 پرداخت معلق: {p}\n🎟 کد تخفیف: {dc}\n⚖️ صف زمان‌بند: {due}\n💓 آخرین تیک: {hb}", "👑 <b>Super admin</b>\n\n🤖 Models: {m} ({ms})\n👥 Admins: {a} / users: {u}\n🛎 Pending payments: {p}\n🎟 Discount codes: {dc}\n⚖️ Scheduler queue: {due}\n💓 Last tick: {hb}"),
     "s_all_ok": ("سالم", "healthy"), "s_down": ("{n} خراب 🔴", "{n} down 🔴"), "s_report": ("📊 گزارش", "📊 Report"), "s_plans": ("🧾 پلن‌ها", "🧾 Plans"), "s_users": ("👥 کاربران", "👥 Users"),
     "s_models": ("🤖 مدل‌ها", "🤖 Models"), "s_pays": ("🛎 پرداخت‌ها ({n})", "🛎 Payments ({n})"), "s_discs": ("🎟 کدهای تخفیف", "🎟 Discount codes"), "s_bc": ("📣 همگانی", "📣 Broadcast"), "s_texts": ("📝 متن‌ها", "📝 Texts"),
     "s_admins": ("🧑‍ مدیران", "🧑‍💼 Admins"), "s_auto": ("{i} اتوماسیون کل", "{i} Global automation"), "s_me": ("👤 پنل من", "👤 My panel"), "s_auto_on": ("🟢 اتوماسیون کل روشن شد", "🟢 Global automation on"), "s_auto_off": ("🔴 اتوماسیون کل خاموش شد", "🔴 Global automation off"),

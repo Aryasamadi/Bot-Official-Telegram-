@@ -61,6 +61,7 @@ async def view_health(update, context):
         f"\n🧠 مصرف حافظهٔ فرایند: {rss_mb():.0f} MB"
         f"\n🧩 صحت یکپارچگی دیتابیس: {integ}"
         f"\n🔁 فاصلهٔ بازیابی خودکار: {config.RECOVER_EVERY_MIN} دقیقه"
+        f"\n\n🏷 نسخهٔ کد: {_code_version()}"
     ) if fa else (
         f"\n\n{'OK' if healthy else 'STALE'}"
         f"\n\n⚙️ Last tick: {tick_en}"
@@ -74,6 +75,7 @@ async def view_health(update, context):
         f"\n🧠 Process memory: {rss_mb():.0f} MB"
         f"\n🧩 Database integrity: {integ}"
         f"\n🔁 Auto-recovery interval: {config.RECOVER_EVERY_MIN} min"
+        f"\n\n🏷 Code version: {_code_version()}"
     )
     await render(update, context, head + body, [[B(tr(lang, "back"), "s:home")]])
 
@@ -81,8 +83,23 @@ async def cmd_health(update, context):
     if not is_super(update.effective_user.id): return
     await view_health(update, context)
 
+def _code_version():
+    """نسخهٔ کدِ در حال اجرا از git — تا کاربر مطمئن شود deploy شده است."""
+    try:
+        import subprocess
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # newsbot/ → ریشهٔ مخزن
+        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=_root,
+                             capture_output=True, text=True, timeout=3)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
 async def view_super_home(update, context):
-    lang = L(update); models = list_models(); down = sum(1 for m in models if m["active"] and m["status"] == "down"); auto = gget("automation_enabled", True); n_pay = len(pay_pending())
+    lang = L(update); models = list_models()
+    down = sum(1 for m in models if m["active"] and m["status"] == "down"); auto = gget("automation_enabled", True); n_pay = len(pay_pending())
     text = tr(lang, "s_title", m=len(models), ms=tr(lang, "s_all_ok") if not down else tr(lang, "s_down", n=down), a=len(list_users("admin")), u=len(list_users()), p=n_pay, dc=len(disc_list()), due=gget("load_due", 0), hb=ago_text(gget("heartbeat"), lang))
     kb = [[B(tr(lang, "s_report"), "s:report"), B(tr(lang, "s_health"), "s:health")], [B(tr(lang, "s_plans"), "s:plans"), B(tr(lang, "s_discs"), "s:discs")], [B(tr(lang, "s_users"), "s:users:0"), B(tr(lang, "s_admins"), "s:admins:0")],
           [B(tr(lang, "s_models"), "s:models"), B(tr(lang, "s_pays", n=n_pay), "s:pays")], [B(tr(lang, "s_mand"), "s:mand"), B(tr(lang, "s_texts"), "s:texts")], [B(tr(lang, "s_bc"), "s:bc"), B(tr(lang, "s_auto", i=onoff(auto)), "s:auto")], [B(tr(lang, "s_me"), "a:home")]]

@@ -9,7 +9,7 @@ FIX v4:
 import asyncio, html, re, secrets, time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TelegramError
 from newsbot import config
 from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc
@@ -497,18 +497,25 @@ async def render(update, context, text, kb=None, force_new=False):
     notice = context.user_data.pop("notice", None)
     if notice: await popup(update, context, notice)
     text = text[:4000]; markup = InlineKeyboardMarkup(kb) if kb else None; qy = update.callback_query; chat_id = update.effective_chat.id
+    # هر خطای تلگرام (نه فقط BadRequest) باید به پیام تازه برگردد؛ وگرنه یک پیام کهنه
+    # کل عملیات را با «عملیات انجام نشد» زمین میزند. Forbidden زیرکلاس BadRequest نیست.
     if qy and qy.message and not force_new:
         try:
-            await qy.edit_message_text(text, reply_markup=markup, parse_mode=HTML, disable_web_page_preview=True); context.user_data["panel"] = qy.message.message_id; return
-        except BadRequest as e:
+            await qy.edit_message_text(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True); context.user_data["panel"] = qy.message.message_id; return
+        except TelegramError as e:
             if "not modified" in str(e).lower(): return
     mid = context.user_data.get("panel")
     if mid and not force_new:
         try:
-            await context.bot.edit_message_text(text, chat_id=chat_id, message_id=mid, reply_markup=markup, parse_mode=HTML, disable_web_page_preview=True); return
-        except BadRequest as e:
+            await context.bot.edit_message_text(text, chat_id=chat_id, message_id=mid, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True); return
+        except TelegramError as e:
             if "not modified" in str(e).lower(): return
-    m = await context.bot.send_message(chat_id, text, reply_markup=markup, parse_mode=HTML, disable_web_page_preview=True); context.user_data["panel"] = m.message_id
+    try:
+        m = await context.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
+    except TelegramError:
+        # آخرین حد: اگر HTML هم رد شد، متن ساده بفرست تا کاربر هیچ پاسخی نگیرد
+        m = await context.bot.send_message(chat_id, strip_tags(text), reply_markup=markup, disable_web_page_preview=True)
+    context.user_data["panel"] = m.message_id
 
 async def ask(update, context, prompt, kind, back, **extra):
     lang = L(update); context.user_data["await"] = {"kind": kind, "back": back, **extra}

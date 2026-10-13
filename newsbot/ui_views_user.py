@@ -3,7 +3,7 @@
 و صفحه‌ی دعوت/ارجاع (NEW v4). منطق پول (proration/کیف پول) در core_plans است؛ این‌جا فقط نمایش است.
 """
 from newsbot import config
-from newsbot.logutils import log_event
+from newsbot.logutils import log_event, log
 from newsbot.timeutils import fmt_date
 from newsbot.ui_widgets import notify_supers
 from newsbot.ratelimit import rate_ok, rate_left
@@ -43,15 +43,29 @@ async def view_user_home(update, context):
     await render(update, context, text, kb)
 
 async def view_referral(update, context):
-    """NEW v4: صفحه‌ی دعوت — لینک یکتا، شمار دعوت‌شده‌ها و اعتبار کسب‌شده."""
+    """صفحه‌ی دعوت — لینک یکتا، شمار دعوت‌شده‌ها و اعتبار کسب‌شده.
+
+    هیچ خطایی نباید از اینجا بالا برود: لینک دعوت مهم‌تر از هر تزئینی است و
+    اگر رندر کامل شکست خورد، دست‌کم لینک ساده برای کاربر فرستاده می‌شود.
+    """
     lang = L(update); uid = update.effective_user.id
     if not config.REFERRAL_ENABLED:
         await popup(update, context, tr(lang, "ref_off")); return await view_user_home(update, context)
-    invited, earned = referral_stats(uid)
-    text = (tr(lang, "ref_title", p=f"{config.REFERRAL_PERCENT:g}")
-            + tr(lang, "ref_line", n=invited, c=_fmt_price(earned))
-            + tr(lang, "ref_link", link=referral_link(uid)))
-    await render(update, context, text, [[B(tr(lang, "back"), "home")]])
+    try:
+        invited, earned = referral_stats(uid)
+        text = (tr(lang, "ref_title", p=f"{config.REFERRAL_PERCENT:g}")
+                + tr(lang, "ref_line", n=invited, c=_fmt_price(earned))
+                + tr(lang, "ref_link", link=referral_link(uid)))
+        await render(update, context, text, [[B(tr(lang, "back"), "home")]])
+    except Exception as e:
+        log.warning("referral render failed uid=%s: %s", uid, e, exc_info=True)
+        link = referral_link(uid)
+        try:
+            await context.bot.send_message(
+                uid, f"🔗 <b>{'لینک دعوت شما' if lang != 'en' else 'Your invite link'}</b>\n<code>{link}</code>",
+                parse_mode="HTML", disable_web_page_preview=True)
+        except Exception:
+            log.warning("referral fallback send failed uid=%s", uid, exc_info=True)
 
 async def view_plans(update, context):
     uid = update.effective_user.id; lang = L(update); lim = admin_limits(uid); text = tr(lang, "plans_title") + "\n\n"

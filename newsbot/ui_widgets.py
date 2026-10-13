@@ -230,9 +230,11 @@ def operation_text(lang, key):
         "running": ("⚙️ در حال پردازش…", "⚙️ Processing…"),
         "completed": ("✅ عملیات انجام شد", "✅ Operation completed"),
         "cancelled": ("⛔ عملیات لغو شد", "⛔ Operation cancelled"),
+        "nothing_to_cancel": ("⛔ عملیاتی برای لغو وجود ندارد", "⛔ Nothing to cancel"),
         "cancelled_after_publish": ("ادامهٔ عملیات لغو شد؛ {n} مطلب پیش از توقف منتشر شده و حذف نشده است.", "Further work cancelled; {n} post(s) were published before stopping and have not been removed."),
         "failed": ("⚠️ عملیات انجام نشد؛ دوباره تلاش کنید.", "⚠️ Operation failed; please try again."),
         "busy": ("عملیات قبلی در حال اجراست؛ برای توقف /cancel را بفرستید.", "An operation is running; use /cancel to stop it."),
+        "busy_wait": ("⏳ یک عملیات در حال اجراست.\n\nصبر کنید تا تمام شود، یا برای توقف فوری /cancel را بفرستید.", "⏳ An operation is running.\n\nWait for it to finish, or send /cancel to stop it."),
         "fallback": ("⚠️ مدل پاسخ قابل‌استفاده نداد؛ در حال بررسی مدل بعدی…", "⚠️ Model unavailable; trying the next model…"),
     }
     return texts[key][1 if lang == "en" else 0]

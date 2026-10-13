@@ -396,7 +396,30 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await dispatch(update, context, back)
         clear_interaction(context, keep=keep)
         return await dispatch(update, context, data)
+    # فاز انتظار: اگر عملیات اصلی کاربر (تست/چرخه/انتشار) در حال اجراست، بهجای جانشینی
+    # که کاربر را از وسط کار پرت میکند، یک پیام بزرگ میگوییم صبر کند یا /cancel بزند.
+    if await _wait_for_running_operation(update, context, u.id):
+        return
     await run_user_operation(update, context, f"callback:{data}", channel, work, replace=navigation, keep=keep)
     if not getattr(context, "_callback_answered", False):
         try: await qy.answer()
         except Exception: pass
+
+
+async def _wait_for_running_operation(update, context, uid) -> bool:
+    """عملیات در حال اجرا ⇒ پیام بزرگ «صبر کنید یا /cancel». خروجی True یعنی با کلیک کار داشتیم."""
+    from newsbot.opctx import user_control
+    from newsbot.ui_widgets import _operations, L
+    lock = user_control(uid)
+    if not lock.locked() or uid not in _operations:
+        return False
+    _txt = operation_text(L(update), "busy_wait")
+    qy = update.callback_query
+    if qy:
+        try:
+            await qy.answer(_txt, show_alert=True)   # پاپ‌آپ بزرگ تا کاربر قطع نشود
+            context._callback_answered = True
+            return True
+        except Exception: pass
+    await popup(update, context, _txt)
+    return True

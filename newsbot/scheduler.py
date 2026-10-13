@@ -11,7 +11,7 @@ from newsbot.timeutils import now_utc, now_iso, parse_dt, fmt_date, ago_text, of
 from newsbot.notify import notify_user
 from newsbot.core_users import expiring_users, list_admins, count_users, admin_limits, usage_today, is_super, remaining
 from newsbot.core_plans import get_plan, plan_txt, list_plans, recover_stuck_payments
-from newsbot.core_channels import list_channels, get_settings, get_channel, update_settings, in_quiet
+from newsbot.core_channels import list_channels, get_settings, get_channel, in_quiet
 from newsbot.core_sources import list_sources
 from newsbot.core_articles import ready_count, count_articles, recover_publications
 from newsbot.core_payments import pay_pending
@@ -45,14 +45,6 @@ async def _plan_notifications():
     finally:
         config.SCHED_NOTIF_FAILURES.set(False)
 
-async def _report_failed_cycle(uid, ch, s, res):
-    """چرخه‌ی زمان‌بندی‌شده چیزی منتشر نکرد → یک بار (تا ۲۴ ساعت برای همان الگو) به مدیر اطلاع بده."""
-    D = res["diag"]; fp = "|".join(D.keys()); last = (s.get("last_notified_diag") or "").split("@"); last_fp, last_ts = last[0], (parse_dt(last[1]) if len(last) > 1 else None)
-    if fp == last_fp and last_ts and (now_utc() - last_ts) < timedelta(hours=24): return
-    update_settings(ch["id"], last_notified_diag=f"{fp}@{now_iso()}"); lang = s["ui_lang"]
-    head = f"⚠️ <b>{'چرخه بدون انتشار' if lang == 'fa' else 'Cycle published nothing'}</b> · 📢 {html.escape(ch['title'])}\n\n"
-    await notify_user(uid, head + html.escape(D.render(lang)), [[("🛠 پنل کانال" if lang == "fa" else "🛠 Channel panel", f"a:ch:{ch['id']}")]])
-
 async def _report_published(uid, ch, s, res):
     """چرخه‌ی خودکار منتشر کرد → یک پیام کوتاه با نام منبعِ هر پست (یک پیام برای کل چرخه، نه برای هر پست)."""
     lang = s["ui_lang"]; fa = lang != "en"
@@ -64,10 +56,15 @@ async def _report_published(uid, ch, s, res):
     await notify_user(uid, head + body, kb)
 
 async def _scheduled(bot, uid, ch, s):
+    """اجرای چرخهٔ زمانبندشده.
+
+    نتیجه در تنظیمات همان کانال (last_result / last_diag) و در گزارش کانال ثبت میشود.
+    اعلان جداگانه ارسال نمیشود: هر بار همان متن طولانی مدیر را شلوغ میکرد، در حالی که
+    همان اطلاعات با دکمهٔ «گزارش» در دسترس است.
+    """
     try:
         res = await run_channel_cycle(bot, uid, ch["id"])
         if res["published"]: await _report_published(uid, ch, s, res)
-        elif not res["queued"] and s["mode"] == "auto" and "busy" not in [k for k, _ in res["diag"].items]: await _report_failed_cycle(uid, ch, s, res)
     except Exception as e: log_event("ERROR", f"چرخه {ch['title']}: {e}", uid)
 
 async def scheduler_tick(bot):

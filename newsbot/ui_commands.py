@@ -13,7 +13,6 @@ from newsbot.net_http import load_deeplink
 from newsbot.text_format import fit_html, split_html, downgrade_html, preview_text
 from newsbot.ui_i18n import tr, gtext
 from newsbot.ui_widgets import B, render, popup, operation_text, run_user_operation, go_home
-from newsbot.opctx import _current_operation
 from newsbot.ui_views_user import view_lang, view_plans, view_referral
 from newsbot.ui_views_admin import view_admin_home
 from newsbot.ui_views_super import view_super_home
@@ -27,6 +26,12 @@ def managed_command(handler):
         except Exception: pass
         # ضد سوءاستفاده: هر کاربر برای هر دستور یک‌بار در ABUSE_RATE_SEC (قبلاً فقط کلیک کال‌بک محدود بود)
         if u and not is_super(u.id) and not rate_ok(f"cmd:{u.id}:{handler.__name__}", config.ABUSE_RATE_SEC): return
+        # /cancel و /start باید روی عملیات در حال اجرا اثر بگذارند؛ چون هم به‌عنوان
+        # جانشین اجرا می‌شوند، ابتدا همان عملیات در حال اجرا را متوقف می‌کنند
+        # تا قفل کاربر آزاد شود و دستور تازه بتواند اجرا شود.
+        if handler.__name__ in ("cmd_cancel", "cmd_start"):
+            from newsbot.ui_widgets import cancel_user_operation
+            await cancel_user_operation(u.id)
         return await run_user_operation(update, context, f"command:{handler.__name__}", None, lambda: handler(update, context), replace=True)
     command.__name__ = handler.__name__
     return command
@@ -101,17 +106,26 @@ async def cmd_about(update, context):
 async def cmd_lang(update, context): await _prep(update, context); await view_lang(update, context)
 
 async def cmd_cancel(update, context):
+    """توقف واقعی عملیات جاری (تست/چرخه/انتشار) و بازگشت به خانه.
+
+    اینجا نباید از ContextVar خوانده شود: هندلر دستور در تسک تازه اجرا می‌شود و
+    `_current_operation` در آن None است. منبع حقیقت، دیکشنری سراسری `_operations` است.
+    """
     lang = await _prep(update, context)
-    op = _current_operation.get()
-    if not op or not op.replaced_status:
-        await popup(update, context, operation_text(lang or "fa", "cancelled"))
+    uid = update.effective_user.id
+    from newsbot.ui_widgets import cancel_user_operation
+    stopped = await cancel_user_operation(uid)
+    await popup(update, context, operation_text(lang or "fa", "cancelled" if stopped else "nothing_to_cancel"))
     if not lang: return await view_lang(update, context)
     await go_home(update, context)
 
 async def cmd_ref(update, context):
-    """بنر دعوت: لینک یکتا، تعداد دعوت‌شده‌ها و اعتبار کسب‌شده."""
-    lang = await _prep(update, context)
-    if not lang: return await view_lang(update, context)
+    """بنر دعوت: لینک یکتا، تعداد دعوت‌شده‌ها و اعتبار کسب‌شده.
+
+    برخلاف بقیهٔ دستورها، زبان‌نداشتن کاربر را به صفحهٔ زبان نمیفرستد: بنر با زبان
+    پیشفرض فارسی نمایش داده میشود تا کاربر تازه هم بتواند لینک دعوتش را بگیرد.
+    """
+    await _prep(update, context)
     return await view_referral(update, context)
 
 async def cmd_unknown(update, context):

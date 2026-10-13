@@ -26,10 +26,12 @@ def managed_command(handler):
         except Exception: pass
         # ضد سوءاستفاده: هر کاربر برای هر دستور یک‌بار در ABUSE_RATE_SEC (قبلاً فقط کلیک کال‌بک محدود بود)
         if u and not is_super(u.id) and not rate_ok(f"cmd:{u.id}:{handler.__name__}", config.ABUSE_RATE_SEC): return
-        # /cancel و /start باید روی عملیات در حال اجرا اثر بگذارند؛ چون هم به‌عنوان
-        # جانشین اجرا می‌شوند، ابتدا همان عملیات در حال اجرا را متوقف می‌کنند
-        # تا قفل کاربر آزاد شود و دستور تازه بتواند اجرا شود.
-        if handler.__name__ in ("cmd_cancel", "cmd_start"):
+        # /cancel و /ref دستورهای سادهاند: نباید داخل «عملیات کاربر» اجرا شوند.
+        # اگر ببندیم، همان عملیاتی که خودشان میدهد شاملِ خودشان میشود و آن‌ها را کنسل میکند.
+        if handler.__name__ in ("cmd_cancel", "cmd_ref"):
+            return await handler(update, context)
+        # /start باید عملیات در حال اجرا (تست/چرخه) را متوقف کند و بعد خانه را نشان دهد
+        if handler.__name__ == "cmd_start":
             from newsbot.ui_widgets import cancel_user_operation
             await cancel_user_operation(u.id)
         return await run_user_operation(update, context, f"command:{handler.__name__}", None, lambda: handler(update, context), replace=True)
@@ -110,13 +112,16 @@ async def cmd_cancel(update, context):
 
     اینجا نباید از ContextVar خوانده شود: هندلر دستور در تسک تازه اجرا می‌شود و
     `_current_operation` در آن None است. منبع حقیقت، دیکشنری سراسری `_operations` است.
+
+    کاربرِ بی‌زبان به صفحهٔ زبان فرستاده نمی‌شود؛ وضعیت لغو برایش مهم‌تر است و
+    اگر پPick زبان جایش را بگیرد پیام هرگز دیده نمی‌شود.
     """
-    lang = await _prep(update, context)
     uid = update.effective_user.id
+    lang = user_lang(uid) or "fa"
     from newsbot.ui_widgets import cancel_user_operation
     stopped = await cancel_user_operation(uid)
-    await popup(update, context, operation_text(lang or "fa", "cancelled" if stopped else "nothing_to_cancel"))
-    if not lang: return await view_lang(update, context)
+    await popup(update, context, operation_text(lang, "cancelled" if stopped else "nothing_to_cancel"))
+    if not user_lang(uid): return          # بی‌زبان: پیام را دید و همین‌جا تمام
     await go_home(update, context)
 
 async def cmd_ref(update, context):

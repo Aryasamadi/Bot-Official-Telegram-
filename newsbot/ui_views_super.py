@@ -7,7 +7,7 @@ NEW v4: پس از تأیید پرداخت، اعتبار ارجاع (referral) �
 import json, os
 from newsbot import config
 from newsbot.db import q, gget
-from newsbot.logutils import log, log_event, metrics_text, redact
+from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc, parse_dt, fmt_date, ago_text
 from newsbot.core_users import list_users, get_user, admin_limits, admin_offset, usage_today, is_super, user_lang
 from newsbot.core_plans import get_plan, plan_txt, list_plans, assign_plan, _price_num, _fmt_price
@@ -44,17 +44,38 @@ async def view_health(update, context):
     except Exception: pending = 0
     chans = q("SELECT COUNT(*) c FROM channels", one=True)["c"]; ready = q("SELECT COUNT(*) c FROM articles WHERE status='ready'", one=True)["c"]
     head = "🩺 <b>System health</b>" if not fa else "🩺 <b>سلامت سیستم</b>"
-    body = (f"\n💓 tick: {hb_age}s ago ({'OK' if 0 <= hb_age < config.TICK_SECONDS * 4 else 'STALE'})\n"
-            f"⚙️ tick_seconds={config.TICK_SECONDS} · cycle_concurrency={config.CYCLE_CONCURRENCY}\n"
-            f"📢 channels {chans} · 📝 ready queue {ready} · 📌 pending journals {pending}\n"
-            f"🤖 models ok {ok}/{len(models)} · 💾 db {size:.1f} MB · 🧩 integrity {integ}\n"
-            f"🧠 process RSS {rss_mb():.0f} MB · 🔁 recover every {config.RECOVER_EVERY_MIN}m") if not fa else (
-            f"\n💓 تیک: {hb_age} ثانیه پیش ({'سالم' if 0 <= hb_age < config.TICK_SECONDS * 4 else 'کهنه'})\n"
-            f"⚙️ فاصلهٔ تیک {config.TICK_SECONDS}s · هم‌زمانی چرخه {config.CYCLE_CONCURRENCY}\n"
-            f"📢 کانال {chans} · 📝 صف آماده {ready} · 📌 ژورنال معلق {pending}\n"
-            f"🤖 مدل سالم {ok} از {len(models)} · 💾 دیتابیس {size:.1f}MB · 🧩 یکپارچگی {integ}\n"
-            f"🧠 حافظهٔ فرایند {rss_mb():.0f}MB · 🔁 بازیابی هر {config.RECOVER_EVERY_MIN} دقیقه")
-    await render(update, context, head + body + "\n\n" + metrics_text(lang), [[B(tr(lang, "back"), "s:home")]])
+    # چیدمان مینیمال: هر سنجه یک خط، با فاصله بین گروه‌های مرتبط
+    healthy = 0 <= hb_age < config.TICK_SECONDS * 4
+    tick_fa = f"{hb_age} ثانیه پیش" if hb_age >= 0 else "هنوز ثبت نشده"
+    tick_en = f"{hb_age}s ago" if hb_age >= 0 else "not recorded yet"
+    body = (
+        f"\n\n{'OK' if healthy else 'STALE'} — {'سالم' if healthy else 'کهنه'}"
+        f"\n\n⚙️ آخرین تیک: {tick_fa}"
+        f"\n⏱ بازهٔ اجرای تیک: {config.TICK_SECONDS} ثانیه"
+        f"\n🔄 چرخه‌های هم‌زمان: {config.CYCLE_CONCURRENCY}"
+        f"\n\n📡 کانال‌های ثبت‌شده: {chans}"
+        f"\n📥 موارد آماده در صف: {ready}"
+        f"\n📌 موارد معلق ژورنال: {pending}"
+        f"\n\n🤖 وضعیت مدل‌های هوش مصنوعی: {ok}/{len(models)} سالم"
+        f"\n\n💾 حجم دیتابیس: {size:.1f} MB"
+        f"\n🧠 مصرف حافظهٔ فرایند: {rss_mb():.0f} MB"
+        f"\n🧩 صحت یکپارچگی دیتابیس: {integ}"
+        f"\n🔁 فاصلهٔ بازیابی خودکار: {config.RECOVER_EVERY_MIN} دقیقه"
+    ) if fa else (
+        f"\n\n{'OK' if healthy else 'STALE'}"
+        f"\n\n⚙️ Last tick: {tick_en}"
+        f"\n⏱ Tick interval: {config.TICK_SECONDS}s"
+        f"\n🔄 Concurrent cycles: {config.CYCLE_CONCURRENCY}"
+        f"\n\n📡 Registered channels: {chans}"
+        f"\n📥 Ready in queue: {ready}"
+        f"\n📌 Pending journals: {pending}"
+        f"\n\n🤖 AI models healthy: {ok}/{len(models)}"
+        f"\n\n💾 Database size: {size:.1f} MB"
+        f"\n🧠 Process memory: {rss_mb():.0f} MB"
+        f"\n🧩 Database integrity: {integ}"
+        f"\n🔁 Auto-recovery interval: {config.RECOVER_EVERY_MIN} min"
+    )
+    await render(update, context, head + body, [[B(tr(lang, "back"), "s:home")]])
 
 async def cmd_health(update, context):
     if not is_super(update.effective_user.id): return

@@ -1,9 +1,13 @@
 name: Deploy to VPS
 
 on:
-  push:
-    branches:
-      - main
+  # فقط پس از اتمام موفق CI روی main (پوش قرمز هرگز deploy نمی‌شود)
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # اجرای دستیِ انتخاب‌شده (مثلاً برای retry) — مستقل از CI
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,50 +19,53 @@ concurrency:
 
 jobs:
   deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # SHA کامیتِ محرک CI (برای اجرای دستی: نوکِ ref انتخاب‌شده)
+      TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.2.2
+      # بدون secrets کافی، خطا روشن و سریع است (به‌جای شکست مبهم وسط SSH)
+      - name: Preflight — required secrets must exist
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_FPR: ${{ secrets.VPS_HOST_FINGERPRINT }}
+        run: |
+          fail=0
+          if [ -z "$VPS_HOST" ]; then echo "::error::secret VPS_HOST is not set"; fail=1; fi
+          if [ -z "$VPS_KEY" ]; then echo "::error::secret VPS_SSH_PRIVATE_KEY is not set"; fail=1; fi
+          if [ -z "$VPS_FPR" ]; then echo "::error::secret VPS_HOST_FINGERPRINT is not set (ssh-keyscan output)"; fail=1; fi
+          exit $fail
+
+      # اکشن‌ها به SHA کامیت پین شده‌اند (تگ متحرک = تغییر بی‌اعلام)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Copy deploy script to VPS
+        uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: root
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           port: 22
+          fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
+          source: deploy/deploy.sh
+          target: /tmp/newsbot-deploy.sh
+
+      - name: Run deploy (backup → sync → gate → restart → health)
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: root
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          port: 22
+          fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
           command_timeout: 20m
+          envs: TARGET_SHA
           script: |
-            set -euo pipefail
-            cd /opt/bot-ai-automatic
-            # پیش‌شرط‌ها — اگر محیط سالم نیست deploy قبل از هر تغییری متوقف می‌شود
-            test -f .env
-            test -x .venv/bin/python
-            mkdir -p /opt/backups
-            # 1) بک‌اپ سازگار با SQLite در حال اجرا (sqlite3.backup در WAL هم یکپارچه است؛
-            #    `cp` ساده می‌تواند نسخه‌ای نیمه‌کاره از DB در حال نوشتن بگیرد)
-            if [ -f newsbot.db ]; then
-              backup="/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
-              /usr/bin/python3 - "newsbot.db" "$backup" <<'PY'
-            import sqlite3, sys
-            src = sqlite3.connect(sys.argv[1], timeout=30)
-            dst = sqlite3.connect(sys.argv[2])
-            try:
-                src.backup(dst)
-            finally:
-                dst.close()
-                src.close()
-            PY
-              chmod 600 "$backup"
-              # فقط 7 بک‌اپ اخیر نگه داشته می‌شود
-              ls -1t /opt/backups/newsbot-*.db | tail -n +8 | xargs -r rm --
-            fi
-            # 2) همگام‌سازی کد (reset --hard فقط فایل‌های tracked را می‌برد؛ .env و newsbot.db ignore شده‌اند)
-            git fetch origin main
-            git reset --hard origin/main
-            # 3) وابستگی‌ها
-            .venv/bin/pip install -r requirements.txt
-            # 4) گیت سلامت پیش از restart: اگر سینتکس/پیکربندی/اسکیما خراب باشد، سرویس قدیمی دست‌نخورده می‌ماند
-            .venv/bin/python -m compileall -q newsbot run.py
-            .venv/bin/python run.py --check
-            # 5) راه‌اندازی مجدد و تأیید
-            systemctl restart bot-ai-automatic
-            sleep 3
-            systemctl is-active --quiet bot-ai-automatic
+            chmod +x /tmp/newsbot-deploy.sh
+            bash /tmp/newsbot-deploy.sh deploy "$TARGET_SHA"

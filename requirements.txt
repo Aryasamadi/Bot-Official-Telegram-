@@ -1,12 +1,35 @@
-python-telegram-bot[job-queue]>=21.6,<23
-httpx>=0.27,<1
-python-dotenv>=1.0,<2
-feedparser>=6,<7
-trafilatura>=2,<3
-beautifulsoup4>=4.12,<5
-lxml>=5,<7
-tzdata
+# وابستگی‌های production — قفل دقیق نسخه (Python 3.13)
+# بازتولید: venv تازه بساز، `pip install` روی نسخهٔ range‌دارِ تاریخچه، سپس `pip split`/diff با `pip freeze`.
+# تغییر نسخه فقط با دانش CVE/سازگاری — نه به‌روزرسانی کور.
 
-# --- ابزارهای توسعه/تست (در production لازم نیستند) ---
-pytest>=8,<9
-pyflakes>=3,<4
+anyio==4.15.1
+APScheduler==3.11.3
+babel==2.18.0
+beautifulsoup4==4.15.0
+certifi==2026.7.22
+charset-normalizer==3.5.2
+courlan==1.4.0
+dateparser==1.4.3
+feedparser==6.0.14
+feedparser-sgmllib==2.1.0
+h11==0.16.0
+htmldate==1.11.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.20
+jusText==3.0.2
+lxml_html_clean==0.4.5
+lxml==6.1.3
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.4
+python-telegram-bot==22.8
+pytz==2026.5
+regex==2026.9.29
+six==1.17.0
+soupsieve==3.0.3
+tld==0.13.2
+trafilatura==2.3.1
+typing_extensions==4.16.0
+tzdata==2026.5
+tzlocal==5.4.4
+urllib3==2.8.0

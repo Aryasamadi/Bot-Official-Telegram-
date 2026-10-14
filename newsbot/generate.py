@@ -89,7 +89,8 @@ async def _summarize_chunks(s, full, on_queue=None, owner_id=None, _depth=0):
                 "Produce a compact list of key points only, prose style, no markdown headers beyond bullets. "
                 "Never drop facts, numbers, names, quotes or conclusions. "
                 "Answer with at most {} characters.").format(s.get("language") or "فارسی", per_chunk)
-        user_msg = f"Chunk {idx + 1}/{len(chunks)} — summarize:\n{chunk}"
+        # PLB-04 (فاز ۳): قطعهٔ خام منبع نباید بدون لایهٔ دومِ ضدتزریق به مدل خلاصه‌ساز برود
+        user_msg = f"Chunk {idx + 1}/{len(chunks)} — summarize:\n{strip_injection(chunk)}"
         # قطعهٔ خالی بی‌صدا حذف نمی‌شود: یک‌بار دیگر تلاش، و اگر باز هم خالی بود خودِ متن منبع حفظ می‌شود
         for attempt in range(2):
             raw, _, err = await ai_chat(sysc, user_msg, on_queue=on_queue, owner_id=owner_id, validate=None)

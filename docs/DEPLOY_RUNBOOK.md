@@ -130,7 +130,30 @@ add_header Content-Security-Policy "default-src 'self'" always;
 
 هر سرور HTTP اضافه‌شده در آینده این هدرها را از همان روز اول باید داشته باشد.
 
-## ۹. حدود این راهنما
+## ۹. سخت‌کردن واحد systemd (کمترین دسترسی)
+
+روی VPS، فایل `/etc/systemd/system/bot-ai-automatic.service` باید حداقل این‌ها را
+داشته باشد (پس از تغییر: `daemon-reload` و restart در پنجرهٔ استقرار):
+
+```ini
+[Service]
+User=botapp            # نه root — کاربر اختصاصیِ غیرمدیر
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/bot-ai-automatic
+# لاگ‌ها به ژورنال systemd بروند:
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+RestartSec=5
+```
+
+اعمال این‌ها بدون دسترسی VPS ممکن نیست؛ تا قبل از آن سرویس با دسترسیِ فعلی اجرا
+می‌شود (ثبت‌شده به‌عنوان انحراف در گزارش فاز ۲).
+
+## ۱۰. حدود این راهنما
 
 - اجرای واقعی deploy نیازمند تنظیم سه secret بالاست (تصمیم ۵) — تا آن زمان هیچ تماسی
   با VPS برقرار نمی‌شود.

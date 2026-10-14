@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """لاگ‌گذاری امن: redact در گلوگاه، زمینه‌ی per-task، شمارنده‌های کارکرد.
-FIX v4: توکن ربات (قالب 123456789:AA...) هم ماسک می‌شود."""
+FIX v4: توکن ربات (قالب 123456789:AA...) هم ماسک می‌شود.
+FIX v5 (SEC-02/OPS-14): ماسک رازها روی RecordFactory سراسری اجرا می‌شود —
+همهٔ فراخوان‌های log.* (نه فقط log_event) و متن استثناها/stack پیش از هر handler ماسک می‌شوند."""
 import logging
 import re
+import traceback
 from contextvars import ContextVar
 
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
@@ -34,6 +37,30 @@ def redact(x):
     # نسخهٔ قبلی الگوی «?key=…&token=…» را یک‌تکه می‌دید و فقط مقدارِ جفتِ *آخر* را ماسک می‌کرد؛
     # نتیجه: در «?key=AAA&token=BBB» مقدارِ AAA بی‌ماسک می‌ماند (نشت واقعی).
     return re.sub(r"(?i)([?&](?:key|api[-_]?key|apikey|token|access[-_]?token|auth[-_]?token|secret|password)=)[^&\s\"']+", r"\1•••", t)
+
+# ── SEC-02/OPS-14: گلوگاه سراسری ماسک رازها ──
+# redact قبلاً فقط داخل log_event اجرا می‌شد؛ هر log.warning/error مستقیم (و traceback هر
+# استثنای log.exception) بی‌ماسک در handler/ژورنال می‌نشست. RecordFactory روی *همهٔ*
+# رکوردها — پیش از رسیدن به هر handler (شامل caplog در تست) — اجرا می‌شود.
+_orig_record_factory = logging.getLogRecordFactory()
+
+def _redact_record(*args, **kwargs):
+    rec = _orig_record_factory(*args, **kwargs)
+    try:
+        rec.msg = redact(rec.getMessage())
+        rec.args = ()
+        if rec.exc_info and rec.exc_info[0] is not None:
+            # exc_text از قبل ست می‌شود تا formatter خودش traceback خام نسازد (exc_info حفظ می‌شود)
+            rec.exc_text = redact("".join(traceback.format_exception(*rec.exc_info)))
+        if rec.stack_info:
+            rec.stack_info = redact(rec.stack_info)
+    except Exception:
+        pass
+    return rec
+
+if not getattr(logging, "_newsbot_redact_factory", False):
+    logging.setLogRecordFactory(_redact_record)
+    logging._newsbot_redact_factory = True
 
 def log_ctx(**kw):
     """فیلدهای زمینه را برای لاگ‌های همین تسک می‌چسباند (ContextVar ⇒ بین کانال‌ها قاطی نمی‌شود)."""

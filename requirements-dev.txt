@@ -1,0 +1,11 @@
+# ابزارهای توسعه/تست — قفل دقیق (شامل requirements.txt)
+
+-r requirements.txt
+
+colorama==0.4.6
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.6.0
+pyflakes==4.0.3
+Pygments==2.21.0
+pytest==9.1.1

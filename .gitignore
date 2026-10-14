@@ -41,3 +41,7 @@ Thumbs.db
 /_audit_tmp/
 /probe_*.py
 /_probe*.py
+
+# ── نشانگر استقرار (deploy.sh) ──
+.deployed_sha
+.deployed_sha.prev

@@ -13,11 +13,42 @@ ALLOWED = {"b", "strong", "i", "em", "u", "s", "del", "code", "pre", "a", "block
 # اگر متنِ منبع بتواند `</article_data>` را سالم عبور دهد، از جعبهٔ دادهٔ غیرقابل‌اعتماد فرار می‌کند و
 # هرچه بعدش بنویسد در ناحیهٔ «دستور معتبر» پرامپت قرار می‌گیرد (تزریق مستقیم). این مسیر واقعاً
 # قابل‌بهره‌برداری بود؛ حالا جداکننده‌ها هم در INJ_RE خنثی می‌شوند.
-INJ_RE = re.compile(r"(?im)(ignore|disregard|forget)[ \t]+(all[ \t]+|the[ \t]+|any[ \t]+)?(previous|above|prior|earlier)[ \t]+(instruction|instructions|prompt|prompts|rule|rules)|^[ \t]*(system|assistant|user|human|developer)[ \t]*:|<\|?[ \t]*(im_start|im_end|system|assistant|endoftext)[ \t]*\|?>|<[ \t]*/?[ \t]*article_data[ \t]*/?[ \t]*>|you[ \t]+are[ \t]+now[ \t]+|new[ \t]+instruction(s)?[ \t]*:")
-INJ_RESIDUE = re.compile(r"(?i)(ignore|disregard)[ \t]+(all[ \t]+|the[ \t]+|any[ \t]+)?(previous|above|prior)[ \t]+(instruction|instructions|prompt|prompts)|<[ \t]*/?[ \t]*article_data[ \t]*/?[ \t]*>|<\|?[ \t]*(im_start|im_end|endoftext)[ \t]*\|?>|\bsk-[A-Za-z0-9_-]{12,}")
+# PLB-05 (فاز ۳): الگوها فقط انگلیسی‌محور بودند؛ شکل‌های فارسی/عربی اضافه شد.
+# قاعدهٔ فارسی: فقط ترکیبِ «فعلِ امری + شیء» (یا بالعکس)، تا خبر عادی («…لغو کرد»، «نادیده گرفتند»)
+# گرفته نشود؛ شکل‌های با ZWNJ (نادیده‌بگیر) هم پوشش داده می‌شوند.
+_INJ_PARTS = [
+    # انگلیسی
+    r"(ignore|disregard|forget)[ \t]+(all[ \t]+|the[ \t]+|any[ \t]+)?(previous|above|prior|earlier)[ \t]+(instruction|instructions|prompt|prompts|rule|rules)",
+    r"^[ \t]*(system|assistant|user|human|developer)[ \t]*:",
+    r"<\|?[ \t]*(im_start|im_end|system|assistant|endoftext)[ \t]*\|?>",
+    r"<[ \t]*/?[ \t]*article_data[ \t]*/?[ \t]*>",
+    r"you[ \t]+are[ \t]+now[ \t]+",
+    r"new[ \t]+instruction(s)?[ \t]*:",
+    # فارسی — شیء → فعل امر
+    r"(دستور|دستورالعمل|راهنما|پرامپت|قوانین|قانون)(?:[ \t\u200c]*(?:ات|های|ها))?[ \t\u200c]*(قبلی|پیشین|گذشته|بالایی|داده[ \t\u200c]*شده)?[ \t\u200c]*(را[ \t\u200c]*)?(نادیده[ \t\u200c]*بگیر(ید)?|نادیده[ \t\u200c]*گیر(ید)?|فراموش[ \t\u200c]*کن(ید)?|لغو[ \t\u200c]*کن(ید)?|رد[ \t\u200c]*کن(ید)?|نپذیر(ید)?)",
+    # فارسی — فعل امر → شیء
+    r"(نادیده[ \t\u200c]*بگیر(ید)?|نادیده[ \t\u200c]*گیر(ید)?|فراموش[ \t\u200c]*کن(ید)?|لغو[ \t\u200c]*کن(ید)?|رد[ \t\u200c]*کن(ید)?|نپذیر(ید)?)[^\n]{0,60}(دستور|دستورالعمل|راهنما|پرامپت|قوانین|قانون)(?:[ \t\u200c]*(?:ات|های|ها))?",
+    # فارسی — پیشوند نقش در ابتدای خط
+    r"^[ \t]*(سیستم|کاربر|کاربران|دستیار|توسعه\u200cدهنده|برنامه\u200cنویس|راهنما)[ \t]*[:：]",
+    # عربی — پیشوند نقش + ترکیب فعلِ اهمال با شیء
+    r"^[ \t]*(النظام|المستخدم|المساعد|المطور|المشرف)[ \t]*[:：]",
+    r"(تجاهل|إهمال|اهمل)[ \t]*(جميع|كل|أي)?[ \t]*(التعليمات|الأوامر|البرومبت)[ \t]*(السابقة|العالية|الأولى)?",
+]
+INJ_RE = re.compile("|".join(_INJ_PARTS), re.I | re.M)
+# باقی‌ماندهٔ تزریق در *خروجی* مدل (ai_models._validate_output) — عمداً محافظه‌کارانه‌تر از INJ_RE:
+# فقط ترکیب فعل+شیء (و برچسب‌های ماشینی/کلید)؛ پیشوند نقش این‌جا نیست تا متن مصاحبه/خبرِ عادی رد نشود.
+_INJ_RESIDUE_PARTS = [
+    r"(ignore|disregard|forget)[ \t]+(all[ \t]+|the[ \t]+|any[ \t]+)?(previous|above|prior)[ \t]+(instruction|instructions|prompt|prompts)",
+    r"<[ \t]*/?[ \t]*article_data[ \t]*/?[ \t]*>",
+    r"<\|?[ \t]*(im_start|im_end|endoftext)[ \t]*\|?>",
+    r"\bsk-[A-Za-z0-9_-]{12,}",
+    r"(دستور|دستورالعمل|راهنما|پرامپت)(?:[ \t\u200c]*(?:ات|های|ها))?[ \t\u200c]*(قبلی|پیشین|گذشته|بالایی)?[ \t\u200c]*(را[ \t\u200c]*)?(نادیده[ \t\u200c]*بگیر(ید)?|فراموش[ \t\u200c]*کن(ید)?|لغو[ \t\u200c]*کن(ید)?)",
+    r"(تجاهل|إهمال|اهمل)[ \t]*(جميع|كل)?[ \t]*(التعليمات|الأوامر|البرومبت)",
+]
+INJ_RESIDUE = re.compile("|".join(_INJ_RESIDUE_PARTS), re.I)
 
 def strip_injection(t):
-    """متن منبع هرگز نباید شبیه دستور دیده شود؛ الگوها با […] جایگزین می‌شوند."""
+    """متن منبع هرگز نباید شبیه دستور دیده شود؛ الگوها با […] جایگزین می‌شوند (انگلیسی/فارسی/عربی)."""
     return INJ_RE.sub("[…]", t if isinstance(t, str) else str(t))
 
 def sanitize_html(text):

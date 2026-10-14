@@ -12,7 +12,7 @@ from newsbot.timeutils import now_iso
 _lock = threading.RLock()      # فقط نوشتن‌ها را بین تردها سریال می‌کند
 _tls = threading.local()       # هر ترد کانکشن مخصوص خودش را دارد
 _SCHEMA_READY = False          # اسکیما/مایگریشن فقط یک‌بار در هر پروسه اجرا می‌شود
-SCHEMA_VERSION = 2             # v2: جدول‌های referrals و rate_limits + ستون claimed_at
+SCHEMA_VERSION = 3             # v3: جدول‌های referrals و rate_limits + ستون claimed_at + trigger اتمیک اعتبار ارجاع
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT, name TEXT, role TEXT DEFAULT 'user', plan_id INTEGER, plan_expires TEXT, next_plan_id INTEGER, next_plan_days INTEGER, free_used INTEGER DEFAULT 0, banned INTEGER DEFAULT 0, lang TEXT, remind_key TEXT, premium INTEGER DEFAULT 0, created_at TEXT, last_seen TEXT);
@@ -55,6 +55,18 @@ CREATE INDEX IF NOT EXISTS idx_ai_cache_created ON ai_cache(created_at);
 CREATE INDEX IF NOT EXISTS idx_ref_referrer ON referrals(referrer_id);
 CREATE INDEX IF NOT EXISTS idx_rate_ts ON rate_limits(ts);
 """
+
+# trigger اتمیک: claim شرطیِ اعتبار ارجاع و شارژ کیف پول در *یک* دستور SQL (sqlite و D1 هر دو اجرا می‌کنند)
+REFERRAL_CREDIT_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS trg_referral_credit_wallet
+AFTER UPDATE OF credited ON referrals
+FOR EACH ROW
+WHEN OLD.credited = 0 AND NEW.credited = 1 AND NEW.credit_amount > 0
+BEGIN
+    UPDATE users SET credit=COALESCE(credit,0)+NEW.credit_amount WHERE id=NEW.referrer_id;
+END
+"""
+
 MIGRATIONS = [("users", "next_plan_id", "INTEGER"), ("users", "next_plan_days", "INTEGER"), ("users", "lang", "TEXT"), ("users", "remind_key", "TEXT"), ("users", "premium", "INTEGER DEFAULT 0"),
               ("plans", "name_en", "TEXT"), ("plans", "price_en", "TEXT DEFAULT ''"), ("plans", "description_en", "TEXT DEFAULT ''"),
               ("channels", "verified_by", "INTEGER"), ("channels", "created_at", "TEXT"), ("channels", "settings", "TEXT"), ("channels", "original_admin_id", "INTEGER"),
@@ -126,10 +138,19 @@ class D1Row:
     def get(self, k, default=None): return self._d.get(k, default)
 
 class D1Cur:
+    """کرسر سازگار با sqlite3: fetchone پیشروی می‌کند (fetchall باقی‌مانده را برمی‌گرداند)."""
     def __init__(self, rows, rowcount=0, lastrowid=None):
-        self._rows = rows; self.rowcount = rowcount; self.lastrowid = lastrowid
-    def fetchone(self): return self._rows[0] if self._rows else None
-    def fetchall(self): return list(self._rows)
+        self._rows = rows; self._idx = 0
+        self.rowcount = rowcount; self.lastrowid = lastrowid
+    def fetchone(self):
+        if self._idx >= len(self._rows): return None
+        row = self._rows[self._idx]
+        self._idx += 1
+        return row
+    def fetchall(self):
+        rows = self._rows[self._idx:]
+        self._idx = len(self._rows)
+        return list(rows)
 
 class D1Conn:
     """کانکشن D1: هر execute یک درخواست REST است؛ commit/rollback no-op (auto-commit).
@@ -146,13 +167,14 @@ class D1Conn:
         if not j.get("success"): raise sqlite3.OperationalError(f"D1 error: {str(j.get('errors'))[:200]}")
         res = (j.get("result") or [{}])[0]
         rows = [D1Row(x) for x in (res.get("results") or [])]
-        changes = int((res.get("meta") or {}).get("changes") or 0)
-        lastrowid = None
-        if u.startswith("INSERT"):
-            # تک‌پروسه و زیر _lock برای نوشتن‌ها ⇒ last_insert_rowid() امن است
-            r2 = _d1_client().post(_d1_url(), json={"sql": "SELECT last_insert_rowid() AS lid", "params": []}, headers=_d1_headers())
-            try: lastrowid = (r2.json().get("result") or [{}])[0].get("results", [{}])[0].get("lid")
-            except Exception: lastrowid = None
+        meta = res.get("meta") or {}
+        changes = int(meta.get("changes") or 0)
+        # شناسهٔ درج از *همین* پاسخ (meta.last_row_id) خوانده می‌شود؛ درخواست جداگانهٔ
+        # last_insert_rowid() روی REST بی‌ربط است (هر درخواست session جدید دارد) و مقدار خراب می‌دهد.
+        is_insert = u.startswith("INSERT")
+        lastrowid = meta.get("last_row_id") if is_insert else None
+        if is_insert:
+            rows = []   # رفتار sqlite3 برای INSERT بدون RETURNING: کرسر خالی است
         return D1Cur(rows, rowcount=changes, lastrowid=lastrowid)
     def executescript(self, script):
         for stmt in [x.strip() for x in script.split(";") if x.strip()]:
@@ -234,6 +256,8 @@ def _ensure_schema(conn):
             if col not in have[tbl]:
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
                 have[tbl].add(col)
+        # claim اعتبار ارجاع + شارژ کیف پول باید یک statement اتمیک باشد؛ trigger همان UPDATE را اجرا می‌کند
+        conn.execute(REFERRAL_CREDIT_TRIGGER)
         conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
         # ژورنال انتشار از جدول عمومی settings به جدول اختصاصی منتقل می‌شود (مایگریشن افزایشی و غیرمخرب)
         conn.execute("INSERT OR REPLACE INTO pub_journal(article_id,journal,updated_at) SELECT CAST(substr(key,6) AS INTEGER), value, ? FROM settings WHERE key LIKE 'pubj:%'", (now_iso(),))

@@ -109,12 +109,26 @@ class Sandbox:
 
 @pytest.fixture()
 def sandbox(tmp_path):
-    origin = tmp_path / "origin.git"
-    _run(["git", "clone", "--quiet", "--bare", str(ROOT), str(origin)], cwd=tmp_path)
-    _run(["git", "-C", str(origin), "symbolic-ref", "HEAD", "refs/heads/main"], cwd=tmp_path)
-
+    # مستقل از وضعیت git مخزن میزبان (در CI checkout کم‌عمق/detached است) —
+    # فقط فایل‌های کاری کپی و یک repo تازه ساخته می‌شود
     app = tmp_path / "app"
-    _run(["git", "clone", "--quiet", str(origin), str(app)], cwd=tmp_path)
+    shutil.copytree(ROOT, app, ignore=shutil.ignore_patterns(
+        ".git", ".venv", "venv", "__pycache__", "*.pyc", "$py.class",
+        ".pytest_cache", ".mypy_cache", ".ruff_cache", ".idea", ".vscode",
+        "*.db", "*.db-*", "*.db-journal", ".env", ".env.*", "*.log",
+        "*.bak", "*.tmp", "_audit_tmp", "probe_*.py", "_probe*.py",
+        ".deployed_sha", ".deployed_sha.prev",
+    ))
+    origin = tmp_path / "origin.git"
+    seed_env = dict(os.environ)
+    seed_env.update({"GIT_AUTHOR_NAME": "sandbox", "GIT_AUTHOR_EMAIL": "sb@t",
+                     "GIT_COMMITTER_NAME": "sandbox", "GIT_COMMITTER_EMAIL": "sb@t"})
+    _run(["git", "init", "-q", "-b", "main", str(app)], cwd=tmp_path, env=seed_env)
+    _run(["git", "init", "-q", "--bare", str(origin)], cwd=tmp_path, env=seed_env)
+    _git(app, "add", "-A", env=seed_env)
+    _git(app, "commit", "-q", "-m", "seed", env=seed_env)
+    _run(["git", "-C", str(app), "remote", "add", "origin", str(origin)], cwd=app, env=seed_env)
+    _run(["git", "-C", str(app), "push", "-q", "origin", "main"], cwd=app, env=seed_env)
 
     # .env قلابی — config.py آن را خودش بارگذاری می‌کند
     (app / ".env").write_text(

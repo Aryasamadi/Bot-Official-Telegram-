@@ -85,13 +85,37 @@ async def cmd_health(update, context):
 
 def _code_version():
     """نسخهٔ کدِ در حال اجرا از git — تا کاربر مطمئن شود deploy شده است."""
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # newsbot/ → ریشهٔ مخزن
     try:
         import subprocess
-        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # newsbot/ → ریشهٔ مخزن
         out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=_root,
                              capture_output=True, text=True, timeout=3)
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()
+    except Exception:
+        pass
+    # بدون git CLI: خواندن مستقیم .git (deployها/محیط‌هایی که git نصب نیست)
+    try:
+        with open(os.path.join(_root, ".git", "HEAD"), encoding="ascii") as f:
+            head = f.read().strip()
+        if head.startswith("ref: "):
+            ref = head[5:].strip()
+            ref_path = os.path.join(_root, ".git", ref.replace("/", os.sep))
+            sha = None
+            if os.path.isfile(ref_path):
+                with open(ref_path, encoding="ascii") as f:
+                    sha = f.read().strip()
+            else:  # refها ممکن است packed باشند
+                packed = os.path.join(_root, ".git", "packed-refs")
+                with open(packed, encoding="ascii") as f:
+                    for ln in f:
+                        if ln.rstrip("\n").endswith(" " + ref):
+                            sha = ln.split()[0]
+                            break
+        else:
+            sha = head
+        if sha and len(sha) >= 7:
+            return sha[:7]
     except Exception:
         pass
     return "unknown"

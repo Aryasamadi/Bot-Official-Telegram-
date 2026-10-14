@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# دو deploy هم‌زمان روی یک VPS ممنوع — صف‌بندی به‌جای لغوِ وسطِ کار
+concurrency:
+  group: production-vps-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -19,13 +24,29 @@ jobs:
           username: root
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           port: 22
+          command_timeout: 20m
           script: |
-            set -e
+            set -euo pipefail
             cd /opt/bot-ai-automatic
-            # 1) بک‌اپ دیتابیس محلی پیش از هر تغییر (بک‌اند d1 نیازی به بک‌اپ محلی ندارد)
+            # پیش‌شرط‌ها — اگر محیط سالم نیست deploy قبل از هر تغییری متوقف می‌شود
+            test -f .env
+            test -x .venv/bin/python
             mkdir -p /opt/backups
+            # 1) بک‌اپ سازگار با SQLite در حال اجرا (sqlite3.backup در WAL هم یکپارچه است؛
+            #    `cp` ساده می‌تواند نسخه‌ای نیمه‌کاره از DB در حال نوشتن بگیرد)
             if [ -f newsbot.db ]; then
-              cp newsbot.db "/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
+              backup="/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
+              /usr/bin/python3 - "newsbot.db" "$backup" <<'PY'
+            import sqlite3, sys
+            src = sqlite3.connect(sys.argv[1], timeout=30)
+            dst = sqlite3.connect(sys.argv[2])
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+                src.close()
+            PY
+              chmod 600 "$backup"
               # فقط 7 بک‌اپ اخیر نگه داشته می‌شود
               ls -1t /opt/backups/newsbot-*.db | tail -n +8 | xargs -r rm --
             fi
@@ -33,9 +54,10 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             # 3) وابستگی‌ها
-            /opt/bot-ai-automatic/.venv/bin/pip install -r requirements.txt
-            # 4) گیت سلامت پیش از restart: اگر پیکربندی/اسکیما خراب باشد، سرویس قدیمی دست‌نخورده می‌ماند
-            /opt/bot-ai-automatic/.venv/bin/python run.py --check
+            .venv/bin/pip install -r requirements.txt
+            # 4) گیت سلامت پیش از restart: اگر سینتکس/پیکربندی/اسکیما خراب باشد، سرویس قدیمی دست‌نخورده می‌ماند
+            .venv/bin/python -m compileall -q newsbot run.py
+            .venv/bin/python run.py --check
             # 5) راه‌اندازی مجدد و تأیید
             systemctl restart bot-ai-automatic
             sleep 3

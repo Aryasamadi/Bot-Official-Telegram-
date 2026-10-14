@@ -63,15 +63,24 @@ def test_all_modules_importable():
 
 # ── H1: نگهبانِ .gitignore (جلوگیری از commit شدن رازها) ──
 
+def _git_available():
+    import shutil
+    return shutil.which("git") is not None
+
+
 def test_gitignore_blocks_secrets_and_artifacts():
-    """فایل .gitignore باید وجود داشته باشد و .env و دیتابیس را می‌سکند.
+    """فایل .gitignore باید وجود داشته باشد و .env و دیتابیس را مسکند.
 
     ریشهٔ H1: هیچ .gitignore وجود نداشت، در حالی که newsbot.db کلیدهای API را
     متن ساده در خود دارد (app.py آن را chmod 600 می‌کند). یک `git add -A` ساده
     می‌توانست رازها را به مخزن بفرستد.
     """
+    import pytest
     gi = os.path.join(ROOT, ".gitignore")
     assert os.path.isfile(gi), ".gitignore وجود ندارد (بازگشت H1)"
+
+    if not _git_available():
+        pytest.skip("git در دسترس نیست")
 
     def ignored(path):
         r = subprocess.run(["git", "check-ignore", "-q", path], cwd=ROOT, capture_output=True, text=True)
@@ -86,9 +95,11 @@ def test_gitignore_blocks_secrets_and_artifacts():
 
 def test_no_sensitive_files_are_git_tracked():
     """هیچ راز/دیتابیس/محیط‌مجازی نباید در ایندکس گیت باشد."""
+    import pytest
+    if not _git_available():
+        pytest.skip("git در دسترس نیست")
     r = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0:
-        import pytest
         pytest.skip("git در دسترس نیست")
     tracked = r.stdout.splitlines()
     import re as _re

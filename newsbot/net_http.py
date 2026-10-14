@@ -35,10 +35,43 @@ async def close_http():
 
 _PRIVATE_HOSTS = ("localhost", "metadata.google.internal")
 
+def _parse_ip_alt(h):
+    """ARCH-08 (فاز ۳): قالب‌های جایگزین IP — دهدهی یکپارچه (2130706433)، هجدهی/شانزدهی نقطه‌دار
+    (0177.0.0.1 / 0x7f.0.0.1)، هجدهی/شانزدهی بدون‌نقطه (017700000001 / 0x7f000001) و فرم کوتاه
+    (127.1) — قاعدهٔ کلاسیک inet_aton. خروجی: ip_address یا None اگر IP نیست."""
+    parts = h.split(".")
+    if not 1 <= len(parts) <= 4 or any(not p for p in parts): return None
+    vals = []
+    for p in parts:
+        pl = p.lower()
+        try:
+            if pl.startswith("0x"): v = int(pl[2:], 16)
+            elif len(pl) > 1 and pl.startswith("0"): v = int(pl, 8)
+            else: v = int(pl, 10)
+        except ValueError:
+            return None
+        if v < 0: return None
+        vals.append(v)
+    if len(vals) == 4:
+        if any(v > 255 for v in vals): return None
+        acc = 0
+        for v in vals: acc = (acc << 8) | v
+        try: return ipaddress.ip_address(acc)
+        except ValueError: return None
+    # فرم کوتاه: جزء آخر بقیهٔ بایت‌ها را می‌پُشد (127.1 ⇒ 127.0.0.1)
+    *head, last = vals
+    if any(v > 255 for v in head) or last >= 256 ** (4 - len(vals) + 1): return None
+    acc = 0
+    for v in head: acc = (acc << 8) | v
+    acc = (acc << (8 * (4 - len(vals)))) + last
+    try: return ipaddress.ip_address(acc)
+    except ValueError: return None
+
 def is_private_host(host):
-    """FIX v4: بررسی مشترک میزبان خصوصی/داخلی برای همه‌ی URLهای کاربری.
+    """FIX v4: بررسی مشترک میزبان خصوصی/داخلی برای همهٔ URLهای کاربری.
     شامل: localhost، ::1، 0.0.0.0، دامنه‌های .local/.internal، RFC1918، loopback،
-    link-local (169.254.x = metadata endpoints)، و هر IP غیرعمومی."""
+    link-local (169.254.x = metadata endpoints)، و هر IP غیرعمومی.
+    FIX v5 (ARCH-08): قالب‌های جایگزین IP (دهدهی/هجدهی/شانزدهی/کوتاه) هم گرفته می‌شوند."""
     h = (host or "").strip("[]").lower().rstrip(".")
     if not h: return True
     if h in _PRIVATE_HOSTS or h in ("::1", "0.0.0.0") or h.endswith((".local", ".internal", ".localhost")): return True
@@ -46,7 +79,10 @@ def is_private_host(host):
     try:
         return not ipaddress.ip_address(h).is_global
     except ValueError:
-        return False
+        pass
+    alt = _parse_ip_alt(h)
+    if alt is not None: return not alt.is_global
+    return False
 
 def public_url(u):
     """آدرس بیرونی و امن است؟ DNS ناموفق یا هر IP غیرعمومی ⇒ رد می‌شود (SSRF fail-closed)."""

@@ -43,6 +43,18 @@ def test_ssrf_bypass_attempts_rejected(h):
     assert public_url(f"http://{h}/") is False
 
 
+# ARCH-08 (فاز ۳): خودِ is_private_host هم باید قالب‌های جایگزین را بگیرد —
+# نه فقط زنجیرهٔ public_url (که getaddrinfo وابسته به پلتفرم است).
+SSRF_ALT_PRIVATE = ["2130706433", "0x7f000001", "0x7f.0.0.1", "017700000001",
+                    "0177.0.0.1", "127.1", "0", "167772161", "3232235777",
+                    "2886729729", "127.0.0.01"]
+
+
+@pytest.mark.parametrize("h", SSRF_ALT_PRIVATE)
+def test_is_private_host_covers_alternative_ip_forms(h):
+    assert is_private_host(h) is True, f"قالب جایگزین IP رد نشد: {h!r}"
+
+
 @pytest.mark.parametrize("u", ["file:///etc/passwd", "gopher://x/", "ftp://x/", "javascript:alert(1)", ""])
 def test_non_http_schemes_rejected(u):
     assert public_url(u) is False

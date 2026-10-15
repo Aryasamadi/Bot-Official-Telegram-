@@ -99,6 +99,9 @@ TICK_SECONDS = int(os.getenv("TICK_SECONDS", "120"))
 TEST_COOLDOWN_SEC = int(os.getenv("TEST_COOLDOWN_SEC", "120"))
 CB_RATE = float(os.getenv("CB_RATE", "0.6"))
 ABUSE_RATE_SEC = float(os.getenv("ABUSE_RATE_SEC", "1.0"))
+# SEC-03 (فاز ۳): محدودیت نرخ سراسری per-user — سقف به‌روزرسانی از هر نوع (دستور/کال‌بک/پیام) در پنجرهٔ ثانیه
+GLOBAL_RATE_MAX = int(os.getenv("GLOBAL_RATE_MAX", "40"))
+GLOBAL_RATE_WINDOW = float(os.getenv("GLOBAL_RATE_WINDOW", "10"))
 MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "500"))     # backpressure صف ready هر کانال
 PAY_STUCK_MIN = int(os.getenv("PAY_STUCK_MIN", "10"))        # بازیابی پرداخت گیرکرده در processing
 

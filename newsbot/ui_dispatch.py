@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 from newsbot import config
 from newsbot.db import q, gget, gset
 from newsbot.timeutils import today_str, local_clock, TZ_ZONES
-from newsbot.ratelimit import rate_ok, rate_free, rate_left, rate_mark, rate_clear
+from newsbot.ratelimit import rate_ok, rate_free, rate_left, rate_mark, rate_clear, global_rate_ok
 from newsbot.concurrency import ch_lock
 from newsbot.core_users import (admin_limits, admin_offset, usage_reset, is_super, user_lang,
                                 can_admin, get_user, list_users)
@@ -370,6 +370,10 @@ def list_models_wrap():
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     qy = update.callback_query; u = update.effective_user; context._callback_answered = False
+    if not global_rate_ok(u.id):   # SEC-03: محدودیت سراسری per-user (کلیک‌های سیل‌آسا)
+        try: await qy.answer(tr(user_lang(u.id) or "fa", "busy_click"))
+        except Exception: pass
+        return
     if qy.data != "c:cancel" and not rate_ok(f"cb:{u.id}", config.CB_RATE):
         try: await qy.answer(tr(user_lang(u.id) or "fa", "busy_click"))
         except Exception: pass

@@ -76,6 +76,8 @@ async def scheduler_tick(bot):
             # با فاصله‌ی زمانی اجرا می‌شود، نه هر تیک؛ کوئری روی pub_journal با PK است ⇒ ارزان.
             if (time.time() - float(gget("last_recover", 0))) >= config.RECOVER_EVERY_MIN * 60:
                 gset("last_recover", time.time()); recover_publications(); recover_stuck_payments()   # FIX v4: پرداخت گیرکرده هم بازیابی می‌شود
+                from newsbot.core_plans import rollback_expired_benefits
+                rollback_expired_benefits()   # BIZ-03: نقش ادمینِ پلنِ منقضی پایین می‌آید
         except Exception as e: log_event("ERROR", f"publication recovery: {e}")
         try: await probe_down_models()
         except Exception as e: log_event("WARN", f"probe_down_models failed: {type(e).__name__}: {e}")

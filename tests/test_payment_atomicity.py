@@ -8,7 +8,7 @@ from datetime import timedelta
 from newsbot import config
 from newsbot.db import q
 from newsbot.timeutils import now_utc, now_iso
-from newsbot.core_plans import create_plan
+from newsbot.core_plans import create_plan, get_plan
 import newsbot.core_plans as core_plans
 from newsbot.core_payments import (pay_create, pay_get, pay_approve_atomic,
                                    PayAlreadyDecided, PayDiscountExhausted, PayNoPlan)
@@ -148,3 +148,48 @@ def test_transfer_token_single_active_and_revert_clears():
     assert old == 5001
     assert check_transfer_token(-9001, t2) is None      # همهٔ توکن‌ها با مالکیت پاک شدند
     assert q("SELECT admin_id FROM channels WHERE id=?", (-9001,), one=True)["admin_id"] == 6001
+
+
+# ── DB-18: حذف پلن در استفاده ──
+def test_delete_plan_in_use_deactivates_not_deletes():
+    from newsbot.core_plans import delete_plan
+    uid = 410008; _mk_user(uid)
+    pid = _paid_plan(25.0)
+    q("UPDATE users SET plan_id=? WHERE id=?", (pid, uid), commit=True)
+    assert delete_plan(pid) is False
+    assert get_plan(pid) is not None and not get_plan(pid)["active"]   # غیرفعال شد، حذف نشد
+    q("UPDATE users SET plan_id=NULL WHERE id=?", (uid,), commit=True)
+    assert delete_plan(pid) is True
+    assert get_plan(pid) is None
+
+def test_delete_plan_with_pending_payment_deactivates():
+    from newsbot.core_plans import delete_plan
+    uid = 410009; _mk_user(uid)
+    pid = _paid_plan(26.0)
+    pay_create(uid, pid)                                          # پرداخت pending
+    assert delete_plan(pid) is False
+    assert get_plan(pid) is not None
+
+
+# ── BIZ-03: رول‌بک نقش پلن منقضی ──
+def test_expired_plan_role_rolled_back_super_untouched():
+    from newsbot.core_plans import rollback_expired_benefits
+    uid = 410010; _mk_user(uid)
+    pid = _paid_plan(27.0)
+    q("UPDATE users SET role='admin', plan_id=?, plan_expires=? WHERE id=?",
+      (pid, (now_utc() - timedelta(days=1)).isoformat(), uid), commit=True)
+    # کاربر فعال (پلن منقضی‌نشده) نباید تغییر کند
+    uid2 = 410011; _mk_user(uid2)
+    q("UPDATE users SET role='admin', plan_id=?, plan_expires=? WHERE id=?",
+      (pid, (now_utc() + timedelta(days=5)).isoformat(), uid2), commit=True)
+    n = rollback_expired_benefits()
+    assert n >= 1
+    assert q("SELECT role FROM users WHERE id=?", (uid,), one=True)["role"] == "user"
+    assert q("SELECT role FROM users WHERE id=?", (uid2,), one=True)["role"] == "admin"   # فعال ماند
+
+def test_revoke_plan_downgrades_role():
+    from newsbot.core_plans import revoke_plan
+    uid = 410012; _mk_user(uid)
+    q("UPDATE users SET role='admin' WHERE id=?", (uid,), commit=True)
+    revoke_plan(uid)
+    assert q("SELECT role FROM users WHERE id=?", (uid,), one=True)["role"] == "user"

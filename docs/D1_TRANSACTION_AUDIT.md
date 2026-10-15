@@ -43,11 +43,13 @@ Every operation below touches more than one row/table. Each must either run insi
 | `newsbot/core_articles.py` — `release_publication` | Release quota, update article reason, update publication journal | Quota may be released without journal state changing; retry may release it again |
 | `newsbot/core_articles.py` — `reserve_publication` | Reserve post/test quota and write publication journal | Partial quota reservation can be left behind without a journal |
 | `newsbot/core_articles.py` — `settle_publication` | Mark dedup/post state, mark article published, delete journal | States can diverge; recovery helps but does not make the writes atomic |
-| `newsbot/core_channels.py` — `transfer_channel` | Delete old owner's source/queue/token/dedup data, then change owner | Irreversible partial data deletion before ownership changes |
-| `newsbot/core_channels.py` — `reset_channel_queue` | Delete queue and update channel settings | Queue may be deleted while automation settings remain unchanged |
-| `newsbot/core_channels.py` — `del_channel` | Delete related rows, then delete channel | Channel may remain while related data has already been removed |
-| `newsbot/core_plans.py` — `apply_plan_change` | Adjust wallet credit and insert plan-change audit row | Wallet can change without a matching audit record |
-| `newsbot/ui_views_super.py` — payment rollback callback | Restore wallet credit and delete plan-change record | Accounting rollback may be partial |
+| `newsbot/core_payments.py` — `_pay_approve_d1` | Claim, discount, wallet, assign plan, approve (sequential CAS) | A crash between plan assignment and the `applied_at` marker can leave a narrow double-apply window on **D1 only**; the sqlite path is one `_trx` (no window) |
+
+Sites removed from this table (now atomic via `_trx` or deleted):
+`apply_plan_change` (wrapped in `_trx`), `transfer_channel` / `reset_channel_queue` /
+`del_channel` (wrapped in `_trx`), the old inline payment-rollback callback in
+`ui_views_super.py` (**deleted** in phase 4 — approval is a single `_trx` on sqlite).
+`issue_transfer_token` and `revert_channel_owner` were also wrapped in `_trx` in phase 4.
 
 ## Improvements already in main
 

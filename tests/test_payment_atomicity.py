@@ -193,3 +193,26 @@ def test_revoke_plan_downgrades_role():
     q("UPDATE users SET role='admin' WHERE id=?", (uid,), commit=True)
     revoke_plan(uid)
     assert q("SELECT role FROM users WHERE id=?", (uid,), one=True)["role"] == "user"
+
+
+# ── BIZ-05 / REF-3: قفل هر کاربر + شفافیت سقف ارجاع ──
+def test_user_op_lock_serializes_same_user():
+    import asyncio
+    from newsbot.concurrency import user_op_lock
+    order = []
+    async def worker(tag, delay):
+        async with user_op_lock(410099):
+            order.append(f"{tag}:in")
+            await asyncio.sleep(delay)
+            order.append(f"{tag}:out")
+    async def main():
+        await asyncio.gather(worker("a", 0.05), worker("b", 0.01))
+    asyncio.run(main())
+    assert order.index("a:out") < order.index("b:in")   # هرگز هم‌پوشانی نداشتند
+
+def test_referral_cap_line_present_in_source():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_views_user.py").read_text(encoding="utf-8")
+    i18n = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_i18n.py").read_text(encoding="utf-8")
+    assert "ref_cap_line" in src and "REFERRAL_MAX_PER_USER" in src
+    assert '"ref_cap_line"' in i18n

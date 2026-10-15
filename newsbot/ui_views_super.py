@@ -232,6 +232,14 @@ async def view_s_texts(update, context):
 async def decide_pay(update, context, rid, approve, from_list):
     lang = L(update); r = pay_get(rid)
     if not r or r["status"] != "pending": await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
+    from newsbot.concurrency import user_op_lock
+    async with user_op_lock(r["user_id"]):   # BIZ-05: یک عملیات مالی در لحظه برای هر کاربر
+        return await _decide_pay_locked(update, context, rid, approve, from_list, lang)
+
+async def _decide_pay_locked(update, context, rid, approve, from_list, lang):
+    # دوباره وضعیت را بخوان؛ شاید در صفِ قفل، تصمیم دیگری ثبت شده باشد
+    r = pay_get(rid)
+    if not r or r["status"] != "pending": await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
     ul = user_lang(r["user_id"]) or "fa"; p = get_plan(r["plan_id"])
     if not p or p["is_free"] or ("active" in p.keys() and not p["active"]):
         pay_set(rid, "pending"); await popup(update, context, tr(lang, "notfound")); return await view_s_pays(update, context) if from_list else None

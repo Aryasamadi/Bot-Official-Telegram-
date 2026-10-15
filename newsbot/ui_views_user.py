@@ -54,8 +54,10 @@ async def view_referral(update, context):
     try:
         invited, earned = referral_stats(uid)
         text = (tr(lang, "ref_title", p=f"{config.REFERRAL_PERCENT:g}")
-                + tr(lang, "ref_line", n=invited, c=_fmt_price(earned))
-                + tr(lang, "ref_link", link=referral_link(uid)))
+                + tr(lang, "ref_line", n=invited, c=_fmt_price(earned)))
+        if config.REFERRAL_MAX_PER_USER > 0:   # REF-3: شفافیت سقف در UI (مقدار از config؛ تثبیت عدد با تصمیم ۸)
+            text += tr(lang, "ref_cap_line", cap=config.REFERRAL_MAX_PER_USER)
+        text += tr(lang, "ref_link", link=referral_link(uid))
         await render(update, context, text, [[B(tr(lang, "back"), "home")]])
     except Exception as e:
         log.warning("referral render failed uid=%s: %s", uid, e, exc_info=True)
@@ -103,17 +105,20 @@ async def view_plan(update, context, pid):
     kb.append([B(tr(lang, "back"), "u:plans")]); await render(update, context, text, kb)
 
 async def do_free(update, context, pid):
-    uid = update.effective_user.id; lang = L(update); u = get_user(uid); p = get_plan(pid)
-    if not p or not p["is_free"] or u["free_used"]: await popup(update, context, tr(lang, "free_once")); return await view_plans(update, context)
-    # PHASE 4 (UISEC-10/SEC-04): claim اتمیک پیش از واگذاری — دو ضربهٔ هم‌زمان فقط یک‌بار برنده می‌شود
-    from newsbot.core_plans import free_claim, free_release
-    if not free_claim(uid): await popup(update, context, tr(lang, "free_once")); return await view_plans(update, context)
-    try:
-        exp, _ = assign_plan(uid, pid)
-    except Exception:
-        free_release(uid); raise
-    if exp is None:
-        free_release(uid); await popup(update, context, tr(lang, "notfound")); return await view_plans(update, context)
+    uid = update.effective_user.id; lang = L(update)
+    from newsbot.concurrency import user_op_lock
+    async with user_op_lock(uid):   # BIZ-05: یک عملیات پلن در لحظه برای هر کاربر
+        u = get_user(uid); p = get_plan(pid)
+        if not p or not p["is_free"] or u["free_used"]: await popup(update, context, tr(lang, "free_once")); return await view_plans(update, context)
+        # PHASE 4 (UISEC-10/SEC-04): claim اتمیک پیش از واگذاری — دو ضربهٔ هم‌زمان فقط یک‌بار برنده می‌شود
+        from newsbot.core_plans import free_claim, free_release
+        if not free_claim(uid): await popup(update, context, tr(lang, "free_once")); return await view_plans(update, context)
+        try:
+            exp, _ = assign_plan(uid, pid)
+        except Exception:
+            free_release(uid); raise
+        if exp is None:
+            free_release(uid); await popup(update, context, tr(lang, "notfound")); return await view_plans(update, context)
     log_event("INFO", f"پلن رایگان فعال شد برای {uid}", uid); await popup(update, context, tr(lang, "free_done", name=plan_txt(p, "name", lang)))
     await notify_supers(f"🎁 {esc(uname(u))} (<code>{uid}</code>) پلن رایگان را فعال کرد."); await view_admin_home(update, context)
 

@@ -61,6 +61,7 @@ TXT = {
     "ref_btn": ("🤝 دعوت دوستان", "🤝 Invite friends"),
     "ref_title": ("🤝 <b>دعوت دوستان</b>\nبا هر خرید موفقِ دعوت‌شده، {p}٪ از مبلغ به کیف پول شما برمی‌گردد.", "🤝 <b>Invite friends</b>\nFor each successful purchase by an invitee, {p}% returns to your wallet."),
     "ref_line": ("\n👥 دعوت‌شده: {n} · 💰 اعتبار کسب‌شده: {c}", "\n👥 Invited: {n} · 💰 Earned credit: {c}"),
+    "ref_cap_line": ("\n🎯 سقف اعتبار هر معرف: {cap} دعوت‌شدهٔ دارای خرید", "\n🎯 Cap per referrer: {cap} paid invitees"),
     "ref_link": ("\n🔗 لینک دعوت شما:\n<code>{link}</code>", "\n🔗 Your invite link:\n<code>{link}</code>"),
     "ref_off": ("🤝 سیستم دعوت فعال نیست", "🤝 Referral system is disabled"),
     "ref_reward": ("🎉 پاداش دعوت: {amount} به کیف پول شما اضافه شد", "🎉 Referral reward: {amount} added to your wallet"),

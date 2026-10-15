@@ -4,18 +4,18 @@ NEW v4: پس از تأیید پرداخت، اعتبار ارجاع (referral) �
 شکست ارجاع هرگز جریان پرداخت را نمی‌شکند (فقط لاگ).
 فیلدهای ویرایشی (PLAN_FIELDS/MODEL_FIELDS/TEXT_KEYS/fl/_mic/_mname) از ui_views_admin می‌آیند.
 """
-import json, os
+import os
 from newsbot import config
 from newsbot.db import q, gget
 from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc, parse_dt, fmt_date, ago_text
 from newsbot.core_users import list_users, get_user, admin_limits, admin_offset, usage_today, is_super, user_lang
-from newsbot.core_plans import get_plan, plan_txt, list_plans, assign_plan, _price_num, _fmt_price
-from newsbot.core_discounts import disc_list, disc_get, disc_valid, disc_use
+from newsbot.core_plans import get_plan, plan_txt, list_plans, _price_num, _fmt_price
+from newsbot.core_discounts import disc_list, disc_get, disc_valid
 from newsbot.core_channels import list_channels, mandatory_cfg
 from newsbot.core_sources import count_sources
 from newsbot.core_articles import count_articles
-from newsbot.core_payments import pay_pending, pay_get, pay_set, pay_claim
+from newsbot.core_payments import pay_pending, pay_get, pay_set, pay_approve_atomic, PayError
 from newsbot.core_referrals import credit_referral_on_payment
 from newsbot.ai_models import list_models, get_model
 from newsbot.text_format import strip_tags
@@ -235,56 +235,18 @@ async def decide_pay(update, context, rid, approve, from_list):
     ul = user_lang(r["user_id"]) or "fa"; p = get_plan(r["plan_id"])
     if not p or p["is_free"] or ("active" in p.keys() and not p["active"]):
         pay_set(rid, "pending"); await popup(update, context, tr(lang, "notfound")); return await view_s_pays(update, context) if from_list else None
-    # claim the payment first (CAS) so a double-approve callback assigns the plan exactly once
-    if not pay_claim(rid):
-        await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
     if approve:
-        if not p:
-            pay_set(rid, "pending"); await popup(update, context, tr(lang, "notfound")); return await view_s_pays(update, context) if from_list else None
-        # مصرف اتمیک کد تخفیف پیش از واگذاری پلن؛ rowcount=0 یعنی ظرفیت تمام شده ⇒ تأیید لغو و پرداخت به بازبینی برمی‌گردد
-        if r["discount"] and not disc_use(r["discount"]):
-            pay_set(rid, "pending"); await popup(update, context, tr(lang, "disc_exhausted")); return await view_s_pays(update, context) if from_list else None
+        # PHASE 4: claim + تخفیف + کیف پول/سابقه + واگذاری پلن + approved در یک تراکنش (PAY-1/DB-04).
+        # رول‌بک دستی حذف شد (DB-16): شکست در هر نقطه = رول‌بک کامل تراکنش؛ هیچ نیمه‌کاره‌ای باقی نمی‌ماند.
         try:
-            pc = json.loads(r["pc"]) if ("pc" in r.keys() and r["pc"]) else {}
+            exp, queued = pay_approve_atomic(rid)
+        except PayError as e:
+            await popup(update, context, tr(lang, "s_pay_seen" if e.code == "seen" else ("disc_exhausted" if e.code == "disc_exhausted" else "notfound")))
+            return await view_s_pays(update, context) if from_list else None
         except Exception:
-            log.warning("corrupt payment quote ignored: pay_request=%s", rid, exc_info=True)
-            pc = {}
-        # ثبت کیف پول اول و اتمیک: اگر شکست بخورد هیچ‌چیز جز مصرفِ کد تخفیف باقی نمی‌ماند ⇒ تخفیف برمی‌گردد
-        try:
-            from newsbot.core_plans import apply_plan_change
-            apply_plan_change(r["user_id"], r["plan_id"], pc)
-        except Exception:
-            log.exception("plan change bookkeeping failed rid=%s uid=%s", rid, r["user_id"])
-            if r["discount"]:
-                from newsbot.core_discounts import disc_refund
-                disc_refund(r["discount"])
-            pay_set(rid, "pending"); await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
-        def rollback_payment(why):
-            """تا وقتی پلن واگذار نشده، هر شکستی قابل برگشت است: موجودی، ردیف سابقه و مصرف کد تخفیف برمی‌گردند."""
-            used = float(pc.get("used_balance") or 0); surplus = float(pc.get("surplus") or 0)
-            try:
-                from newsbot.db import _trx
-                def _go(conn):
-                    conn.execute("UPDATE users SET credit=MAX(0, COALESCE(credit,0) + ? - ?) WHERE id=?", (used, surplus, r["user_id"]))
-                    conn.execute("DELETE FROM plan_changes WHERE id=(SELECT MAX(id) FROM plan_changes WHERE user_id=?)", (r["user_id"],))
-                _trx(_go)
-            except Exception: log.exception("booking rollback failed rid=%s", rid)
-            if r["discount"]:
-                from newsbot.core_discounts import disc_refund
-                disc_refund(r["discount"])
-            pay_set(rid, "pending")
-            log_event("WARN", f"تأیید پرداخت #{rid} نیمه‌کاره ماند ({why})؛ موجودی و کد تخفیف برگشت", update.effective_user.id)
-        try:
-            exp, queued = assign_plan(r["user_id"], r["plan_id"])
-        except Exception:
-            log.exception("plan assignment failed rid=%s uid=%s", rid, r["user_id"])
-            rollback_payment("assign")
+            log.exception("payment approval failed rid=%s uid=%s", rid, r["user_id"])
             await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
-        if exp is None:
-            rollback_payment("no_plan")
-            await popup(update, context, tr(lang, "notfound")); return await view_s_pays(update, context) if from_list else None
-        pay_set(rid, "approved")
-        # NEW v4: اعتبار ارجاع — اتمیک و idempotent (فقط ردیف credited=0 حرکت می‌کند)؛
+        # اعتبار ارجاع — اتمیک و idempotent (فقط ردیف credited=0 حرکت می‌کند)؛
         # شکست آن هرگز پرداخت تأییدشده را خراب نمی‌کند.
         try:
             paid_num = None

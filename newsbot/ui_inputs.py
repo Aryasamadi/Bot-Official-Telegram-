@@ -411,12 +411,14 @@ async def handle_input(update, context, st):
     if kind == "receipt":
         if not is_super(uid) and not rate_ok(f"rcpt:{uid}", config.ABUSE_RATE_SEC * 5):
             return await popup(update, context, tr(lang, "test_wait", n=rate_left(f"rcpt:{uid}", config.ABUSE_RATE_SEC * 5)))
-        pid = st["pid"]; p = get_plan(pid); u = get_user(uid)
-        if not p or not p["active"]: return await popup(update, context, tr(lang, "notfound"))
-        if not (msg.photo or msg.document or text): await popup(update, context, tr(lang, "receipt_empty")); return
-        if pay_pending_for(uid, pid): done(tr(lang, "req_pending")); return await dispatch(update, context, back)
-        # st["final"] is the single source of truth (prorated amount for upgrades, full price text otherwise)
-        rid = pay_create(uid, pid, msg.chat_id, msg.message_id, text, st.get("disc"), st.get("final"), st.get("pc"))
+        from newsbot.concurrency import user_op_lock
+        async with user_op_lock(uid):   # BIZ-05: بررسی+ثبت رسید بدون پنجرهٔ هم‌زمان (دو رسید موازی = یکی)
+            pid = st["pid"]; p = get_plan(pid); u = get_user(uid)
+            if not p or not p["active"]: return await popup(update, context, tr(lang, "notfound"))
+            if not (msg.photo or msg.document or text): await popup(update, context, tr(lang, "receipt_empty")); return
+            if pay_pending_for(uid, pid): done(tr(lang, "req_pending")); return await dispatch(update, context, back)
+            # st["final"] is the single source of truth (prorated amount for upgrades, full price text otherwise)
+            rid = pay_create(uid, pid, msg.chat_id, msg.message_id, text, st.get("disc"), st.get("final"), st.get("pc"))
         done(); ud.get("disc", {}).pop(str(pid), None)
         disc = f"\n🎟 {esc(st['disc'])}" if st.get("disc") else ""; note = f"\n📝 {esc(text[:400])}" if text else ""
         header = tr("fa", "s_pay_new", id=rid, who=esc(uname(u)), uid=uid, plan=esc(p["name"]), price=esc(st.get("display") or st.get("final") or p["price"]), disc=disc, note=note); kb = InlineKeyboardMarkup([[B("✅ تأیید / Approve", f"s:pay_ok:{rid}"), B("❌ رد / Reject", f"s:pay_no:{rid}")]])

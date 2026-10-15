@@ -140,6 +140,7 @@ AI_ERR = {"ai_busy": ("سرویس هوش مصنوعی موقتاً شلوغ اس
           "ai_timeout": ("سرویس هوش مصنوعی پاسخ نداد", "AI service did not respond"), "ai_empty": ("پاسخ خالی از سرویس هوش مصنوعی", "Empty response from AI service"),
           "ai_none": ("سرویس هوش مصنوعی در دسترس نیست", "AI service unavailable"), "ai_error": ("خطای موقت سرویس هوش مصنوعی", "Temporary AI service error"),
           "ai_budget": ("سقف هزینهٔ هوش مصنوعی برای این مقاله پر شد", "AI cost budget reached for this article"),
+          "ai_limit": ("سقف روزانهٔ مصرف هوش مصنوعی تمام شد", "Daily AI usage limit reached"),
           "ai_invalid": ("خروجی مدل‌ها نامعتبر بود", "The model output was rejected as invalid"),
           "ai_all_failed": ("هیچ‌یک از مدل‌ها پاسخ نداد", "None of the models responded")}
 

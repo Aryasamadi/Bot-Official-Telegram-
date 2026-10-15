@@ -14,7 +14,7 @@ from telegram.error import BadRequest, RetryAfter, NetworkError, Forbidden
 from newsbot import config
 from newsbot.logutils import log, log_event, log_ctx, bump
 from newsbot.timeutils import now_iso
-from newsbot.net_http import http, public_url_strict, UA_BROWSER, UA_FEED, store_deeplink
+from newsbot.net_http import http, public_url_strict, UA_BROWSER, UA_FEED, gen_deeplink_key, save_deeplink
 from newsbot.concurrency import FETCH_SEM, ch_lock
 from newsbot.discover import _ext_kind
 from newsbot.core_channels import get_channel, get_settings, msg_link
@@ -172,6 +172,7 @@ async def send_post(bot, chat_id, text, media=None):
     variants = [(text, "HTML"), (downgrade_html(text), "HTML"), (strip_tags(text), None)]
     sent_media = SimpleNamespace(message_id=media["_sent_id"]) if media and media.get("_sent_id") else None
     for i, (t, pm) in enumerate(variants):
+        cap = None
         try:
             if media:
                 # کپشن هرگز از محدودیت تلگرام نمی‌گذرد؛ اگر گذشت همان‌جا بریده می‌شود نه با پیام دوم (تک‌پیام می‌ماند)
@@ -186,7 +187,12 @@ async def send_post(bot, chat_id, text, media=None):
             wait = float(e.retry_after) + 1
             # قبلاً سقف ثابت ۳۰ ثانیه بود: اگر تلگرام ۶۰ ثانیه می‌خواست، بعد از ۳۰ ثانیه دوباره محدود می‌شدیم.
             if wait > config.RETRY_AFTER_MAX: raise   # بیشتر از سقف ما: تسلیم به مسیر انتشار (delivery_unknown) بهتر از اصرار است
-            await asyncio.sleep(wait); return await bot.send_message(chat_id, t, parse_mode=pm, disable_web_page_preview=True, **({"reply_to_message_id": sent_media.message_id} if sent_media else {}))
+            await asyncio.sleep(wait)
+            # PUB-03: همان مسیر دوباره — رسانه با تلاش مجدد همان رسانه حفظ می‌شود، نه اینکه به «متن تنها» تنزل یابد
+            if media and not sent_media and cap is not None:
+                m = await _send_media(bot, chat_id, cap, pm, media)
+                if m: return m
+            return await bot.send_message(chat_id, t, parse_mode=pm, disable_web_page_preview=True, **({"reply_to_message_id": sent_media.message_id} if sent_media else {}))
         except BadRequest as e:
             if _is_parse_err(e) and i < len(variants) - 1: continue
             raise
@@ -271,14 +277,20 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
         settle_publication(aid, ch, journal)
         return True, link
     if journal:
-        unknown = journal.get("phase") == "in_flight"
-        journal = release_publication(aid, journal, "delivery_unknown" if unknown else (a["reason"] or ""))
-        if unknown:
-            # تحویل نامعلوم است: دوباره منتشر نمی‌شود (خطر پست تکراری) و در صف «آماده» هم نمی‌ماند،
+        phase = journal.get("phase")
+        # PUB-01: بین in_flight و unsettledِ بدون رسانه تفاوتی نیست — هر دو یعنی «شاید واقعاً رفته باشد»؛
+        # دیگر هرگز ارسال خودکار نمی‌شود (خطر پست تکراری). unsettled با media_id یعنی رسانه رسیده و
+        # کپشن/رسانه قبلاً تحویل شده — همان مسیر settle بدون ارسال دوباره ادامه می‌یابد.
+        if phase == "in_flight" or (phase == "unsettled" and not journal.get("media_id")):
+            if phase == "in_flight":
+                # فقط فاز را می‌بندد؛ reserved_day حفظ می‌شود (سهمیه در ابهام تحویل برنمی‌گردد — PUB-05)
+                release_publication(aid, journal, "delivery_unknown")
+            # تحویل نامعلوم است: دوباره منتشر نمی‌شود و در صف «آماده» هم نمی‌ماند،
             # چون ماندن در صف سرِ صف را برای همیشه می‌بست و بقیهٔ آماده‌ها هرگز منتشر نمی‌شدند.
             article_update(aid, status="failed", reason="delivery_unknown")
             bump("posts_fail"); log_ctx(stage="delivery_unknown")
             return False, "delivery_unknown"
+        journal = release_publication(aid, journal, a["reason"] or "")
     if ch["admin_id"] != admin_id: return False, "no_channel"
     if posted_before(ch["chat_id"], a["hash"]): article_update(aid, status="rejected", reason="duplicate"); return False, "duplicate"
     journal = reserve_publication(aid, admin_id, count_usage, test_user, journal)
@@ -295,9 +307,12 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
         except (ValueError, TypeError): media = None; log.warning("corrupt media payload article=%s", aid)
         cut, tail, full_for_bot = await asyncio.to_thread(channel_caption, s, ch, a["post_html"], a["full_html"], a["title"], a["url"])
         text = cut + tail
+        dl_key = dl_payload = None
         if full_for_bot:
-            key = await store_deeplink(admin_id, {"short": cut, "full": full_for_bot, "title": a["title"], "url": a["url"], "show_source": bool(s.get("include_link", True)), "media": {k: v for k, v in media.items() if not k.startswith("_")} if media else None, "ts": now_iso()})
-            text = cut + f'\n\n<a href="https://t.me/{config.BOT_USERNAME}?start=r_{key}">📖 {"بیشتر" if (s.get("ui_lang") or "fa") == "fa" else "more..."}</a>' + tail
+            # PUB-04: کلید فقط تولید می‌شود (برای متن لازم است)؛ ردیف دیپ‌لینک پس از موفقیت ارسال نوشته می‌شود
+            dl_key = gen_deeplink_key()
+            dl_payload = {"short": cut, "full": full_for_bot, "title": a["title"], "url": a["url"], "show_source": bool(s.get("include_link", True)), "media": {k: v for k, v in media.items() if not k.startswith("_")} if media else None, "ts": now_iso()}
+            text = cut + f'\n\n<a href="https://t.me/{config.BOT_USERNAME}?start=r_{dl_key}">📖 {"بیشتر" if (s.get("ui_lang") or "fa") == "fa" else "more..."}</a>' + tail
         if journal.get("media_id"):
             text = journal["text"]
             media = {"_sent_id": journal["media_id"]}
@@ -335,6 +350,10 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
             journal.update(phase="ack", link=link)
             set_pub_journal(aid, journal)
             settle_publication(aid, ch, journal)
+            if dl_key and dl_payload:
+                # PUB-04: ردیف دیپ‌لینک فقط پس از موفقیت ارسال نوشته می‌شود تا شکست قطعی ردیف یتیم نسازد
+                try: await save_deeplink(dl_key, admin_id, dl_payload)
+                except Exception: log.warning("deeplink save failed key=%s", dl_key[:6], exc_info=True)
             bump("posts_ok"); log_ctx(stage="published")
             log_event("INFO", f"منتشر شد در {ch['title']}: {(a['title'] or '')[:60]}", admin_id)
             return True, link

@@ -181,6 +181,15 @@ def delete_article(aid, uid):
 
 def posted_before(chat_id, h): return bool(q("SELECT 1 FROM posted WHERE channel_id=? AND hash=?", (chat_id, h), one=True))
 
+def soft_window_candidate(cid, chat_id, h):
+    """PUB-01: واجد شرایطِ بازچرخانیِ پنجرهٔ نرم. مقالهٔ «تحویل نامعلوم» هرگز دوباره ارسال نمی‌شود
+    (شاید پست واقعاً رفته باشد؛ ری‌کیو آن پست تکراری می‌سازد). خروجی: article id یا None."""
+    row = q("SELECT id,status,reason FROM articles WHERE channel_id=? AND hash=?", (cid, h), one=True)
+    if not row or row["status"] not in ("skipped", "rejected", "failed"): return None
+    if (row["reason"] or "") == "delivery_unknown": return None
+    if posted_before(chat_id, h): return None
+    return row["id"]
+
 def count_articles(uid=None, hours=24, status=None, cid=None):
     since = (now_utc() - timedelta(hours=hours)).isoformat(); sql, p = "SELECT COUNT(*) c FROM articles WHERE created_at >=?", [since]
     if cid is not None: sql += " AND channel_id=?"; p.append(cid)

@@ -6,7 +6,7 @@ import asyncio, html
 from telegram.error import BadRequest
 from newsbot import config
 from newsbot.logutils import log
-from newsbot.ratelimit import rate_ok
+from newsbot.ratelimit import rate_ok, global_rate_ok
 from newsbot.core_users import ensure_user, is_super, user_lang, can_admin
 from newsbot.core_payments import support_open
 from newsbot.net_http import load_deeplink
@@ -26,6 +26,7 @@ def managed_command(handler):
         except Exception: pass
         # ضد سوءاستفاده: هر کاربر برای هر دستور یک‌بار در ABUSE_RATE_SEC (قبلاً فقط کلیک کال‌بک محدود بود)
         if u and not is_super(u.id) and not rate_ok(f"cmd:{u.id}:{handler.__name__}", config.ABUSE_RATE_SEC): return
+        if u and not global_rate_ok(u.id): return   # SEC-03: محدودیت سراسری per-user (سیل دستور)
         # /cancel و /ref دستورهای سادهاند: نباید داخل «عملیات کاربر» اجرا شوند.
         # اگر ببندیم، همان عملیاتی که خودشان میدهد شاملِ خودشان میشود و آن‌ها را کنسل میکند.
         if handler.__name__ in ("cmd_cancel", "cmd_ref"):

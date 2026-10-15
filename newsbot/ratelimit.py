@@ -8,6 +8,7 @@ from newsbot.config import RATE_PERSIST_PREFIXES
 from newsbot.logutils import log
 
 _rl = {}
+_win = {}      # SEC-03: شمارندهٔ پنجره‌ای (کلید → لیست زمان‌ها)؛ در حافظه، بدون ماندگاری DB
 
 def _rate_persistable(key): return any(key.startswith(p) for p in RATE_PERSIST_PREFIXES)
 
@@ -57,7 +58,30 @@ def rate_clear(key):
 
 def rate_left(key, min_gap): return max(0, int(min_gap - (time.time() - _rl.get(key, 0))))
 
+def rate_window(key, limit, window, now=None):
+    """SEC-03: حداکثر limit رخداد در بازهٔ window ثانیه؛ بیش از آن False (و رخداد ثبت نمی‌شود).
+    در حافظه و per-key؛ برای محدودیت سراسری per-user (global_rate_ok)."""
+    t = time.time() if now is None else now
+    hits = [x for x in _win.get(key, ()) if t - x < window]
+    if len(hits) >= limit:
+        _win[key] = hits
+        return False
+    hits.append(t)
+    _win[key] = hits
+    if len(_win) > 20000:
+        for k in [k for k, v in _win.items() if not v or t - max(v) > window]: _win.pop(k, None)
+    return True
+
+def global_rate_ok(uid):
+    """محدودیت نرخ سراسری per-user: در پنجرهٔ GLOBAL_RATE_WINDOW حداکثر GLOBAL_RATE_MAX
+    به‌روزرسانی از هر نوع (دستور/کال‌بک/پیام). کاربرِ super معاف است."""
+    if uid is None: return True
+    from newsbot import config
+    if uid in getattr(config, "SUPER_ADMIN_IDS", ()): return True
+    return rate_window(f"g:{uid}", config.GLOBAL_RATE_MAX, config.GLOBAL_RATE_WINDOW)
+
 def rate_cleanup(now_w=None):
     """پاک‌سازی دوره‌ای کلیدهای بی‌استفاده (فراخوان از cleanup())."""
     now_w = time.time() if now_w is None else now_w
     for k in [k for k, v in list(_rl.items()) if now_w - v > 3600]: _rl.pop(k, None)
+    for k in [k for k, v in list(_win.items()) if not v or now_w - max(v) > 3600]: _win.pop(k, None)

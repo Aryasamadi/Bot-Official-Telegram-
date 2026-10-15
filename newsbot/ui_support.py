@@ -6,7 +6,7 @@ from newsbot import config
 from newsbot.logutils import log
 from newsbot.core_users import ensure_user, is_super, user_lang
 from newsbot.core_payments import support_is_open, support_map_get, support_map_set
-from newsbot.ratelimit import rate_ok
+from newsbot.ratelimit import rate_ok, global_rate_ok
 from newsbot.text_format import split_html
 from newsbot.ui_i18n import tr
 from newsbot.ui_widgets import B, esc, popup, stale, L, run_user_operation, go_home
@@ -52,6 +52,7 @@ async def on_message(update, context):
     if stale(update, "message"): return
     user = ensure_user(uid, u.username, u.full_name, premium=getattr(u, "is_premium", None))
     if user["banned"] and not is_super(uid): return
+    if not global_rate_ok(uid): return   # SEC-03: محدودیت سراسری per-user (سیل پیام)
     lang = L(update); st = context.user_data.get("await")
     if st:
         return await run_user_operation(update, context, f"input:{st.get('kind')}", st.get("cid") or st.get("data", {}).get("cid"), lambda: handle_input(update, context, st))

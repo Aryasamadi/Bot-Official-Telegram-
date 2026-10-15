@@ -1,0 +1,69 @@
+# امنیت — گزارش اجرای فاز ۳ و روال چرخش رازها
+
+تاریخ: ۲۰۲۶-۱۰-۱۵ · شاخه: `phase-3-secrets-logs-injection` · مرجع: ROADMAP.md بخش ۶.۳ (فاز ۳)
+
+این سند خروجیِ الزامیِ فاز ۳ است: (۱) گزارش امنیتی پس از رفع هر سطر، (۲) روال چرخش رازها (SEC-01)، (۳) لاگ چرخش کلیدها، (۴) نتیجهٔ ممیزی وابستگی (SEC-06).
+
+---
+
+## ۱. گزارش امنیتی پس از رفع
+
+| سطر | مشکل | اقدام انجام‌شده | اعتبارسنجی |
+|---|---|---|---|
+| SEC-02 + OPS-14 | ماسک رازها فقط در `log_event` بود؛ هر `log.*` مستقیم و traceback استثناها بی‌ماسک می‌نشست | `RecordFactory` سراسری در `logutils.py` — همهٔ رکوردها (msg/args/exc_text/stack_info) پیش از هر handler ماسک می‌شوند | `tests/test_log_secret_leak.py` (۵ تست: فراخوانی مستقیم، استثنا، log_event، ضد over-redaction، نصب‌بودن فابریک) |
+| GAP-10 | فقدان تست نشت secret در لاگ | همان تست‌های بالا | سبز |
+| PLB-05 | الگوی ضد-injection انگلیسی‌محور بود؛ فارسی/عربی پوشش نداشت | الگوهای فارسی (شیء→فعل امر، فعل→شیء، پیشوند نقش، جمع‌ها با ZWNJ) و عربی به `INJ_RE` و `INJ_RESIDUE` افزوده شد — با قاعدهٔ ضد over-redaction (شکل‌های خبری «لغو کرد/نادیده گرفتند» آزادند) | `tests/test_security.py` (پارامترهای FA/AR + متن‌های خبری سالم) |
+| PLB-04 | قطعهٔ خام منبع در مسیر خلاصه‌سازی بدون `strip_injection` به مدل می‌رفت (`generate.py`) | اعمال `strip_injection` روی هر قطعه پیش از ارسال به مدل خلاصه‌ساز | `test_summarize_chunks_strips_injection` |
+| ARCH-08 | `is_private_host` قالب‌های جایگزین IP (دهدهی `2130706433`، هجدهی `0177.0.0.1`، شانزدهی `0x7f.0.0.1`، کوتاه `127.1`) را نمی‌گرفت | تابع `_parse_ip_alt` (قواعد کلاسیک inet_aton) + ارجاع در `is_private_host` | `test_is_private_host_covers_alternative_ip_forms` (۱۱ قالب) |
+| SEC-03 | محدودیت نرخ سراسری per-user نبود (فقط سقف‌های پراکندهٔ per-op) | `rate_window` + `global_rate_ok` (پیش‌فرض ۴۰ به‌روزرسانی در ۱۰ ثانیه، super معاف، قابل تنظیم با `GLOBAL_RATE_MAX`/`GLOBAL_RATE_WINDOW`) — سیم‌کشی در سه نقطهٔ ورودی: `managed_command`، `on_callback`، `on_message` | `tests/test_rate_window.py` (۶ تست) |
+| SEC-10 + GAP-13 | فقدان تست یکپارچهٔ ورودی | `tests/test_injection.py`: SQL پارامتری (`'; DROP TABLE users; --` عیناً ذخیره می‌شود)، whitelist نام ستون (`_safe_fields`)، اسکن استاتیک `shell=True`/`os.system`/`eval`/`exec` (صفر مورد)، پایان‌به‌پایان EN/FA/AR روی `build_prompt` | سبز (۶ تست) |
+| SEC-06 | نبود audit وابستگی‌های دارای CVE | `pip-audit 2.10.1` روی `requirements.txt` (۳۱ بستهٔ قفل‌شده، `--no-deps`): **No known vulnerabilities found** | بخش ۴ همین سند |
+| SEC-01 | نبود روال چرخش راز | بخش‌های ۲ و ۳ همین سند (روال + لاگ) | — |
+
+### ساختار دفاعیِ پس از فاز ۳ (سه لایه)
+
+1. **ورودی**: `_input_url` (نحو + `is_private_host` با پوشش قالب‌های جایگزین IP) → `public_url_strict` (دو رزولوشن DNS).
+2. **پردازش**: `strip_injection` (EN/FA/AR) روی همهٔ ورودی‌های مدل (پرامپت اصلی + قطعات خلاصه‌سازی)؛ `INJ_RESIDUE` روی خروجی مدل؛ SQL فقط پارامتری؛ نام ستون پویا فقط از whitelist؛ بدون shell/eval/exec.
+3. **خروج/لاگ**: `sanitize_html` + `RecordFactory` سراسری برای ماسک راز در همهٔ لاگ‌ها و tracebackها؛ rate limit سراسری per-user روی هر سه دروازهٔ به‌روزرسانی تلگرام.
+
+---
+
+## ۲. روال چرخش رازها (SEC-01)
+
+قاعدهٔ عمومی: **کلید قدیمی تا پایانِ دورهٔ تأییدِ سلامت نگه داشته می‌شود**؛ چرخش = صدور کلید جدید → جایگزینی در همهٔ محل‌ها → راه‌اندازی مجدد → رصدِ خطاهای auth برای یک چرخهٔ کامل → سپس ابطال کلید قدیم (اگر سرویس اجازه می‌دهد). هر ردیفِ اجرا باید در جدول لاگ (بخش ۳) ثبت شود.
+
+| راز | محل نگهداری | نحوهٔ چرخش |
+|---|---|---|
+| `BOT_TOKEN` (توکن ربات تلگرام) | env روی VPS (واحد deploy) | رباتِ BotFather → `/revoke` → توکن جدید را در env واحدهای اجرا و (در صورت استفاده) GitHub Secrets جایگزین کن → ری‌استارت |
+| `CF_D1_TOKEN` / `CF_API_TOKEN` (کلودفلر) | env روی VPS | Cloudflare Dashboard → My Profile → API Tokens → Rotate/Create → دسترسی حداقلی (D1: read+edit روی پایگاه‌دادهٔ مشخص؛ KV: read+write روی namespace مشخص) |
+| کلید مدل‌های AI (Gemini و…) | دیتابیس (`ai_models.api_key`) + کلیدهای کاربران در UI «مدل‌های من» | صاحب کلید: پنل سازنده (مثلاً Google AI Studio → Create API key) → کلید جدید را در UI ربات وارد کن → کلید قدیم را در پنل سازنده Delete کن |
+| `VPS_HOST` / `VPS_SSH_PRIVATE_KEY` / `VPS_HOST_FINGERPRINT` (فقط GitHub Actions) | GitHub → Settings → Secrets and variables → Actions | کلید SSH جدید روی سرور بساز (`ssh-keygen -t ed25519`)، کلید عمومی را به `authorized_keys` اضافه کن، سه secret را به‌روزرسانی کن؛ fingerprint را از `ssh-keygen -lf` همان کلید عمومی بردار |
+| PAT دسترسی گیت (در صورت استفادهٔ محلی) | فقط حافظهٔ ابزارها؛ هرگز در مخزن/لاگ | GitHub → Settings → Developer settings → tokens → Regenerate |
+
+- پس از هر چرخش: `/health` ربات و یک «تست انتشار» کوچک اجرا کن؛ خطای auth در لاگ (`token=•••` ماسک‌شده دیده می‌شود؛ خودِ مقدار هرگز).
+- لاگ‌ها همیشه ماسک‌اند (`redact` + RecordFactory)؛ «چرخش» تنها راهِ بی‌اثرکردنِ نشت احتمالیِ گذشته است — به همین دلیل تصمیم ۱۵ (چرخش کلید Gemini پس از فاز ۳) الزامی است.
+
+---
+
+## ۳. لاگ چرخش کلیدها
+
+| تاریخ | راز | اقدام | تأیید سلامت پس از چرخش |
+|---|---|---|---|
+| — | Gemini API key (تصمیم ۱۵) | **در انتظار اقدام کاربر** (پس از merge فاز ۳) | — |
+
+---
+
+## ۴. ممیزی وابستگی‌ها (SEC-06)
+
+- ابزار: `pip-audit 2.10.1` (سرویس OSV) · تاریخ: ۲۰۲۶-۱۰-۱۵
+- مدخل: `requirements.txt` — ۳۱ بستهٔ production با قفل دقیق نسخه (Python 3.13)
+- نتیجه: **No known vulnerabilities found** (exit 0)
+- تکرار: `pip install pip-audit` در venv موقت، سپس `pip-audit -r requirements.txt --no-deps`
+- سیاست: ارتقای نسخه فقط با دانش CVE/سازگاری (بند ۳ همان `requirements.txt`)؛ پیش از هر release این ممیزی دوباره اجرا شود.
+
+---
+
+## حدود این سند
+
+- چرخش کلیدها (بخش ۳) اقدامِ انسانی در حساب‌های سرویس‌دهنده است؛ این مخزن فقط روال و لاگ را نگه می‌دارد.
+- سخت‌کردن VPS و nginx (هدرهای SEC-05) در `docs/DEPLOY_RUNBOOK.md` بخش‌های ۸ و ۹ مستند است و به دسترسی سرور نیاز دارد.

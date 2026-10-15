@@ -6,7 +6,7 @@ FIX v4: channel_posts_today مقادیر posted_at را به datetime آگاه �
 import json, time
 from datetime import datetime, timedelta
 from newsbot import config
-from newsbot.db import q, db, _lock
+from newsbot.db import q, db, _lock, _trx
 from newsbot.logutils import log
 from newsbot.timeutils import now_utc, now_iso, parse_dt, today_str
 
@@ -80,8 +80,35 @@ def admin_offset(uid):
     except Exception: return config.DEFAULT_UTC_OFFSET
 
 def usage_today(uid):
-    r = q("SELECT posts,tests FROM usage WHERE admin_id=? AND day=?", (uid, today_str(admin_offset(uid))), one=True)
-    return {"posts": r["posts"], "tests": r["tests"]} if r else {"posts": 0, "tests": 0}
+    r = q("SELECT posts,tests,ai FROM usage WHERE admin_id=? AND day=?", (uid, today_str(admin_offset(uid))), one=True)
+    if not r: return {"posts": 0, "tests": 0, "ai": 0}
+    try: ai = int(r["ai"] or 0)
+    except (IndexError, KeyError, TypeError): ai = 0
+    return {"posts": r["posts"], "tests": r["tests"], "ai": ai}
+
+def ai_cap_for(uid):
+    """BIZ-01: سقف روزانهٔ مصرف هوش مصنوعی — ابرادمین نامحدود؛ بدون پلن فعال = سقف رایگان."""
+    if is_super(uid): return None
+    lim = admin_limits(uid)
+    if not lim["active"]: return config.AI_DAILY_FREE
+    p = lim["plan"]
+    return config.AI_DAILY_FREE if (not p or p["is_free"]) else config.AI_DAILY_PAID
+
+def ai_used_today(uid):
+    r = q("SELECT ai FROM usage WHERE admin_id=? AND day=?", (uid, today_str(admin_offset(uid))), one=True)
+    try: return int(r["ai"] or 0) if r else 0
+    except (IndexError, KeyError, TypeError): return 0
+
+def ai_claim(uid):
+    """ادعای اتمیک یک واحد از سقف روزانهٔ AI (BIZ-01). False ⇒ سقف تمام شده است.
+    مثل reserve_publication با یک UPDATE شرطی CAS درون تراکنش؛ دو فراخوانی هم‌زمان هرگز از دروازه رد نمی‌شوند."""
+    cap = ai_cap_for(uid)
+    if cap is None: return True
+    day = today_str(admin_offset(uid))
+    def _go(conn):
+        cur = conn.execute("INSERT INTO usage(admin_id,day,posts,tests,ai) VALUES(?,?,0,0,1) ON CONFLICT(admin_id,day) DO UPDATE SET ai=ai+1 WHERE ai < ?", (uid, day, cap))
+        return cur.rowcount > 0
+    return bool(_trx(_go))
 
 def usage_reset(uid, field="tests"):
     q(f"UPDATE usage SET {field}=0 WHERE admin_id=? AND day=?", (uid, today_str(admin_offset(uid))), commit=True)

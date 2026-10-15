@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS plans(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT
 CREATE TABLE IF NOT EXISTS discounts(code TEXT PRIMARY KEY, percent INTEGER, expires TEXT, max_uses INTEGER DEFAULT 0, used INTEGER DEFAULT 0, active INTEGER DEFAULT 1, created_at TEXT);
 CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, chat_id INTEGER, title TEXT, username TEXT, verified_by INTEGER, created_at TEXT, settings TEXT, original_admin_id INTEGER);
 CREATE TABLE IF NOT EXISTS sources(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, channel_id INTEGER, url TEXT, feed_url TEXT, title TEXT DEFAULT '', active INTEGER DEFAULT 1, bot_active INTEGER DEFAULT 1, api_url TEXT, api_key TEXT, api_note TEXT DEFAULT '', etag TEXT, last_modified TEXT, last_fetch TEXT, fail_count INTEGER DEFAULT 0, found_total INTEGER DEFAULT 0, last_error TEXT);
-CREATE TABLE IF NOT EXISTS usage(admin_id INTEGER, day TEXT, posts INTEGER DEFAULT 0, tests INTEGER DEFAULT 0, PRIMARY KEY(admin_id, day));
+CREATE TABLE IF NOT EXISTS usage(admin_id INTEGER, day TEXT, posts INTEGER DEFAULT 0, tests INTEGER DEFAULT 0, ai INTEGER DEFAULT 0, PRIMARY KEY(admin_id, day));
 CREATE TABLE IF NOT EXISTS articles(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, channel_id INTEGER, hash TEXT, url TEXT, title TEXT, source_id INTEGER, published_at TEXT, created_at TEXT, status TEXT, reason TEXT, score REAL, category TEXT, post_html TEXT, full_html TEXT, media TEXT, links TEXT, model TEXT, UNIQUE(channel_id, hash));
 CREATE TABLE IF NOT EXISTS posted(channel_id INTEGER, hash TEXT, posted_at TEXT, PRIMARY KEY(channel_id, hash));
 CREATE TABLE IF NOT EXISTS ch_tokens(token TEXT PRIMARY KEY, channel_id INTEGER, issued_to INTEGER, issued_at TEXT, expires_at TEXT, used_at TEXT);
@@ -79,7 +79,8 @@ MIGRATIONS = [("users", "next_plan_id", "INTEGER"), ("users", "next_plan_days", 
               ("plans", "daily_tests", "INTEGER DEFAULT 2"), ("plans", "price_num", "REAL DEFAULT 0"), ("sources", "found_total", "INTEGER DEFAULT 0"), ("sources", "title", "TEXT DEFAULT ''"),
               ("sources", "fail_count", "INTEGER DEFAULT 0"), ("sources", "next_try_after", "TEXT DEFAULT ''"),
               ("pay_requests", "claimed_at", "TEXT"),   # NEW v4: بازیابی پرداخت‌های گیرکرده در 'processing'
-              ("pay_requests", "applied_at", "TEXT")]   # phase 4: لحظهٔ اعمال پلن/کیف‌پول — idempotency بازیابی (PAY-3)
+              ("pay_requests", "applied_at", "TEXT"),   # phase 4: لحظهٔ اعمال پلن/کیف‌پول — idempotency بازیابی (PAY-3)
+              ("usage", "ai", "INTEGER DEFAULT 0")]     # phase 5: سقف روزانهٔ AI (BIZ-01)
 
 def _table_cols(conn, tbl):
     """نام ستون‌های جدول — با pragma_table_info (سازگار با sqlite و D1) و fallback به PRAGMA."""

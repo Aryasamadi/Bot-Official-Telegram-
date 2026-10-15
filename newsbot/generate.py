@@ -10,6 +10,7 @@ from newsbot.timeutils import now_iso, url_hash
 from newsbot.ai_models import ai_chat, budget_reset, parse_json, _validate_generation
 from newsbot.text_format import sanitize_html, strip_tags, salvage_post, clean_ai_text, finish_ok, strip_injection
 from newsbot.opctx import _current_operation
+from newsbot.core_users import ai_claim
 
 
 def build_prompt(s, art, want_full):
@@ -123,6 +124,10 @@ async def generate(s, art, on_queue=None, owner_id=None):
                     log.info("AI cache hit for %s (model %s kept)", redact(art.get("url"))[:60], _c.get("model") or "?")
                     return _c["j"], _c.get("model"), None
             except Exception: log.warning("corrupt ai_cache row for key %s", ckey[:12], exc_info=True)
+    # BIZ-01: سقف روزانهٔ AI — کش رایگان است؛ فقط فراخوانی‌های واقعیِ مدل یک واحد از سقف می‌کشند
+    if owner_id is not None and not ai_claim(owner_id):
+        log.warning("AI daily cap reached user=%s", owner_id)
+        return None, None, "ai_limit"
     # کل محتوا واقعاً به مدل می‌رسد: ابتدا chunking/summarize
     prep, prep_err = await _summarize_article(s, art, on_queue=on_queue, owner_id=owner_id)
     if prep_err: return None, None, prep_err

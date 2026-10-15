@@ -117,6 +117,7 @@ def preflight():
                             ("DEEPLINK_TTL_DAYS", config.DEEPLINK_TTL_DAYS, 0, 3650), ("AI_MAX_CALLS_PER_ARTICLE", config.AI_MAX_CALLS_PER_ARTICLE, 1, 100),
                             ("AI_ARTICLE_TIME_BUDGET", config.AI_ARTICLE_TIME_BUDGET, 30, 1800), ("AI_MAX_MODEL_ATTEMPTS", config.AI_MAX_MODEL_ATTEMPTS, 1, 10),
                             ("AI_CONTENT_RETRY_MODELS", config.AI_CONTENT_RETRY_MODELS, 0, 5), ("AI_CACHE_TTL_DAYS", config.AI_CACHE_TTL_DAYS, 0, 365),
+                            ("AI_DAILY_FREE", config.AI_DAILY_FREE, 1, 100000), ("AI_DAILY_PAID", config.AI_DAILY_PAID, 1, 1000000),
                             ("RETRY_AFTER_MAX", config.RETRY_AFTER_MAX, 5, 600), ("ABUSE_RATE_SEC", config.ABUSE_RATE_SEC, 0.0, 60.0),
                             ("RECOVER_EVERY_MIN", config.RECOVER_EVERY_MIN, 1, 1440), ("STALE_UPDATE_MAX_MIN", config.STALE_UPDATE_MAX_MIN, 5, 1440),
                             ("MAX_QUEUE_SIZE", config.MAX_QUEUE_SIZE, 1, 100000), ("PAY_STUCK_MIN", config.PAY_STUCK_MIN, 1, 1440)):

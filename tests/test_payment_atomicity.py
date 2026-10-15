@@ -132,3 +132,19 @@ def test_free_claim_cas_only_once():
     exp1, _ = assign_plan(uid, pid)
     u = q("SELECT plan_expires FROM users WHERE id=?", (uid,), one=True)
     assert u["plan_expires"] == exp1.isoformat()
+
+
+# ── DB-15: توکن انتقال / بازگردانی مالکیت اتمیک ──
+def test_transfer_token_single_active_and_revert_clears():
+    from newsbot.core_channels import issue_transfer_token, revert_channel_owner, check_transfer_token
+    q("INSERT OR IGNORE INTO channels(id,chat_id,title,username,admin_id,verified_by,created_at,settings) VALUES(?,?,?,?,?,?,?,?)",
+      (-9001, -1009001, "CH", "ch9001", 5001, 5001, now_iso(), "{}"), commit=True)
+    t1 = issue_transfer_token(-9001, 5001)
+    t2 = issue_transfer_token(-9001, 5001)     # باطل‌سازی t1 در همان تراکنشِ صدور t2
+    assert t1 and t2 and t1 != t2
+    assert check_transfer_token(-9001, t1) is None      # توکن قدیمی فعال نیست
+    assert check_transfer_token(-9001, t2) is not None
+    old = revert_channel_owner(-9001, 6001)
+    assert old == 5001
+    assert check_transfer_token(-9001, t2) is None      # همهٔ توکن‌ها با مالکیت پاک شدند
+    assert q("SELECT admin_id FROM channels WHERE id=?", (-9001,), one=True)["admin_id"] == 6001

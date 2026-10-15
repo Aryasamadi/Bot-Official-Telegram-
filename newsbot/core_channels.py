@@ -20,17 +20,20 @@ TRANSFER_TTL_MIN = 5
 def _new_transfer_token(): return f"{random.SystemRandom().randint(0, 10**10 - 1):010d}"
 
 def issue_transfer_token(cid, issued_to):
-    """توکن تازه صادر می‌کند و توکن‌های مصرف‌نشده‌ی قبلیِ همان کانال را باطل می‌کند (همیشه یکی فعال است)."""
+    """توکن تازه صادر می‌کند و توکن‌های مصرف‌نشده‌ی قبلیِ همان کانال را باطل می‌کند (همیشه یکی فعال است).
+    PHASE 4 (DB-15): باطل‌سازی و درج در یک تراکنش — کرش دیگر کانال را بدون توکن فعال رها نمی‌کند."""
     now = now_utc()
-    q("DELETE FROM ch_tokens WHERE channel_id=? AND used_at IS NULL", (cid,), commit=True)
     for _ in range(6):
         tok = _new_transfer_token()
+        def _go(conn):
+            conn.execute("DELETE FROM ch_tokens WHERE channel_id=? AND used_at IS NULL", (cid,))
+            conn.execute("INSERT INTO ch_tokens(token,channel_id,issued_to,issued_at,expires_at) VALUES(?,?,?,?,?)",
+                         (tok, cid, issued_to, now.isoformat(), (now + timedelta(minutes=TRANSFER_TTL_MIN)).isoformat()))
         try:
-            q("INSERT INTO ch_tokens(token,channel_id,issued_to,issued_at,expires_at) VALUES(?,?,?,?,?)",
-              (tok, cid, issued_to, now.isoformat(), (now + timedelta(minutes=TRANSFER_TTL_MIN)).isoformat()), commit=True)
+            _trx(_go)
             return tok
         except sqlite3.Error:
-            continue
+            continue    # برخورد PK توکن تصادفی ⇒ تلاش مجدد با توکن تازه (رول‌بک کامل هر تلاش)
     return None
 
 def check_transfer_token(cid, token):
@@ -98,13 +101,16 @@ def transfer_channel(cid, new_uid, lang="fa"):
     return _trx(_go)   # اتمیک: یا کل انتقال انجام می‌شود یا هیچ‌کدام (قبلاً چهار commit جدا بود)
 
 def revert_channel_owner(cid, uid):
-    """بازگرداندن مالکیت به ثبت‌کنندهٔ نخست، بعد از اینکه مالک فعلی در تلگرام ادمینِ کانال نبود."""
+    """بازگرداندن مالکیت به ثبت‌کنندهٔ نخست، بعد از اینکه مالک فعلی در تلگرام ادمینِ کانال نبود.
+    PHASE 4 (DB-15): باطل‌سازی توکن‌ها و تحویل مالکیت در یک تراکنش (مثل transfer_channel)."""
     if publication_pending(cid): raise RuntimeError("channel_busy")
     ch = get_channel(cid)
     if not ch: return None
-    q("DELETE FROM ch_tokens WHERE channel_id=?", (cid,), commit=True)
-    q("UPDATE channels SET admin_id=?, verified_by=? WHERE id=?", (uid, uid, cid), commit=True)
-    return ch["admin_id"]
+    def _go(conn):
+        conn.execute("DELETE FROM ch_tokens WHERE channel_id=?", (cid,))
+        conn.execute("UPDATE channels SET admin_id=?, verified_by=? WHERE id=?", (uid, uid, cid))
+        return ch["admin_id"]
+    return _trx(_go)
 
 def reset_channel_queue(cid):
     """صف انتشار (تأییدنشده‌ها) پاک، اتوماسیون خاموش و وضعیت چرخه صفر می‌شود. منابع و آرشیو منتشرشده دست‌نخورده می‌مانند."""

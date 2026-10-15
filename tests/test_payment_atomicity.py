@@ -216,3 +216,25 @@ def test_referral_cap_line_present_in_source():
     i18n = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_i18n.py").read_text(encoding="utf-8")
     assert "ref_cap_line" in src and "REFERRAL_MAX_PER_USER" in src
     assert '"ref_cap_line"' in i18n
+
+
+# ── PAY-2: تطبیق اجباری مبلغ — منبع واحد، بدون بازنگری در تصمیم ──
+def test_approve_uses_persisted_final_price_not_requote():
+    """decide_pay/pay_approve_atomic مبلغ را از ردیف پرداخت می‌خوانند؛ quote دوباره محاسبه نمی‌شود."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_views_super.py").read_text(encoding="utf-8")
+    # تصمیم تأیید از pay_approve_atomic استفاده می‌کند و final_price از ردیف r می‌آید
+    assert "pay_approve_atomic" in src and 'r["final_price"]' in src
+    assert "upgrade_quote" not in src.split("async def decide_pay")[1]   # در مسیر تصمیم، quote دوباره زده نمی‌شود
+    # رسید: مبلغ در لحظهٔ ثبت persist می‌شود (st["final"]) و بعداً overwrite نمی‌شود
+    inp = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_inputs.py").read_text(encoding="utf-8")
+    assert 'st.get("final")' in inp and "pay_pending_for" in inp
+
+def test_double_receipt_blocked_by_pending_guard():
+    """دو رسید برای یک پلن: دومی توسط pay_pending_for رد می‌شود (guard ثبت رسید)."""
+    uid = 410013; _mk_user(uid)
+    pid = _paid_plan(28.0)
+    from newsbot.core_payments import pay_pending_for
+    assert pay_pending_for(uid, pid) is None
+    pay_create(uid, pid, note="first")
+    assert pay_pending_for(uid, pid) is not None            # guard دومی را می‌بندد

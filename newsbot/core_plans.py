@@ -33,27 +33,43 @@ def update_plan(pid, **f):
 
 def delete_plan(pid): q("DELETE FROM plans WHERE id=?", (pid,), commit=True)
 
+def _assign_state(uid, pid, days=None):
+    """محاسبهٔ حالتِ تصمیمِ واگذاری پلن (بدون نوشتن) تا نوشتن‌ها فقط SQL روی conn باشند."""
+    p = get_plan(pid)
+    if not p: return None
+    u = get_user(uid)
+    if not u: return None
+    d = int(days if days is not None else p["days"]); now = now_utc()
+    cur = parse_dt(u["plan_expires"]) if u["plan_expires"] else None
+    active = bool(cur and cur > now and u["plan_id"])
+    if active and not p["is_free"] and (get_plan(u["plan_id"]) or {"is_free": 0})["is_free"]: active = False
+    return {"p": p, "u": u, "d": d, "now": now, "cur": cur, "active": active}
+
+def _assign_writes(conn, uid, pid, st):
+    """نوشتن‌های واگذاری پلن روی conn داده‌شده (درون تراکنش یا standalone).
+    خروجی: (تاریخ انقضا/شروع, queued) — همان قرارداد assign_plan."""
+    p, u, d, now, cur, active = st["p"], st["u"], st["d"], st["now"], st["cur"], st["active"]
+    if active and u["plan_id"] != pid:
+        # تغییر پلن: تاریخ پایان دست‌نخورده می‌ماند و فقط پلن و سهمیه‌ها عوض می‌شوند
+        # (مبلغ طبق upgrade_quote فقط برای روزهای باقی‌مانده محاسبه شده است).
+        conn.execute("UPDATE users SET plan_id=?, next_plan_id=NULL, next_plan_days=NULL, remind_key=NULL, role=CASE WHEN role='user' THEN 'admin' ELSE role END WHERE id=?",
+                     (pid, uid))
+        return cur, False
+    exp = (cur if active else now) + timedelta(days=d)
+    conn.execute("UPDATE users SET plan_id=?, plan_expires=?, remind_key=NULL, role=CASE WHEN role='user' THEN 'admin' ELSE role END, free_used=CASE WHEN ?=1 THEN 1 ELSE free_used END WHERE id=?",
+                 (pid, exp.isoformat(), p["is_free"], uid))
+    return exp, False
+
 def assign_plan(uid, pid, days=None):
     """
     زنجیره‌ای: بدون پلن فعال → همین حالا · همان پلن فعال → روزها اضافه می‌شود · پلن متفاوت فعال → «پلن بعدی» (ارتقا از رایگان فوری است).
     خروجی: (تاریخ انقضا/شروع, queued)
     """
-    p = get_plan(pid)
-    if not p: return None, False
-    u = get_user(uid); d = int(days if days is not None else p["days"]); now = now_utc()
-    cur = parse_dt(u["plan_expires"]) if u else None; active = bool(cur and cur > now and u["plan_id"])
-    if active and not p["is_free"] and (get_plan(u["plan_id"]) or {"is_free": 0})["is_free"]: active = False
-    if active and u["plan_id"] != pid:
-        # تغییر پلن: تاریخ پایان دست‌نخورده می‌ماند و فقط پلن و سهمیه‌ها عوض می‌شوند
-        # (مبلغ طبق upgrade_quote فقط برای روزهای باقی‌مانده محاسبه شده است).
-        q("UPDATE users SET plan_id=?, next_plan_id=NULL, next_plan_days=NULL, remind_key=NULL, role=CASE WHEN role='user' THEN 'admin' ELSE role END WHERE id=?",
-          (pid, uid), commit=True)
-        admin_limits_invalidate(uid)
-        return cur, False
-    exp = (cur if active else now) + timedelta(days=d)
-    q("UPDATE users SET plan_id=?, plan_expires=?, remind_key=NULL, role=CASE WHEN role='user' THEN 'admin' ELSE role END, free_used=CASE WHEN ?=1 THEN 1 ELSE free_used END WHERE id=?", (pid, exp.isoformat(), p["is_free"], uid), commit=True)
+    st = _assign_state(uid, pid, days)
+    if not st: return None, False
+    out = _trx(lambda conn: _assign_writes(conn, uid, pid, st))
     admin_limits_invalidate(uid)   # وگرنه تا ۶۰ ثانیه سهمیهٔ کهنه اعمال می‌شود
-    return exp, False
+    return out
 
 def proration_remaining_days(uid):
     """روزهای باقی‌ماندهٔ واقعیِ پلن فعلی (اعداد کسری برای کمتر از ۲۴ ساعت)؛ اگر active نباشد ۰ است."""
@@ -73,8 +89,22 @@ def proration_remaining_value(uid, cur_price_num, cur_days):
     return round(cur_price_num * (rem / cur_days), 2)
 
 def revoke_plan(uid):
-    q("UPDATE users SET plan_id=NULL, plan_expires=NULL, next_plan_id=NULL, next_plan_days=NULL, remind_key=NULL WHERE id=?", (uid,), commit=True)
+    q("UPDATE users SET plan_id=NULL, plan_expires=NULL, next_plan_id=NULL, next_plan_days=NULL, remind_key=NULL, role=CASE WHEN role='admin' THEN 'user' ELSE role END WHERE id=?", (uid,), commit=True)
     admin_limits_invalidate(uid)
+
+def free_claim(uid):
+    """CAS: فقط اولین ضربهٔ دکمهٔ رایگان برنده است (رفع TOCTOU دو ضربهٔ هم‌زمان؛ UISEC-10/SEC-04)."""
+    with _lock:
+        cur = db().execute("UPDATE users SET free_used=1 WHERE id=? AND COALESCE(free_used,0)=0", (uid,))
+        db().commit()
+        return cur.rowcount == 1
+
+def free_release(uid):
+    """برگشت claim پلن رایگان وقتی واگذاری شکست بخورد (جبران side-effect)."""
+    with _lock:
+        cur = db().execute("UPDATE users SET free_used=0 WHERE id=? AND free_used=1", (uid,))
+        db().commit()
+        return cur.rowcount == 1
 
 # ── قیمت عددی و کیف پول ──
 def _price_num(p):
@@ -120,15 +150,18 @@ def upgrade_quote(uid, p, cur, disc_percent=None):
     if disc_percent: out["payable"] = round(out["payable"] * (100 - disc_percent) / 100, 2)
     return out
 
+def _apply_plan_change_sql(conn, uid, pid, pc):
+    """نوشتن‌های کیف پول/سابقهٔ تغییر پلن روی conn داده‌شده (درون تراکنش یا standalone)."""
+    used = float(pc.get("used_balance") or 0); surplus = float(pc.get("surplus") or 0)
+    if used or surplus:
+        conn.execute("UPDATE users SET credit=MAX(0, COALESCE(credit,0) - ? + ?) WHERE id=?", (used, surplus, uid))
+        conn.execute("INSERT INTO plan_changes(user_id, plan_id, from_plan, kind, credit_used, surplus, paid, rem_days, ts) VALUES(?,?,?,?,?,?,?,?,?)",
+                     (uid, pid, pc.get("from_plan"), pc.get("kind") or "fresh", used, surplus, pc.get("payable"), pc.get("rem_days"), now_iso()))
+
 def apply_plan_change(uid, pid, pc):
     """کیف پول را مصرف می‌کند، مابه‌التفاوت کاهش پلن را برمی‌گرداند و سابقه‌ی تغییر پلن را ثبت می‌کند."""
-    used = float(pc.get("used_balance") or 0); surplus = float(pc.get("surplus") or 0)
-    def _go(conn):      # یک تراکنش: یا هم موجودی کم می‌شود و هم سابقه ثبت، یا هیچ‌کدام (قبلاً دو commit جدا بود)
-        if used or surplus:
-            conn.execute("UPDATE users SET credit=MAX(0, COALESCE(credit,0) - ? + ?) WHERE id=?", (used, surplus, uid))
-            conn.execute("INSERT INTO plan_changes(user_id, plan_id, from_plan, kind, credit_used, surplus, paid, rem_days, ts) VALUES(?,?,?,?,?,?,?,?,?)",
-                         (uid, pid, pc.get("from_plan"), pc.get("kind") or "fresh", used, surplus, pc.get("payable"), pc.get("rem_days"), now_iso()))
-    _trx(_go)
+    # یک تراکنش: یا هم موجودی کم می‌شود و هم سابقه ثبت، یا هیچ‌کدام (قبلاً دو commit جدا بود)
+    _trx(lambda conn: _apply_plan_change_sql(conn, uid, pid, pc))
 
 # ── FIX v4: بازیابی پرداخت گیرکرده ──
 def recover_stuck_payments():

@@ -260,7 +260,10 @@ async def dispatch(update, context, data):
             if not pl: await popup(update, context, tr(lang, "notfound")); return await view_s_plans(update, context)
             update_plan(int(c), active=0 if pl["active"] else 1); await popup(update, context, tr(lang, "saved")); return await view_s_plan(update, context, int(c))
         if b == "plan_free": q("UPDATE plans SET is_free=0", commit=True); update_plan(int(c), is_free=1); await popup(update, context, tr(lang, "s_plan_free_done")); return await view_s_plan(update, context, int(c))
-        if b == "plan_d": delete_plan(int(c)); await popup(update, context, tr(lang, "s_plan_deleted")); return await view_s_plans(update, context)
+        if b == "plan_d":
+            ok = delete_plan(int(c))
+            await popup(update, context, tr(lang, "s_plan_deleted" if ok else "s_plan_in_use"))
+            return await view_s_plans(update, context)
         if b == "discs": return await view_s_discs(update, context)
         if b == "disc_new": return await wiz_start(update, context, "disc_add", "s:discs")
         if b == "disc": return await view_s_disc(update, context, c)

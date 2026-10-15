@@ -31,7 +31,16 @@ def create_plan(**f):
 def update_plan(pid, **f):
     for k, v in _safe_fields("plans", f).items(): q(f"UPDATE plans SET {k}=? WHERE id=?", (v, pid), commit=True)
 
-def delete_plan(pid): q("DELETE FROM plans WHERE id=?", (pid,), commit=True)
+def delete_plan(pid):
+    """DB-18: پلنِ در استفاده حذف نمی‌شود — اول deactivate؛ حذف فیزیکی فقط وقتی هیچ ارجاعی نماند.
+    خروجی: True=حذف شد · False=غیرفعال شد (کاربران فعال/در انتظار داشت)."""
+    in_users = q("SELECT COUNT(*) c FROM users WHERE plan_id=? OR next_plan_id=?", (pid, pid), one=True)["c"]
+    pending = q("SELECT COUNT(*) c FROM pay_requests WHERE plan_id=? AND status IN ('pending','processing')", (pid,), one=True)["c"]
+    if in_users or pending:
+        q("UPDATE plans SET active=0 WHERE id=?", (pid,), commit=True)
+        return False
+    q("DELETE FROM plans WHERE id=?", (pid,), commit=True)
+    return True
 
 def _assign_state(uid, pid, days=None):
     """محاسبهٔ حالتِ تصمیمِ واگذاری پلن (بدون نوشتن) تا نوشتن‌ها فقط SQL روی conn باشند."""
@@ -105,6 +114,25 @@ def free_release(uid):
         cur = db().execute("UPDATE users SET free_used=0 WHERE id=? AND free_used=1", (uid,))
         db().commit()
         return cur.rowcount == 1
+
+def rollback_expired_benefits():
+    """BIZ-03/BIZ-02: نقشِ ادمینِ اعطاشده توسط پلن، پس از انقضا/لغو پایین می‌آید.
+    super (بر اساس SUPER_ADMIN_IDS و role='super') هرگز دست نمی‌خورد.
+    خروجی: تعداد کاربرانی که نقششان user شد."""
+    from newsbot.core_users import is_super, admin_limits_invalidate
+    now = now_utc(); n = 0
+    for u in q("SELECT id, plan_id, plan_expires FROM users WHERE role='admin'"):
+        if is_super(u["id"]): continue
+        exp = parse_dt(u["plan_expires"]) if u["plan_expires"] else None
+        if not u["plan_id"] or not exp or exp <= now:
+            with _lock:
+                cur = db().execute("UPDATE users SET role='user' WHERE id=? AND role='admin'", (u["id"],))
+                db().commit()
+                if cur.rowcount == 1:
+                    n += 1
+                    admin_limits_invalidate(u["id"])
+    if n: log_event("WARN", f"BIZ-03: role rolled back to user for {n} expired plan(s)")
+    return n
 
 # ── قیمت عددی و کیف پول ──
 def _price_num(p):

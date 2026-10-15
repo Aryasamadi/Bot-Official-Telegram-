@@ -18,7 +18,7 @@ from newsbot.core_users import admin_limits, admin_limits_cached, remaining, usa
 from newsbot.core_channels import get_channel, get_settings, update_settings, in_quiet, mandatory_configured, mandatory_membership
 from newsbot.core_sources import list_sources, source_of_article
 from newsbot.core_articles import (article_insert, article_update, get_article, articles_by_status,
-                                   ready_count, posted_before, dedup_mark, title_fp)
+                                   ready_count, dedup_mark, title_fp, soft_window_candidate)
 from newsbot.discover import discover_source, hostname
 from newsbot.extract import extract_article
 from newsbot.adfilter import heuristic_ad_check
@@ -185,9 +185,10 @@ async def _cycle(bot, uid, cid, test_mode, progress):
         # پنجره‌ی نرم: هیچ‌چیز در بازه‌ی کانال نبود ⇒ تازه‌ترین خبرهای همین منابع را برمی‌داریم تا چرخه دست‌خالی نماند
         retry = 0
         for it, h in all_items:
-            row = q("SELECT id,status FROM articles WHERE channel_id=? AND hash=?", (cid, h), one=True)
-            if row and row["status"] in ("skipped", "rejected", "failed") and not posted_before(ch["chat_id"], h):
-                article_update(row["id"], status="discovered", reason=""); candidates.append({"aid": row["id"], "url": it["url"], "title": it["title"], "published": it.get("published"), "html": it.get("html") or "", "media": it.get("media"), "soft": True}); retry += 1
+            # PUB-01: soft_window_candidate مقالاتِ delivery_unknown را رد می‌کند (ری‌کیو آن‌ها پست تکراری می‌ساخت)
+            aid_sw = soft_window_candidate(cid, ch["chat_id"], h)
+            if aid_sw:
+                article_update(aid_sw, status="discovered", reason=""); candidates.append({"aid": aid_sw, "url": it["url"], "title": it["title"], "published": it.get("published"), "html": it.get("html") or "", "media": it.get("media"), "soft": True}); retry += 1
             if retry >= 8: break
         if retry: D.add("soft_window", n=retry)
     res["found"] = len(candidates); await p(40, P["found"].format(n=len(candidates)))
@@ -215,7 +216,9 @@ async def _cycle(bot, uid, cid, test_mode, progress):
                 if ok:
                     res["published"] += 1; res["links"].append(out); res["pub"].append(((get_article(aid_b)["title"] or "")[:60], article_src_name(aid_b), out))
                     rem_now = None if rem_now is None else rem_now - 1; drained += 1
-                elif out != "duplicate":
+                elif out == "duplicate" or out == "delivery_unknown" or (isinstance(out, str) and out.startswith("send_failed")):
+                    continue   # GAP-08: شکست/ابهامِ یک مقاله صفِ drain را نمی‌شکند؛ مقالهٔ بعدی تلاش می‌شود
+                else:
                     break
         target -= drained
     while i < len(candidates) and not stop:

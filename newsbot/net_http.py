@@ -166,13 +166,20 @@ async def kv_get(key):
         r = await http().get(CF_BASE + key, headers={"Authorization": f"Bearer {config.CF_API_TOKEN}"}); return r.text if r.status_code == 200 else None
     except Exception as e: log_event("ERROR", f"KV get: {e}"); return None
 
-async def store_deeplink(admin_id, payload):
+def gen_deeplink_key():
+    """PUB-04: تولید کلید بدون ذخیره — ردیف فقط پس از موفقیت انتشار نوشته می‌شود."""
+    return secrets.token_urlsafe(6)
+
+async def save_deeplink(key, admin_id, payload):
     """payload: {short, full, title, url, show_source, media:{url,kind}|None, ts}
     مرجع محلی `deeplinks` است؛ KV فقط آینه‌ی اختیاری برای بازیابی پس از تعویض VPS."""
-    key = secrets.token_urlsafe(6); data = json.dumps(payload, ensure_ascii=False)
+    data = json.dumps(payload, ensure_ascii=False)
     if config.CF_ENABLED: await kv_put(key, data)
     q("INSERT INTO deeplinks(key,admin_id,created_at,local_json) VALUES(?,?,?,?)", (key, admin_id, now_iso(), data), commit=True)
     return key
+
+async def store_deeplink(admin_id, payload):
+    return await save_deeplink(gen_deeplink_key(), admin_id, payload)
 
 async def load_deeplink(key):
     r = q("SELECT value FROM kv_cache WHERE key=?", (key,), one=True)   # ردیف‌های قدیمی همچنان خوانده می‌شوند

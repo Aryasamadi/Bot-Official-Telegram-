@@ -23,8 +23,8 @@ def seed_plans():
     """DB-19: seed اتمیک و idempotent — برخلاف check-then-act قبلی، دو پروسهٔ هم‌زمان پلن تکراری
     نمی‌سازند و دیتابیسِ نیمه‌seed (فقط یک پلن) هم ترمیم می‌شود."""
     for p in _BASE_PLANS:
-        q("INSERT INTO plans(name,name_en,days,daily_posts,max_sources,max_channels,daily_tests,price,price_en,description,description_en,is_free,sort,price_num) "
-          "SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,0 WHERE NOT EXISTS(SELECT 1 FROM plans WHERE name=? AND name_en=?)",
+        q("INSERT INTO plans(name,name_en,days,daily_posts,max_sources,max_channels,daily_tests,price,price_en,description,description_en,is_free,sort,price_num,price_num_fa) "
+          "SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,0,0 WHERE NOT EXISTS(SELECT 1 FROM plans WHERE name=? AND name_en=?)",
           (p["name"], p["name_en"], p["days"], p["daily_posts"], p["max_sources"], p["max_channels"], p["daily_tests"],
            p["price"], p["price_en"], p["description"], p["description_en"], p["is_free"], p["sort"], p["name"], p["name_en"]),
           commit=True)
@@ -38,8 +38,8 @@ def plan_txt(p, field, lang="fa"):
     return p[field] or ""
 
 def create_plan(**f):
-    return q("INSERT INTO plans(name,name_en,days,daily_posts,max_sources,max_channels,daily_tests,price,price_en,description,description_en,is_free,sort,price_num) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-             (f.get("name", "پلن"), f.get("name_en", ""), f.get("days", 30), f.get("daily_posts", 5), f.get("max_sources", 5), f.get("max_channels", 1), f.get("daily_tests", 2), f.get("price", ""), f.get("price_en", ""), f.get("description", ""), f.get("description_en", ""), f.get("is_free", 0), f.get("sort", 0), f.get("price_num", 0) or 0), commit=True)
+    return q("INSERT INTO plans(name,name_en,days,daily_posts,max_sources,max_channels,daily_tests,price,price_en,description,description_en,is_free,sort,price_num,price_num_fa) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             (f.get("name", "پلن"), f.get("name_en", ""), f.get("days", 30), f.get("daily_posts", 5), f.get("max_sources", 5), f.get("max_channels", 1), f.get("daily_tests", 2), f.get("price", ""), f.get("price_en", ""), f.get("description", ""), f.get("description_en", ""), f.get("is_free", 0), f.get("sort", 0), f.get("price_num", 0) or 0, f.get("price_num_fa", 0) or 0), commit=True)
 
 def update_plan(pid, **f):
     for k, v in _safe_fields("plans", f).items(): q(f"UPDATE plans SET {k}=? WHERE id=?", (v, pid), commit=True)
@@ -147,40 +147,63 @@ def rollback_expired_benefits():
     if n: log_event("WARN", f"BIZ-03: role rolled back to user for {n} expired plan(s)")
     return n
 
-# ── قیمت عددی و کیف پول ──
-def _price_num(p):
-    """قیمت عددیِ پلن (برای proration)؛ اگر ستون price_num وجود نداشته باشد یا خالی باشد ۰ (proration انجام نمی‌شود)."""
+# ── قیمت عددی (دوواحدی) و کیف پول — فاز ۱۴ ──
+def plan_num(p, lang="fa"):
+    """تعرفهٔ عددیِ *هم‌واحدِ زبان کاربر*: fa → price_num_fa (تومان) · en → price_num ($).
+    هیچ fallback بین‌واحدی انجام نمی‌شود؛ نبودِ تعرفهٔ همان زبان یعنی مسیر قیمت متنی (۰)."""
+    if not p: return 0.0
+    key = "price_num_fa" if lang == "fa" else "price_num"
     try:
-        return float(p["price_num"] or 0)
+        return float(p[key] or 0)
     except (KeyError, IndexError, TypeError, ValueError):
         return 0.0
 
+def _price_num(p):
+    """تعرفهٔ عددی دلاری (سازگاری عقب‌رو برای importهای قدیمی؛ در محاسبات مسیر اصلی plan_num)."""
+    return plan_num(p, "en")
+
+def fmt_amt(v, lang="fa"):
+    """نمایش مبلغ با واحد زبان کاربر: fa → «3000000 تومان» · en → «$30» (بدون نماد علمی)."""
+    x = float(v or 0)
+    s = str(int(x)) if x == int(x) else f"{x:.2f}"
+    return (s + " تومان") if lang == "fa" else ("$" + s)
+
+def _fmt_price(v): return fmt_amt(v, "en")
+
 def _user_credit(uid):
-    """موجودی کیف پول کاربر (از مابه‌التفاوت کاهش پلن)."""
+    """موجودی کیف پول کاربر (از پاداش دعوت/مابه‌التفاوت تغییر پلن)."""
     try:
         r = q("SELECT credit FROM users WHERE id=?", (uid,), one=True); return float(r["credit"] or 0) if r else 0.0
     except (KeyError, IndexError, TypeError, ValueError): return 0.0
 
-def _fmt_price(v):
-    s = f"{v:g}"
-    return s + "$"
-
-def upgrade_quote(uid, p, cur, disc_percent=None):
-    """مبلغ ارتقا/خرید طبق قاعده‌ی محصول:
-    قابل پرداخت = (قیمت پلن جدید ÷ روزهای دوره‌ی جدید) × روزهای باقی‌مانده
-    − اعتبار باقی‌مانده‌ی پلن فعلی − موجودی کیف پول
-    تاریخ پایان دوره دست‌نخورده می‌ماند و فقط پلن و سهمیه‌ها عوض می‌شوند.
-    اگر پلن جدید برای روزهای باقی‌مانده ارزان‌تر از اعتبار پلن فعلی باشد، مابه‌التفاوت به کیف پول می‌رود (کاهش پلن).
-    اگر قیمت عددیِ پلن ثبت نشده باشد، محاسبه انجام نمی‌شود و قیمت متنی نمایش داده می‌شود."""
-    new_num = _price_num(p); new_days = int(p["days"] or 0); rem = proration_remaining_days(uid); bal = _user_credit(uid)
-    out = {"kind": "fresh", "rem_days": rem, "credit": 0.0, "new_cost": 0.0, "surplus": 0.0,
+def upgrade_quote(uid, p, cur, disc_percent=None, lang="en"):
+    """مبلغ ارتقا/تمدید/خرید طبق تعرفهٔ عددیِ هم‌واحدِ زبان کاربر (فاز ۱۴):
+    • ارتقا (پلن متفاوت با نرخ روزانهٔ بالاتر): مابه‌التفاوت روزهای باقی‌مانده − کیف پول؛ انقضای فعلی حفظ می‌شود.
+    • نزول پلن فروش نداریم → kind="blocked" (خرید متوقف؛ پس از پایان پلن فعلی آزاد است).
+    • تمدید (همان پلن فعال): مبلغ کامل دورهٔ جدید − کیف پول؛ روزها به پایان دورهٔ فعلی اضافه می‌شود.
+    • خرید (بدون پلن فعال): مبلغ کامل پلن − کیف پول.
+    اگر تعرفهٔ عددیِ همان زبان ثبت نشده باشد payable_num=False است (مسیر قیمت متنی روی رسید)."""
+    new_num = plan_num(p, lang); new_days = int(p["days"] or 0); rem = proration_remaining_days(uid); bal = _user_credit(uid)
+    out = {"kind": "fresh", "blocked": False, "rem_days": rem, "credit": 0.0, "new_cost": 0.0, "surplus": 0.0,
            "balance": bal, "used_balance": 0.0, "payable": 0.0, "keep_expiry": False, "payable_num": False,
            "from_plan": (cur["id"] if cur else None), "to_plan": p["id"]}
-    if not new_num or new_days <= 0:
-        return out
-    if rem > 0 and cur and _price_num(cur) and int(cur["days"] or 0) > 0:
-        credit = proration_remaining_value(uid, _price_num(cur), int(cur["days"]))
-        new_cost = round(new_num * (rem / new_days), 2)          # هزینه‌ی پلن جدید فقط برای روزهای باقی‌مانده
+    if new_days <= 0: return out
+    same = bool(cur and p and cur["id"] == p["id"])
+    cur_num = plan_num(cur, lang); cur_days = int(cur["days"] or 0) if cur else 0
+    if same and rem > 0:                                   # تمدید همان پلن فعال
+        out["kind"] = "renew"
+        if new_num:
+            out.update(new_cost=new_num, used_balance=round(min(bal, new_num), 2),
+                       payable=round(new_num - min(bal, new_num), 2), payable_num=True)
+    elif not new_num:
+        return out                                         # بدون تعرفهٔ عددیِ هم‌زبان: مسیر متنی
+    elif rem > 0 and cur and cur_num and cur_days > 0:
+        new_rate, cur_rate = new_num / new_days, cur_num / cur_days
+        if new_rate < cur_rate:                            # نزول پلن: ممنوع
+            out.update(kind="blocked", blocked=True, payable_num=True)
+            return out
+        credit = proration_remaining_value(uid, cur_num, cur_days)
+        new_cost = round(new_num * (rem / new_days), 2)    # هزینهٔ پلن جدید فقط برای روزهای باقی‌مانده
         backend = round(max(0.0, new_cost - credit), 2)
         out.update(kind="upgrade", credit=credit, new_cost=new_cost, surplus=round(max(0.0, credit - new_cost), 2),
                    used_balance=round(min(bal, backend), 2), payable=round(backend - min(bal, backend), 2),
@@ -188,7 +211,7 @@ def upgrade_quote(uid, p, cur, disc_percent=None):
     else:
         out.update(kind="fresh", new_cost=new_num, used_balance=round(min(bal, new_num), 2),
                    payable=round(new_num - min(bal, new_num), 2), payable_num=True)
-    if disc_percent: out["payable"] = round(out["payable"] * (100 - disc_percent) / 100, 2)
+    if disc_percent and not out["blocked"]: out["payable"] = round(out["payable"] * (100 - disc_percent) / 100, 2)
     return out
 
 def _apply_plan_change_sql(conn, uid, pid, pc):

@@ -5,4 +5,5 @@ __version__ = "4.0.0"
 # v4: جدول‌های referrals/rate_limits + claimed_at/applied_at + trigger اتمیک اعتبار ارجاع + usage.ai
 # v5 (فاز ۱۲/REF-3): trigger نسخهٔ «پاداش هر خرید» (delta افزایش credit_amount) — بدون تغییر جدول
 # v6 (فاز ۱۳/BIZ-09): جدول credit_log (رسید حرکت‌های کیف پول) + trigger با ثبت رسید اتمیک
-SCHEMA_VERSION = 6
+# v7 (فاز ۱۴): plans.price_num_fa — تعرفهٔ عددی تومان برای کاربران fa (price_num = تعرفهٔ دلاری/en)
+SCHEMA_VERSION = 7

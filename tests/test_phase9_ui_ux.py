@@ -389,9 +389,10 @@ def test_texts_view_reset_buttons_have_labels():
     assert all(re.search(r"[A-Za-z0-9\u0600-\u06FF]", t) for t in texts), f"دکمهٔ بدون برچسب متنی: {texts}"
 
 
-# ── UX-01/08: میان‌بر کانال یکتا در خانه ──
+# ── UX-01/08 (به‌روزشده در فاز ۱۴): میان‌بر صف/تست از خانه حذف شد ──
 
-def test_admin_home_shortcut_with_single_channel():
+def test_admin_home_has_no_misplaced_shortcut():
+    """فاز ۱۴: دکمه‌های «صف انتشار» و «تست فوری» نباید در خانه باشند (فقط داخل پنل کانال)."""
     from newsbot.core_users import ensure_user
     from newsbot.db import q
     from newsbot.core_channels import add_channel, channel_by_chat
@@ -402,8 +403,9 @@ def test_admin_home_shortcut_with_single_channel():
     cid = channel_by_chat(9606)["id"]
     up, ctx = FakeUpdate(uid=2), FakeContext()
     asyncio.run(_call(dispatch, up, ctx, "a:home"))
-    row0 = [d for _, d in _buttons(up)][:2]
-    assert row0 == [f"a:que:{cid}", f"a:test:{cid}"], "با یک کانال باید میان‌بر صف/تست بالای پنل باشد"
+    data = [d for _, d in _buttons(up)]
+    assert f"a:que:{cid}" not in data and f"a:test:{cid}" not in data, "میان‌بر صف/تست نباید در خانه باشد"
+    assert data[0] == f"a:ch:{cid}", "اولین دکمهٔ خانه باید خودِ کانال باشد"
 
 
 # ── UX-04: پیشرفت عملیات‌های طولانی ──

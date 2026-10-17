@@ -27,7 +27,7 @@ from newsbot.core_channels import (channel_owned, channel_by_chat, add_channel, 
                                    mandatory_set)
 from newsbot.core_sources import add_source, get_source, set_source_api, set_source_active, count_sources
 from newsbot.core_articles import article_update, get_article
-from newsbot.core_plans import create_plan, get_plan
+from newsbot.core_plans import create_plan, get_plan, plan_txt
 from newsbot.core_discounts import disc_valid, disc_create
 from newsbot.core_payments import pay_pending_for, pay_create
 from newsbot.ai_models import add_model, get_model, update_model, test_model, ai_err_text, err_code, hostname
@@ -141,12 +141,12 @@ def _input_value(field, raw, lang, name_limit=100):
         if not 1 <= value <= config.MAX_DAILY_POSTS_CAP: invalid(f"بین ۱ تا {config.MAX_DAILY_POSTS_CAP} انتخاب کنید.", f"Between 1 and {config.MAX_DAILY_POSTS_CAP}")
         # سقف واقعیِ «پلن» در handle_input بررسی می‌شود؛ آن‌جا context و uid در دسترس است
         return value
-    if field in INT_FIELDS or field in ("days", "daily_posts", "max_sources", "max_channels", "daily_tests", "max_tokens", "max_uses", "priority", "weight", "percent", "price_num"):
-        if field == "price_num":
+    if field in INT_FIELDS or field in ("days", "daily_posts", "max_sources", "max_channels", "daily_tests", "max_tokens", "max_uses", "priority", "weight", "percent", "price_num", "price_num_fa"):
+        if field in ("price_num", "price_num_fa"):
             if text == "": return 0.0
             try: value = float(text.translate(config._FA_DIGITS).replace(",", ""))
-            except (ValueError, TypeError): invalid("قیمت عددی باید یک عدد باشد (مثلاً 5 یا 0.5).", "Numeric price must be a number (e.g. 5 or 0.5).")
-            if value < 0: invalid("قیمت عددی نمی‌تواند منفی باشد.", "Numeric price cannot be negative.")
+            except (ValueError, TypeError): invalid("تعرفهٔ عددی باید یک عدد باشد (مثلاً 3000000 یا 5).", "Numeric tariff must be a number (e.g. 3000000 or 5).")
+            if value < 0: invalid("تعرفهٔ عددی نمی‌تواند منفی باشد.", "Numeric tariff cannot be negative.")
             return value
         if field in ("refpct", "refcap"):
             try: value = float(text.translate(config._FA_DIGITS).replace(",", "").strip())
@@ -448,8 +448,13 @@ async def handle_input(update, context, st):
             rid = pay_create(uid, pid, msg.chat_id, msg.message_id, text, st.get("disc"), st.get("final"), st.get("pc"))
         done(); ud.get("disc", {}).pop(str(pid), None)
         disc = f"\n🎟 {esc(st['disc'])}" if st.get("disc") else ""; note = f"\n📝 {esc(text[:400])}" if text else ""
-        header = tr("fa", "s_pay_new", id=rid, who=esc(uname(u)), uid=uid, plan=esc(p["name"]), price=esc(st.get("display") or st.get("final") or p["price"]), disc=disc, note=note); kb = InlineKeyboardMarkup([[B("✅ تأیید / Approve", f"s:pay_ok:{rid}"), B("❌ رد / Reject", f"s:pay_no:{rid}")]])
+        price_txt = esc(st.get("display") or st.get("final") or p["price"])
+        kb = InlineKeyboardMarkup([[B("✅ تأیید / Approve", f"s:pay_ok:{rid}"), B("❌ رد / Reject", f"s:pay_no:{rid}")]])
         for sid in config.SUPER_ADMIN_IDS:
+            # فاز ۱۴: هر سوپرادمین پیام را به زبان خودش می‌گیرد (قبلاً همیشه fa) + قیمت پلن در پیام دیده می‌شود
+            sl = user_lang(sid) or "fa"
+            header = tr(sl, "s_pay_new", id=rid, who=esc(uname(u)), uid=uid, plan=esc(plan_txt(p, "name", sl)),
+                        plan_price=esc(plan_txt(p, "price", sl) or "—"), price=price_txt, disc=disc, note=note)
             try:
                 if msg.photo or msg.document: await context.bot.copy_message(sid, msg.chat_id, msg.message_id, caption=header[:1000], parse_mode="HTML", reply_markup=kb)
                 else: await context.bot.send_message(sid, header, parse_mode="HTML", reply_markup=kb)

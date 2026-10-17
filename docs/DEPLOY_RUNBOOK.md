@@ -183,16 +183,21 @@ RestartSec=5
 اعمال این‌ها بدون دسترسی VPS ممکن نیست؛ تا قبل از آن سرویس با دسترسیِ فعلی اجرا
 می‌شود (ثبت‌شده به‌عنوان انحراف در گزارش فاز ۲).
 
-## ۱۰. بنچمارک بار و اسکیمای v6 (فاز ۱۳)
+## ۱۰. بنچمارک بار و اسکیمای v7 (فاز ۱۳ و ۱۴)
 
-**اسکیمای v6:** جدول `credit_log` (رسید حرکت‌های کیف پول: دلتا، موجودی پس از حرکت، دلیل،
+**اسکیمای v6 (فاز ۱۳):** جدول `credit_log` (رسید حرکت‌های کیف پول: دلتا، موجودی پس از حرکت، دلیل،
 مرجع، زمان) به اسکیمای پایه اضافه شد و trigger ارجاع علاوه بر شارژ کیف پول، رسید اتمیک هم
 ثبت می‌کند. ارتقا خودکار است (بیلد جدید در نخستین اجرا trigger را جایگزین و
 `schema_version` را به ۶ می‌برد)؛ برای D1 هم `python tools/migrate_sqlite_to_d1.py`
-جدول را منتقل می‌کند. بررسی سریع پس از استقرار:
+جدول را منتقل می‌کند.
+
+**اسکیمای v7 (فاز ۱۴):** ستون `plans.price_num_fa` (تعرفهٔ عددی تومانی برای کاربران fa؛
+`price_num` = تعرفهٔ دلاری برای کاربران en) به جدول پلن‌ها اضافه شد. ارتقا خودکار است
+(بیلد جدید در نخستین اجرا ستون را اضافه و `schema_version` را به ۷ می‌برد)؛ برای D1 هم
+`python tools/migrate_sqlite_to_d1.py` ستون را منتقل می‌کند. بررسی سریع پس از استقرار:
 
 ```bash
-sqlite3 /opt/bot-ai-automatic/newsbot.db "SELECT value FROM meta WHERE key='schema_version';"   # باید 6 باشد
+sqlite3 /opt/bot-ai-automatic/newsbot.db "SELECT value FROM meta WHERE key='schema_version';"   # باید 7 باشد
 sqlite3 /opt/bot-ai-automatic/newsbot.db "SELECT COUNT(*) FROM credit_log;"
 ```
 

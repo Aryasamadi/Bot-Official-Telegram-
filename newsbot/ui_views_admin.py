@@ -30,7 +30,7 @@ from newsbot.ui_widgets import (B, U, pairs, esc, onoff, cap, L, uname, render, 
 from newsbot.opctx import _current_operation
 
 # ── فیلدهای ویرایشی پنل‌ها (منبع یکتا برای super/dispatch/inputs) ──
-PLAN_FIELDS = [("name", "نام (فا)", "Name (fa)"), ("name_en", "نام (en)", "Name (en)"), ("days", "مدت (روز)", "Days"), ("daily_posts", "پست/روز", "Posts/day"), ("max_sources", "منابع", "Sources"), ("max_channels", "کانال‌ها", "Channels"), ("daily_tests", "تست/روز", "Tests/day"), ("price", "قیمت (فا)", "Price (fa)"), ("price_en", "قیمت (en)", "Price (en)"), ("price_num", "قیمت عددی (برای proration)", "Numeric price (proration)"), ("description", "توضیح (فا)", "Description (fa)"), ("description_en", "توضیح (en)", "Description (en)")]
+PLAN_FIELDS = [("name", "نام (فا)", "Name (fa)"), ("name_en", "نام (en)", "Name (en)"), ("days", "مدت (روز)", "Days"), ("daily_posts", "پست/روز", "Posts/day"), ("max_sources", "منابع", "Sources"), ("max_channels", "کانال‌ها", "Channels"), ("daily_tests", "تست/روز", "Tests/day"), ("price", "قیمت (فا)", "Price (fa)"), ("price_en", "قیمت (en)", "Price (en)"), ("price_num", "تعرفهٔ عددی دلار (en)", "USD numeric tariff (en)"), ("price_num_fa", "تعرفهٔ عددی تومان (fa)", "Toman numeric tariff (fa)"), ("description", "توضیح (فا)", "Description (fa)"), ("description_en", "توضیح (en)", "Description (en)")]
 MODEL_FIELDS = [("model", "نام مدل", "Model"), ("base_url", "Base URL", "Base URL"), ("api_key", "کلید API", "API key"), ("name", "نام نمایشی", "Display name"), ("priority", "اولویت", "Priority"), ("temperature", "دما (0–2)", "Temperature (0–2)"), ("max_tokens", "حداکثر توکن", "Max tokens")]
 # TEXT_KEYS منبع یکتایش ui_i18n است (هم‌جا با gtext/gtext_set) و صرفاً برای سازگاری
 # importهای قدیمی از این ماژول دوباره صادر می‌شود. رجوع به باگ H15.
@@ -61,15 +61,10 @@ async def view_admin_home(update, context):
     pname = "∞" if is_super(uid) else (plan_txt(lim["plan"], "name", lang) or tr(lang, "no_plan"))
     text = (f"{tr(lang, 'panel')}\n🧾 <b>{esc(pname)}</b>" + (tr(lang, "until", d=fmt_date(lim["expires"], admin_offset(uid))) if lim["expires"] else "") + "\n" +
             tr(lang, "today_line", p=use["posts"], pc=cap(lim["daily_posts"]), t=use["tests"], tc=cap(lim["daily_tests"]), c=len(chs), cc=cap(lim["max_channels"]), s=count_sources(uid), sc=cap(lim["max_sources"])))
-    text += quota_bars_safe([( "📝", use["posts"], lim["daily_posts"]), ("🧪", use["tests"], lim["daily_tests"]),
-                             ("📢", len(chs), lim["max_channels"]), ("🔗", count_sources(uid), lim["max_sources"])])
     if lim["next_plan"]: text += "\n" + tr(lang, "plans_next", name=esc(plan_txt(lim["next_plan"], "name", lang)))
     if not lim["active"]: text += "\n\n" + tr(lang, "plan_inactive")
     text += "\n\n" + (tr(lang, "pick_channel") if chs else tr(lang, "no_channels"))
     kb = pairs([B(f"{'🟢' if get_settings(c['id'])['enabled'] else '🔴'} {c['title'][:22]}", f"a:ch:{c['id']}") for c in chs])
-    if len(chs) == 1:   # UX-01/08: با یک کانال، میان‌بر پرکاربردها بالای پنل
-        c0 = chs[0]["id"]
-        kb.insert(0, [B(tr(lang, "queue", n=ready_count(c0)), f"a:que:{c0}"), B(tr(lang, "test"), f"a:test:{c0}")])
     kb.append([B(tr(lang, "ch_add"), "a:chadd")]); kb.append([B(tr(lang, "my_plan"), "a:plan")])
     if is_super(uid): kb.append([B(tr(lang, "super_panel"), "s:home")])
     await render(update, context, text, kb)

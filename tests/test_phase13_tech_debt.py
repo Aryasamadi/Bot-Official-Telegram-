@@ -166,11 +166,12 @@ def test_plan_change_writes_receipt_and_skips_zero_delta():
 
 
 def test_v6_schema_surface_and_migration():
-    """v6: trigger سازگار با v5 + رسید داخل trigger + انتقال credit_log در مایگریشن D1."""
+    """v6: trigger سازگار با v5 + رسید داخل trigger + انتقال credit_log در مایگریشن D1.
+    (فاز ۱۴: نسخهٔ کل به ۷ رفت — این تست سطح v6 را همچنان پین می‌کند.)"""
     import newsbot
     from newsbot.db import REFERRAL_CREDIT_TRIGGER
     from tools.migrate_sqlite_to_d1 import TABLES
-    assert newsbot.SCHEMA_VERSION == 6, "فاز ۱۳/BIZ-09: رسید credit_log ⇒ نسخه ۶"
+    assert newsbot.SCHEMA_VERSION == 7, "فاز ۱۴: تعرفهٔ تومانی price_num_fa ⇒ نسخه ۷"
     assert "INSERT INTO credit_log" in REFERRAL_CREDIT_TRIGGER and "'referral'" in REFERRAL_CREDIT_TRIGGER
     assert "AFTER UPDATE OF credit_amount ON referrals" in REFERRAL_CREDIT_TRIGGER   # سازگاری v5⇒v6
     assert "DROP TRIGGER IF EXISTS trg_referral_credit_wallet" in _src("newsbot/db.py")

@@ -106,7 +106,8 @@ MIGRATIONS = [("users", "next_plan_id", "INTEGER"), ("users", "next_plan_days", 
               ("sources", "fail_count", "INTEGER DEFAULT 0"), ("sources", "next_try_after", "TEXT DEFAULT ''"),
               ("pay_requests", "claimed_at", "TEXT"),   # NEW v4: بازیابی پرداخت‌های گیرکرده در 'processing'
               ("pay_requests", "applied_at", "TEXT"),   # phase 4: لحظهٔ اعمال پلن/کیف‌پول — idempotency بازیابی (PAY-3)
-              ("usage", "ai", "INTEGER DEFAULT 0")]     # phase 5: سقف روزانهٔ AI (BIZ-01)
+              ("usage", "ai", "INTEGER DEFAULT 0"),     # phase 5: سقف روزانهٔ AI (BIZ-01)
+              ("plans", "price_num_fa", "REAL DEFAULT 0")]  # phase 14/v7: تعرفهٔ عددی تومان (fa) — price_num برای en ($)
 
 def _table_cols(conn, tbl):
     """نام ستون‌های جدول — با pragma_table_info (سازگار با sqlite و D1) و fallback به PRAGMA."""

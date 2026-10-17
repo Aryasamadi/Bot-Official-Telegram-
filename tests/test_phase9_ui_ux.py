@@ -76,11 +76,21 @@ async def _call(fn, *args):
     return await fn(*args)
 
 
-def render_text(ctx):
+def render_text(up, ctx):
     """همهٔ متن‌های رندرشده در این فراخوان (پیام‌های موقت + ویرایش پیام)."""
-    parts = list(ctx.callback_query.message.edits)
+    parts = list(up.callback_query.message.edits)
     parts += [kw.get("text") or (a[1] if len(a) > 1 else "") for a, kw in ctx.bot.sent]
     return "\n".join(str(p or "") for p in parts)
+
+
+@pytest.fixture(autouse=True)
+def _acting_admin_ready():
+    """کاربر کنشگر (سوپرادمین ۱) باید وجود و زبان داشته باشد وگرنه dispatch صفحهٔ زبان می‌فرستد."""
+    from newsbot.core_users import ensure_user
+    from newsbot.db import q
+    ensure_user(1, "admin", "Admin")
+    q("UPDATE users SET lang='fa', role='admin' WHERE id=1", commit=True)
+    yield
 
 
 # ── PLB-11: نشانهٔ قطع (« …») روی واژه‌های ZWNJ‌دار ──
@@ -141,7 +151,7 @@ def test_channel_view_escapes_username_payload():
     cid = channel_by_chat(9701)["id"]
     up, ctx = FakeUpdate(), FakeContext()
     asyncio.run(_call(dispatch, up, ctx, f"a:ch:{cid}"))
-    text = render_text(ctx)
+    text = render_text(up, ctx)
     assert "<b>evil" not in text and "&lt;b&gt;evil" in text
 
 
@@ -153,5 +163,5 @@ def test_user_view_escapes_role_and_lang_fields():
     q("UPDATE users SET role=?, lang=? WHERE id=?", ("<b>role</b>", "<i>fa</i>", 77), commit=True)
     up, ctx = FakeUpdate(), FakeContext()
     asyncio.run(_call(dispatch, up, ctx, "s:user:77"))
-    text = render_text(ctx)
+    text = render_text(up, ctx)
     assert "<b>role" not in text and "<i>fa" not in text

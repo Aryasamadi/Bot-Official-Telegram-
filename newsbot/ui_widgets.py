@@ -206,7 +206,7 @@ def _step_text(st, lang):
         d = DIAG.get(cat)
         if not d: return cat
         key_tpl = d[1 if lang == "en" else 0]
-    try: out = key_tpl.format(model, **f)
+    try: out = key_tpl.format(esc(model), **{k: esc(v) for k, v in f.items()})
     except Exception: out = key_tpl
     return re.sub(r"{[a-z_]+}", "", out).strip()   # هیچ جای‌نگهدار بی‌مقداری در متن نمی‌ماند
 

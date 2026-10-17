@@ -14,7 +14,7 @@ from newsbot.ui_views_user import view_lang
 
 
 def _sup_header(u):
-    who = f"@{u['username']}" if u["username"] else f"<code>{u['id']}</code>"
+    who = f"@{esc(u['username'])}" if u["username"] else f"<code>{u['id']}</code>"
     return f"📨 <b>{esc(u['name'] or '')}</b> · {who}"
 
 async def support_forward(context, user, msg):

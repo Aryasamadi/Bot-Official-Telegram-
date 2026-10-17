@@ -14,7 +14,7 @@ from newsbot.core_discounts import disc_create, disc_use, disc_refund, disc_vali
 from newsbot.core_plans import (create_plan, assign_plan, upgrade_quote, proration_remaining_days,
                                 recover_stuck_payments)
 from newsbot.core_payments import pay_create, pay_claim, pay_get
-from newsbot.core_referrals import record_referral, credit_referral_on_payment, referral_stats
+from newsbot.core_referrals import record_referral, credit_referral_on_payment, referral_stats, referral_cfg
 from newsbot.core_users import channel_posts_today
 from newsbot.core_channels import add_channel
 from newsbot.ai_models import _budget, budget_reset, parse_json
@@ -89,10 +89,14 @@ def test_referral_rules():
     q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(?,?,?,?,?,?)", (88001, "r", "R", "user", now_iso(), now_iso()), commit=True)
     assert record_referral(88001, 88002) is True
     assert record_referral(88003, 88002) is False        # انتساب یکتا
-    rid, amt = credit_referral_on_payment(88002, 100.0)
-    assert rid == 88001 and amt == round(100.0 * config.REFERRAL_PERCENT / 100, 2)
-    assert credit_referral_on_payment(88002, 100.0) is None   # idempotent
+    pct = referral_cfg()[0]
+    rid, amt = credit_referral_on_payment(88002, 100.0, ref_key="pay:1")
+    assert rid == 88001 and amt == round(100.0 * pct / 100, 2)
+    assert credit_referral_on_payment(88002, 100.0, ref_key="pay:1") is None   # همان پرداخت ⇒ idempotent
+    rid2, amt2 = credit_referral_on_payment(88002, 50.0, ref_key="pay:2")      # REF-3: پاداش هر خرید
+    assert rid2 == 88001 and amt2 == round(50.0 * pct / 100, 2)
     assert referral_stats(88001)[0] == 1
+    assert round(referral_stats(88001)[1], 2) == round(amt + amt2, 2)
 
 def test_upgrade_quote_proration():
     pid = create_plan(name="P1", days=30, price_num=30)

@@ -12,9 +12,9 @@ import asyncio
 import importlib.util
 import os
 
-from newsbot import config
 from newsbot.db import q, REFERRAL_CREDIT_TRIGGER
-from newsbot.core_referrals import credit_referral_on_payment, record_referral, referral_stats
+from newsbot.core_referrals import (credit_referral_on_payment, record_referral, referral_stats,
+                                    referral_cfg, set_referral_cfg)
 from newsbot.timeutils import now_iso
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,12 +27,12 @@ def _referral_trigger_installed():
 
 
 def test_referral_credit_trigger_installed():
-    """trigger اتمیک کیف پول باید بخشی از اسکیمای عادی باشد (v3)."""
-    assert _referral_trigger_installed(), "trigger trg_referral_credit_wallet نصب نیست (اسکیمای v3)"
+    """trigger اتمیک کیف پول باید بخشی از اسکیمای عادی باشد (v5)."""
+    assert _referral_trigger_installed(), "trigger trg_referral_credit_wallet نصب نیست (اسکیمای v5)"
 
 
-def test_referral_race_and_cap_credit_wallet_exactly_once(monkeypatch):
-    """رقابتِ هم‌زمان + سقفِ ۱: فقط یک‌بار credit به کیف پول اضافه می‌شود."""
+def test_referral_race_and_cap_credit_wallet_exactly_once():
+    """رقابتِ هم‌زمان + سقفِ مبلغیِ «دقیقاً یک پاداش»: تنها یک credit به کیف پول می‌رسد (REF-3/v5)."""
     from concurrent.futures import ThreadPoolExecutor
 
     referrer, a, b = 88101, 88102, 88103
@@ -46,37 +46,44 @@ def test_referral_race_and_cap_credit_wallet_exactly_once(monkeypatch):
     assert record_referral(referrer, a) is True
     assert record_referral(referrer, b) is True
 
-    monkeypatch.setattr(config, "REFERRAL_MAX_PER_USER", 1)
-    calls = [a] * 4 + [b] * 4
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(lambda uid: credit_referral_on_payment(uid, 100.0), calls))
+    p0, c0 = referral_cfg()
+    expected = round(100.0 * 10.0 / 100.0, 2)
+    set_referral_cfg(percent=10, cap_amount=expected)   # REF-3: سقف مبلغی = دقیقاً یک پاداش ⇒ فقط یک credit مجاز
+    try:
+        calls = [a] * 4 + [b] * 4
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda uid: credit_referral_on_payment(uid, 100.0), calls))
 
-    expected = round(100.0 * config.REFERRAL_PERCENT / 100, 2)
-    credited = [x for x in results if x is not None]
-    assert len(credited) == 1, f"با سقف ۱ فقط یک credit مجاز است؛ {len(credited)} ثبت شد"
-    rid, amt = credited[0]
-    assert rid == referrer and amt == expected
+        credited = [x for x in results if x is not None]
+        assert len(credited) == 1, f"با سقف یک پاداش فقط یک credit مجاز است؛ {len(credited)} ثبت شد"
+        rid, amt = credited[0]
+        assert rid == referrer and amt == expected
 
-    wallet = q("SELECT credit FROM users WHERE id=?", (referrer,), one=True)
-    assert round(float(wallet["credit"] or 0), 2) == expected, "کیف پول باید دقیقاً یک‌بار شارژ شده باشد"
+        wallet = q("SELECT credit FROM users WHERE id=?", (referrer,), one=True)
+        assert round(float(wallet["credit"] or 0), 2) == expected, "کیف پول باید دقیقاً یک‌بار شارژ شده باشد"
 
-    rows = q("SELECT referred_id, credited, credit_amount FROM referrals WHERE referred_id IN (?,?)", (a, b))
-    assert len(rows) == 2 and all(r["credited"] == 1 for r in rows)
-    assert round(sum(float(r["credit_amount"] or 0) for r in rows), 2) == expected
-    assert referral_stats(referrer)[0] == 2
+        rows = q("SELECT referred_id, credited, credit_amount FROM referrals WHERE referred_id IN (?,?)", (a, b))
+        assert len(rows) == 2 and all(r["credited"] == 1 for r in rows)
+        assert round(sum(float(r["credit_amount"] or 0) for r in rows), 2) == expected
+        assert referral_stats(referrer)[0] == 2
 
-    # idempotency: تأیید مجدد هیچ credit تازه‌ای نمی‌سازد
-    assert credit_referral_on_payment(a, 100.0) is None
-    assert round(float(q("SELECT credit FROM users WHERE id=?", (referrer,), one=True)["credit"] or 0), 2) == expected
+        # سقف مصرف شده: تأیید مجدد هیچ credit تازه‌ای نمی‌سازد
+        assert credit_referral_on_payment(a, 100.0) is None
+        assert round(float(q("SELECT credit FROM users WHERE id=?", (referrer,), one=True)["credit"] or 0), 2) == expected
+    finally:
+        set_referral_cfg(percent=p0, cap_amount=c0)
 
 
-def test_referral_claim_is_single_statement_claim():
-    """ساختار SQL: claim باید یک UPDATE شرطیِ تک‌دستوره با RETURNING باشد (نه read+write جدا)."""
+def test_referral_increment_is_atomic_with_per_payment_lock():
+    """ساختار v5: افزایش درجای credit_amount + قفل idempotency هر پرداخت داخل همان _trx؛
+    شارژ کیف پول فقط با trigger اتمیک (هیچ UPDATE مستقیم روی users در این تابع)."""
     import inspect
     from newsbot import core_referrals
     src = inspect.getsource(core_referrals.credit_referral_on_payment)
-    assert "RETURNING" in src and "WHERE referred_id=? AND credited=0" in src
-    assert "_trx" not in src, "crediting نباید به read-then-write قدیمی با _trx برگردد"
+    assert "credit_amount=COALESCE(credit_amount,0)+?" in src          # افزایش، نه set دوباره
+    assert "REF_PAID_PREFIX + str(ref_key)" in src                     # قفل idempotency هر پرداخت
+    assert "_trx" in src                                               # کل مسیر در یک تراکنش
+    assert "UPDATE users" not in src and "SET credit=" not in src      # کیف پول را فقط trigger شارژ می‌کند
 
 
 # ── PR1-07: کرسر D1 ──
@@ -191,7 +198,8 @@ def test_migrate_ensure_schema_creates_meta_and_trigger():
     assert any("CREATE TABLE IF NOT EXISTS meta" in s for s in ac.sqls), "PR1-08: جدول meta ساخته نشد"
     assert any("trg_referral_credit_wallet" in s for s in ac.sqls), "trigger ارجاع به D1 فرستاده نشد"
     assert any("CREATE TABLE IF NOT EXISTS users" in s for s in ac.sqls)
-    assert REFERRAL_CREDIT_TRIGGER.strip().splitlines()[1].strip() in "\n".join(ac.sqls)
+    assert "AFTER UPDATE OF credit_amount ON referrals" in REFERRAL_CREDIT_TRIGGER   # v5: delta روی افزایش
+    assert REFERRAL_CREDIT_TRIGGER.strip() in "\n".join(ac.sqls), "کل بدنهٔ trigger باید در batch D1 ارسال شده باشد"
 
 
 def test_migrate_tables_include_meta():

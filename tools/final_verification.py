@@ -113,7 +113,7 @@ check("C4", "محتوای منتشرشده هرگز حذف نمی‌شود", c4)
 # ── H2: TTL پیش‌فرض ۷۲ ──
 def h2():
     src = open(os.path.join(ROOT, "newsbot/config.py"), encoding="utf-8").read()
-    ok = 'DATA_TTL_HOURS", "72"' in src and 'DEDUP_TTL_HOURS", "72"' in src
+    ok = 'DATA_TTL_HOURS", 72' in src and 'DEDUP_TTL_HOURS", 72' in src   # فاز ۱۲: هلپر _env_int با پیش‌فرض عددی
     return ok, "پیش‌فرض ۷۲"
 check("H2", "TTL پیش‌فرض ۷۲ ساعت است", h2)
 

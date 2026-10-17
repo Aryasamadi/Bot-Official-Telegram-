@@ -73,6 +73,8 @@ async def cmd_start(update, context):
             except (TypeError, ValueError): ref = 0
             if ref and record_referral(ref, update.effective_user.id):
                 await notify_user(ref, tr(user_lang(ref) or "fa", "ref_joined"))
+                # REF-3/تصمیم ۸ (فاز ۱۲): دعوت‌شده هم تأیید می‌گیرد (پاداش با هر خرید به معرف می‌رسد)
+                await notify_user(update.effective_user.id, tr(user_lang(update.effective_user.id) or "fa", "ref_join_ok"))
         elif arg.startswith("r_"):
             if not rate_ok(f"dl:{update.effective_user.id}", config.CB_RATE): return   # جلوی تقویتِ درخواست بیرونی با /start تکراری را می‌گیرد
             return await send_deeplink(update, context, arg[2:])

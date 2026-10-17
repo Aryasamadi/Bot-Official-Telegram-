@@ -8,7 +8,7 @@ FIX v4:
   • دروازه‌ی کانال اجباری (mand_gate) در جریان افزودن کانال و دریافت توکن انتقال نصب شد
     — فقط ادمین؛ تا تأیید عضویت، ثبت کانال متوقف می‌شود
 """
-import os, re
+import re
 from datetime import datetime, timedelta
 import httpx
 from telegram import InlineKeyboardMarkup
@@ -40,7 +40,7 @@ from newsbot.ui_widgets import (B, esc, render, popup, wiz_prompt, operation_sta
 from newsbot.ui_views_user import view_receipt_ok
 from newsbot.ui_views_admin import mand_gate, PLAN_FIELDS, MODEL_FIELDS
 
-_ALLOW_PRIVATE_MODELS = os.getenv("ALLOW_PRIVATE_MODEL_HOSTS", "").strip() == "1"   # پیش‌فرض: مقصد داخلی مسدود
+_ALLOW_PRIVATE_MODELS = config.ALLOW_PRIVATE_MODEL_HOSTS   # CFG-06/D14 (فاز ۱۲): تنها منبع = config
 
 
 def _input_url(text, explicit_scheme=False, allow_private=False):
@@ -148,6 +148,12 @@ def _input_value(field, raw, lang, name_limit=100):
             except (ValueError, TypeError): invalid("قیمت عددی باید یک عدد باشد (مثلاً 5 یا 0.5).", "Numeric price must be a number (e.g. 5 or 0.5).")
             if value < 0: invalid("قیمت عددی نمی‌تواند منفی باشد.", "Numeric price cannot be negative.")
             return value
+        if field in ("refpct", "refcap"):
+            try: value = float(text.translate(config._FA_DIGITS).replace(",", "").strip())
+            except (ValueError, TypeError): invalid("عدد وارد کنید.", "Enter a number.")
+            if field == "refpct" and not 0 <= value <= 50: invalid("درصد باید بین ۰ تا ۵۰ باشد.", "Percent must be between 0 and 50.")
+            if field == "refcap" and value < 0: invalid("سقف نمی‌تواند منفی باشد.", "Cap cannot be negative.")
+            return value
         try: value = to_int_safe(text)
         except (ValueError, TypeError): invalid("عدد صحیح وارد کنید؛ اعشار مجاز نیست.", "Enter an integer; decimals are not allowed.")
         lo, hi = INT_FIELDS.get(field, (1 if field in ("days", "max_tokens", "weight", "percent") else -(2 ** 63) if field == "priority" else 0, 100 if field in ("weight", "percent") else 2 ** 63 - 1))
@@ -166,7 +172,7 @@ def _input_access(st, uid, lang):
     kind = st.get("kind"); wiz = st.get("wiz") if kind == "wiz" else None
     user = get_user(uid)
     if user and user["banned"] and not is_super(uid): return tr(lang, "banned")
-    if kind in ("plan_field", "disc_field", "gtext", "umsg", "bc", "mand_field") or wiz in ("plan_new", "model_add", "disc_add") or (kind == "model_field" and not st.get("own")):
+    if kind in ("plan_field", "disc_field", "gtext", "umsg", "bc", "mand_field", "refpct", "refcap") or wiz in ("plan_new", "model_add", "disc_add") or (kind == "model_field" and not st.get("own")):
         if not is_super(uid): return tr(lang, "no_admin")
     if kind in ("field", "cat_style", "crit_weight", "src_add", "src_api_url", "src_api_key", "ch_add", "chtoken", "art_edit") or wiz in ("cat_add", "crit_add", "my_ai_add") or (kind == "model_field" and st.get("own")):
         if not can_admin(uid): return tr(lang, "no_admin")
@@ -319,6 +325,14 @@ async def handle_input(update, context, st):
         await operation_status(context, note, failed=not n)
         await popup(update, context, note)
         return await dispatch(update, context, f"a:srcv:{sid}")
+    # ---- تنظیمات ارجاع (سوپرادمین) — REF-3/تصمیم ۸ (فاز ۱۲)
+    if kind in ("refpct", "refcap"):
+        from newsbot.core_referrals import set_referral_cfg
+        try: v = _input_value(kind, raw_text, lang)
+        except (ValueError, TypeError) as e: return await popup(update, context, str(e))
+        try: set_referral_cfg(percent=v if kind == "refpct" else None, cap_amount=v if kind == "refcap" else None)
+        except ValueError as e: return await popup(update, context, str(e))
+        done(tr(lang, "saved")); return await dispatch(update, context, back)
     # ---- افزودن کانال + لایه‌ی امنیتی + دروازه‌ی کانال اجباری (NEW v4)
     if kind == "ch_add":
         chat = None; fo = getattr(msg, "forward_origin", None)

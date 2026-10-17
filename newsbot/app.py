@@ -9,6 +9,7 @@ import asyncio, html, os, re
 from telegram import BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 from newsbot import config
+from newsbot import runtime
 from newsbot.db import db, gget, gset, arun, close_db_pool, readonly_check
 from newsbot.logutils import log, log_event
 from newsbot.ratelimit import _rate_load_persisted
@@ -33,6 +34,8 @@ _SHUTDOWN_GRACE = 2.0            # فرصت دوم برای تسک‌هایی ک
 
 def init_core():
     db(); seed_plans(); recover_publications(); _rate_load_persisted()   # FIX v4: بقای rate-limit حساس
+    from newsbot.secret_store import migrate_ai_keys   # SEC-09 (فاز ۱۲): رمزنگاری کلیدهای AI در حالت سکون
+    migrate_ai_keys()
     if gget("automation_enabled") is None: gset("automation_enabled", True)
     log.info(f"core v4 ready | backend={config.DB_BACKEND} | CF KV: {'on' if config.CF_ENABLED else 'local'} | super: {config.SUPER_ADMIN_IDS} | AI×{config.AI_CONCURRENCY} FETCH×{config.FETCH_CONCURRENCY} CYCLE×{config.CYCLE_CONCURRENCY}")
 
@@ -43,8 +46,8 @@ async def job_tick(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def post_init(app: Application):
-    me = await app.bot.get_me(); config.BOT_USERNAME = me.username
-    config.NOTIFY_SUPER = notify_supers; config.NOTIFY_USER = notify_user_fn
+    me = await app.bot.get_me(); runtime.BOT_USERNAME = me.username
+    runtime.NOTIFY_SUPER = notify_supers; runtime.NOTIFY_USER = notify_user_fn
     set_bot(app.bot)   # FIX v4: لایه‌ی UI بدون APP سراسری، بطری را از این‌جا می‌گیرد
     await app.bot.set_my_commands([BotCommand("start", "منوی اصلی"), BotCommand("create", "پنل مدیریت"), BotCommand("ref", "دعوت دوستان"), BotCommand("man", "پشتیبانی"), BotCommand("lang", "زبان"), BotCommand("about", "درباره"), BotCommand("help", "راهنما"), BotCommand("cancel", "لغو عملیات")], language_code="fa")
     await app.bot.set_my_commands([BotCommand("start", "Main menu"), BotCommand("create", "Admin panel"), BotCommand("ref", "Invite friends"), BotCommand("man", "Support"), BotCommand("lang", "Language"), BotCommand("about", "About"), BotCommand("help", "Help"), BotCommand("cancel", "Cancel")])
@@ -58,7 +61,9 @@ async def post_init(app: Application):
                             "<code>SELECT channel_id, url, COUNT(*) FROM sources GROUP BY channel_id, url HAVING COUNT(*) >1;</code>")
     log_event("INFO", f"ربات @{me.username} راه‌اندازی شد")
     extra = []
-    if config.REFERRAL_ENABLED: extra.append(f"referral {config.REFERRAL_PERCENT:g}%")
+    if config.REFERRAL_ENABLED:
+        from newsbot.core_referrals import referral_cfg   # REF-3: درصد زندهٔ پنل (نه فقط پیش‌فرض env)
+        extra.append(f"referral {referral_cfg()[0]:g}%")
     if config.MANDATORY_CHANNEL_ID or config.MANDATORY_CHANNEL_USERNAME: extra.append("mandatory-channel ON")
     await notify_supers(f"🚀 @{me.username} راه‌اندازی شد · 🤖 مدل‌های فعال {len(await arun(list_models, True))} · backend {config.DB_BACKEND} · CF KV {'✅' if config.CF_ENABLED else '❌'} · تیک هر {config.TICK_SECONDS}s" + (f" · {' · '.join(extra)}" if extra else ""))
 
@@ -103,6 +108,8 @@ def preflight(check=False):
         warn.append("BOT_TOKEN قالب استاندارد ندارد (باید شبیه 123456789:AA... باشد)؛ برای سرور Bot API محلی نادیده بگیرید.")
     if not config.SUPER_ADMIN_IDS:
         bad.append("SUPER_ADMIN_IDS تنظیم نشده است → شناسه‌ی عددی تلگرام خودتان (SUPER_ADMIN_IDS=123456789)")
+    if config.CONFIG_ERRORS:   # CFG-01/02/03 (فاز ۱۲): env نامعتبر با پیام روشن، پیش از هر crash
+        bad.extend(config.CONFIG_ERRORS)
     folder = os.path.dirname(os.path.abspath(config.DB_FILE)) or "."
     if config.DB_BACKEND != "d1":
         if not os.path.isdir(folder):
@@ -139,8 +146,6 @@ def preflight(check=False):
         if not lo <= val <= hi: bad.append(f"{nm} بیرون از بازه‌ی مجاز {lo}..{hi} است: {val}")
     if config.POST_LIMIT_MAX > config.CAPTION_LIMIT - 100:   # قاعده‌ی سخت: کپشن هرگز نباید پست را دو پیام کند
         bad.append(f"POST_LIMIT_MAX ({config.POST_LIMIT_MAX}) باید حداقل ۱۰۰ کاراکتر زیر سقف تلگرام ({config.CAPTION_LIMIT}) بماند")
-    if not 0 <= config.REFERRAL_PERCENT <= 50:
-        bad.append(f"REFERRAL_PERCENT باید بین 0 و 50 باشد: {config.REFERRAL_PERCENT}")
     if config.MANDATORY_CHANNEL_ID and not config.MANDATORY_CHANNEL_ID.lstrip("-").isdigit():
         warn.append("MANDATORY_CHANNEL_ID عددی نیست؛ اگر یوزرنیم است آن را در MANDATORY_CHANNEL_USERNAME بگذارید.")
     filled_cf = sum(bool(x) for x in (config.CF_ACCOUNT_ID, config.CF_KV_NAMESPACE_ID, config.CF_API_TOKEN))

@@ -27,12 +27,12 @@ def _load_migrate_tool():
 
 # ── DB-25: نسخهٔ اسکیما تک‌منبع است ──
 
-def test_schema_version_single_source_is_4():
+def test_schema_version_single_source_is_5():
     import newsbot
     import newsbot.db as dbmod
-    assert newsbot.SCHEMA_VERSION == 4
-    assert dbmod.SCHEMA_VERSION == 4, "db.py باید همان نسخهٔ پکیج را import کند، نه تعریف محلی"
-    assert q("SELECT value FROM meta WHERE key='schema_version'", one=True)["value"] == "4"
+    assert newsbot.SCHEMA_VERSION == 5, "فاز ۱۲: trigger ارجاع v5 ⇒ نسخه ۵"
+    assert dbmod.SCHEMA_VERSION == 5, "db.py باید همان نسخهٔ پکیج را import کند، نه تعریف محلی"
+    assert q("SELECT value FROM meta WHERE key='schema_version'", one=True)["value"] == "5"
 
 
 # ── DB-12: ایندکس‌های یکتا با تعریف مشترک + محافظ ردیف تکراری ──

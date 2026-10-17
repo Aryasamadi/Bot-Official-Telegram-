@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import httpx
 from telegram.error import BadRequest, RetryAfter, NetworkError, Forbidden
 from newsbot import config
+from newsbot import runtime
 from newsbot.logutils import log, log_event, log_ctx, bump
 from newsbot.timeutils import now_iso
 from newsbot.net_http import http, public_url_strict, UA_BROWSER, UA_FEED, gen_deeplink_key, save_deeplink, retry_after_seconds
@@ -253,7 +254,7 @@ def channel_caption(s, ch, post_html, full_html, title, url):
         post = re.sub(r"\n{3,}", "\n\n", post).strip()
     full = clean_ai_text(strip_source_url(full_html or "", url), s) if full_html else ""
     limit = min(int(s.get("post_limit") or config.POST_LIMIT_DEFAULT), config.POST_LIMIT_MAX)
-    more_len = len(f'\n\n<a href="https://t.me/{config.BOT_USERNAME}?start=r_XXXXXXXX">📖 {"بیشتر" if lang == "fa" else "more..."}</a>')
+    more_len = len(f'\n\n<a href="https://t.me/{runtime.BOT_USERNAME}?start=r_XXXXXXXX">📖 {"بیشتر" if lang == "fa" else "more..."}</a>')
     budget = max(200, limit - len(tail) - more_len)
     has_more = bool(full.strip()) and (len(post) > budget or len(full.strip()) > len(post) + 150)
     if not has_more:
@@ -325,7 +326,7 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
             # PUB-04: کلید فقط تولید می‌شود (برای متن لازم است)؛ ردیف دیپ‌لینک پس از موفقیت ارسال نوشته می‌شود
             dl_key = gen_deeplink_key()
             dl_payload = {"short": cut, "full": full_for_bot, "title": a["title"], "url": a["url"], "show_source": bool(s.get("include_link", True)), "media": {k: v for k, v in media.items() if not k.startswith("_")} if media else None, "ts": now_iso()}
-            text = cut + f'\n\n<a href="https://t.me/{config.BOT_USERNAME}?start=r_{dl_key}">📖 {"بیشتر" if (s.get("ui_lang") or "fa") == "fa" else "more..."}</a>' + tail
+            text = cut + f'\n\n<a href="https://t.me/{runtime.BOT_USERNAME}?start=r_{dl_key}">📖 {"بیشتر" if (s.get("ui_lang") or "fa") == "fa" else "more..."}</a>' + tail
         if journal.get("media_id"):
             text = journal["text"]
             media = {"_sent_id": journal["media_id"]}

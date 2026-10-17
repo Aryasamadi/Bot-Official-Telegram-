@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import httpx
 from newsbot import config
 from newsbot.db import q, gget, _safe_fields
+from newsbot.secret_store import decrypt as _sec_decrypt, encrypt as _sec_encrypt   # SEC-09 (فاز ۱۲)
 from newsbot.logutils import log, log_event, bump, redact
 from newsbot.timeutils import now_utc, now_iso, parse_dt
 from newsbot.concurrency import AI_SEM, model_lock, model_busy
@@ -40,10 +41,11 @@ def get_model(mid): return q("SELECT * FROM ai_models WHERE id=?", (mid,), one=T
 def add_model(base_url, api_key, model, name="", priority=10, temperature=0.5, max_tokens=2500, owner_id=None):
     base_url = str(base_url).strip().rstrip("/"); model = str(model).strip(); kind = detect_kind(base_url)
     name = (name or f"{hostname(base_url) or kind}").strip()[:40]
-    return q("INSERT INTO ai_models(name,kind,base_url,api_key,model,priority,temperature,max_tokens,owner_id) VALUES(?,?,?,?,?,?,?,?,?)", (name, kind, base_url, api_key.strip(), model, priority, temperature, max_tokens, owner_id), commit=True)
+    return q("INSERT INTO ai_models(name,kind,base_url,api_key,model,priority,temperature,max_tokens,owner_id) VALUES(?,?,?,?,?,?,?,?,?)", (name, kind, base_url, _sec_encrypt(api_key.strip()), model, priority, temperature, max_tokens, owner_id), commit=True)
 
 def update_model(mid, **f):
     if "base_url" in f: f["base_url"] = str(f["base_url"]).strip().rstrip("/"); f["kind"] = detect_kind(f["base_url"])
+    if "api_key" in f: f["api_key"] = _sec_encrypt(str(f["api_key"]).strip())   # SEC-09: کلید همیشه رمزنگاری‌شده ذخیره می‌شود
     _safe_fields("ai_models", f)
     q("UPDATE ai_models SET " + ", ".join(f"{k}=?" for k in f) + " WHERE id=?", (*f.values(), mid), commit=True)
 
@@ -116,7 +118,7 @@ def tokens_today():
     except Exception: return {"calls": 0, "prompt": 0, "completion": 0}
 
 async def _call_model(m, system, user):
-    kind = m["kind"] or detect_kind(m["base_url"]); base = (m["base_url"] or "").rstrip("/"); key = m["api_key"] or ""; model = m["model"]; temp = 0.5 if m["temperature"] is None else float(m["temperature"]); mx = int(m["max_tokens"] or 2500)
+    kind = m["kind"] or detect_kind(m["base_url"]); base = (m["base_url"] or "").rstrip("/"); key = _sec_decrypt(m["api_key"] or ""); model = m["model"]; temp = 0.5 if m["temperature"] is None else float(m["temperature"]); mx = int(m["max_tokens"] or 2500)
     if kind == "anthropic":
         url = base + ("/messages" if base.endswith("/v1") else "/v1/messages")
         r = await _post(url, headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}, json={"model": model, "max_tokens": mx, "temperature": temp, "system": system, "messages": [{"role": "user", "content": user}]})

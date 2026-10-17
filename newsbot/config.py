@@ -1,71 +1,136 @@
 # -*- coding: utf-8 -*-
 """تمام متغیرهای محیطی و ثابت‌های سراسری.
-این ماژول هیچ وابستگی داخلی ندارد (اولین ماژولی که لود می‌شود)."""
+این ماژول هیچ وابستگی داخلی ندارد (اولین ماژولی که لود می‌شود).
+
+فاز ۱۲ (CFG-01/02/03/09):
+  • env عددی نامعتبر دیگر import را crash نمی‌کند — پیش‌فرض + ثبت در CONFIG_ERRORS
+    (preflight این فهرست را به‌صورت خطای قابل‌اقدام و پیش از راه‌اندازی نشان می‌دهد).
+  • SUPER_ADMIN_IDS توکن نامعتبر را بی‌صدا حذف نمی‌کند؛ در CONFIG_ERRORS ثبت می‌شود.
+  • مسیر .env صریح و نسبت به ریشهٔ پروژه است (رفتار مستقل از CWD).
+  • کلیدهای state زنده (BOT_USERNAME/NOTIFY_*) به newsbot/runtime.py منتقل شدند (ARCH-05).
+"""
 import os
+from pathlib import Path
 from contextvars import ContextVar
 from datetime import timezone
 from dotenv import load_dotenv
-load_dotenv()
+
+# envهای نامعتبر import را متوقف نمی‌کنند؛ این‌جا جمع می‌شوند تا preflight یک‌جا نشان دهد
+CONFIG_ERRORS = []
+
+
+def _env_raw(name):
+    raw = os.getenv(name)
+    return None if raw is None or not raw.strip() else raw.strip()
+
+
+def _clamp(v, lo, hi):
+    if lo is not None and v < lo: v = lo
+    if hi is not None and v > hi: v = hi
+    return v
+
+
+def _env_int(name, default, lo=None, hi=None):
+    raw = _env_raw(name)
+    if raw is None:
+        return default
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        CONFIG_ERRORS.append(f"{name}='{raw}' عدد صحیح نیست ⇒ پیش‌فرض {default} استفاده شد")
+        return default
+    fixed = _clamp(v, lo, hi)
+    if fixed != v:
+        CONFIG_ERRORS.append(f"{name}={v} بیرون از بازهٔ مجاز ⇒ به {fixed} محدود شد")
+    return fixed
+
+
+def _env_float(name, default, lo=None, hi=None):
+    raw = _env_raw(name)
+    if raw is None:
+        return default
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        CONFIG_ERRORS.append(f"{name}='{raw}' عدد نیست ⇒ پیش‌فرض {default} استفاده شد")
+        return default
+    fixed = _clamp(v, lo, hi)
+    if fixed != v:
+        CONFIG_ERRORS.append(f"{name}={v} بیرون از بازهٔ مجاز ⇒ به {fixed} محدود شد")
+    return fixed
+
+
+# CFG-09: مسیر صریح نسبت به ریشهٔ پروژه (newsbot/..) — رفتار وابسته به CWD حذف شد
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ── هویت و دسترسی ──
 BOT_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
-SUPER_ADMIN_IDS = {int(x) for x in os.getenv("SUPER_ADMIN_IDS", "").split(",") if x.strip().isdigit() and int(x) > 0}
-BOT_USERNAME = ""                      # در post_init از تلگرام خوانده می‌شود
-NOTIFY_SUPER = None                    # async fn(text, kb=None) — در post_init ست می‌شود
-NOTIFY_USER = None                     # async fn(uid, text, kb=None)
+_su_bad, SUPER_ADMIN_IDS = [], set()
+for _tok in os.getenv("SUPER_ADMIN_IDS", "").split(","):
+    _tok = _tok.strip()
+    if not _tok:
+        continue
+    if _tok.isdigit() and int(_tok) > 0:
+        SUPER_ADMIN_IDS.add(int(_tok))
+    else:
+        _su_bad.append(_tok)
+if _su_bad:
+    CONFIG_ERRORS.append("SUPER_ADMIN_IDS: ورودی نامعتبر نادیده گرفته شد: " + ", ".join(_su_bad))
+# ARCH-05 (فاز ۱۲): BOT_USERNAME و NOTIFY_SUPER/NOTIFY_USER در newsbot/runtime.py هستند
+# (state زندهٔ زمان‌اجرا نباید داخل ماژول پیکربندی env بنشیند).
 
 # ── دیتابیس ──
 DB_FILE = os.getenv("DB_FILE", "newsbot.db")
 DB_BACKEND = os.getenv("DB_BACKEND", "sqlite").strip().lower()      # sqlite | d1
 CF_D1_DATABASE_ID = os.getenv("CF_D1_DATABASE_ID", "").strip()
 CF_D1_TOKEN = os.getenv("CF_D1_TOKEN", "").strip() or os.getenv("CF_API_TOKEN", "").strip()
-D1_TIMEOUT = float(os.getenv("D1_TIMEOUT", "30"))
+D1_TIMEOUT = _env_float("D1_TIMEOUT", 30.0, 1.0, 600.0)
 
 # ── نگهداری داده ──
-DATA_TTL_HOURS = int(os.getenv("DATA_TTL_HOURS", "72"))
-DEDUP_TTL_HOURS = int(os.getenv("DEDUP_TTL_HOURS", "72"))
-DEEPLINK_TTL_DAYS = int(os.getenv("DEEPLINK_TTL_DAYS", "30"))
+DATA_TTL_HOURS = _env_int("DATA_TTL_HOURS", 72)
+DEDUP_TTL_HOURS = _env_int("DEDUP_TTL_HOURS", 72)
+DEEPLINK_TTL_DAYS = _env_int("DEEPLINK_TTL_DAYS", 30)
 DEEPLINK_KEEP_MIN = 5000
 # DB-23 / تصمیم ۱۴ (۱۷ اکتبر ۲۰۲۶): آرشیو مقالات قدیمی‌تر از این آستانه — همراه بکاپ پیش از حذف
-ARCHIVE_DAYS = max(30, int(os.getenv("ARCHIVE_DAYS", "365")))
+ARCHIVE_DAYS = max(30, _env_int("ARCHIVE_DAYS", 365, 30, 3650))
 ARCHIVE_BACKUP_KEEP = 2      # تعداد فایل‌های بکاپ آرشیو که نگه داشته می‌شود
 
 # ── تلگرام ──
 API_BASE = os.getenv("TELEGRAM_API_BASE", "").strip()
 MEDIA_UPLOAD_MB = 2000 if API_BASE else 50
-MAX_MEDIA_MB = max(1, min(int(os.getenv("MAX_MEDIA_MB", "50")), MEDIA_UPLOAD_MB))
+MAX_MEDIA_MB = max(1, min(_env_int("MAX_MEDIA_MB", 50, 1), MEDIA_UPLOAD_MB))
 MAX_MEDIA_BYTES = MAX_MEDIA_MB * 1024 * 1024
-MAX_PAGE_BYTES = int(os.getenv("MAX_PAGE_MB", "8")) * 1024 * 1024
+MAX_PAGE_BYTES = _env_int("MAX_PAGE_MB", 8, 1) * 1024 * 1024
 CAPTION_LIMIT, MSG_LIMIT = 1024, 4096
-RETRY_AFTER_MAX = int(os.getenv("RETRY_AFTER_MAX", "120"))
+RETRY_AFTER_MAX = _env_int("RETRY_AFTER_MAX", 120, 5, 600)
 # ARCH-02 (فاز ۷): سقفِ کلِ یک درخواست fetch/دانلود رسانه — httpx فقط per-read timeout دارد
-FETCH_TOTAL_SEC = max(5, int(os.getenv("FETCH_TOTAL_SEC", "60")))
-MEDIA_TOTAL_SEC = max(10, int(os.getenv("MEDIA_TOTAL_SEC", "600")))
+FETCH_TOTAL_SEC = max(5, _env_int("FETCH_TOTAL_SEC", 60, 5, 3600))
+MEDIA_TOTAL_SEC = max(10, _env_int("MEDIA_TOTAL_SEC", 600, 10, 7200))
 # PLB-10 (فاز ۷): سقف احترام به Retry-After در retryهای کشف خوراک
-FEED_RETRY_AFTER_MAX = max(1, int(os.getenv("FEED_RETRY_AFTER_MAX", "15")))
+FEED_RETRY_AFTER_MAX = max(1, _env_int("FEED_RETRY_AFTER_MAX", 15, 1, 300))
 
 # ── محتوا ──
-MAX_ARTICLE_CHARS = int(os.getenv("MAX_ARTICLE_CHARS", "120000"))
-MAX_ARTICLE_PAGES = int(os.getenv("MAX_ARTICLE_PAGES", "5"))
+MAX_ARTICLE_CHARS = _env_int("MAX_ARTICLE_CHARS", 120000)
+MAX_ARTICLE_PAGES = _env_int("MAX_ARTICLE_PAGES", 5)
 BOT_FULL_MAX = 20000
-BOT_FULL_HARD_MAX = int(os.getenv("BOT_FULL_HARD_MAX", "60000"))
+BOT_FULL_HARD_MAX = _env_int("BOT_FULL_HARD_MAX", 60000)
 POST_LIMIT_DEFAULT = 900
 POST_LIMIT_MAX = 900
 
 # ── هوش مصنوعی ──
-AI_INPUT_TEXT_CHARS = int(os.getenv("AI_INPUT_TEXT_CHARS", "8000"))
-AI_MERGE_MAX_DEPTH = int(os.getenv("AI_MERGE_MAX_DEPTH", "3"))
-AI_MAX_CALLS_PER_ARTICLE = int(os.getenv("AI_MAX_CALLS_PER_ARTICLE", "12"))
-AI_ARTICLE_TIME_BUDGET = int(os.getenv("AI_ARTICLE_TIME_BUDGET", "240"))
-AI_MAX_MODEL_ATTEMPTS = int(os.getenv("AI_MAX_MODEL_ATTEMPTS", "6"))
-AI_CONTENT_RETRY_MODELS = int(os.getenv("AI_CONTENT_RETRY_MODELS", "1"))
-AI_CACHE_TTL_DAYS = int(os.getenv("AI_CACHE_TTL_DAYS", "14"))
-AI_DAILY_FREE = int(os.getenv("AI_DAILY_FREE", "20"))     # BIZ-01: سقف روزانهٔ AI کاربر بدون پلن/پلن رایگان
-AI_DAILY_PAID = int(os.getenv("AI_DAILY_PAID", "200"))    # BIZ-01: سقف روزانهٔ AI کاربر پولی (ابرادمین نامحدود)
+AI_INPUT_TEXT_CHARS = _env_int("AI_INPUT_TEXT_CHARS", 8000)
+AI_MERGE_MAX_DEPTH = _env_int("AI_MERGE_MAX_DEPTH", 3)
+AI_MAX_CALLS_PER_ARTICLE = _env_int("AI_MAX_CALLS_PER_ARTICLE", 12)
+AI_ARTICLE_TIME_BUDGET = _env_int("AI_ARTICLE_TIME_BUDGET", 240)
+AI_MAX_MODEL_ATTEMPTS = _env_int("AI_MAX_MODEL_ATTEMPTS", 6)
+AI_CONTENT_RETRY_MODELS = _env_int("AI_CONTENT_RETRY_MODELS", 1)
+AI_CACHE_TTL_DAYS = _env_int("AI_CACHE_TTL_DAYS", 14)
+AI_DAILY_FREE = _env_int("AI_DAILY_FREE", 20)     # BIZ-01: سقف روزانهٔ AI کاربر بدون پلن/پلن رایگان
+AI_DAILY_PAID = _env_int("AI_DAILY_PAID", 200)    # BIZ-01: سقف روزانهٔ AI کاربر پولی (ابرادمین نامحدود)
 PROMPT_VERSION = "p5-1"
-MODEL_BACKOFF_MAX_MIN = int(os.getenv("MODEL_BACKOFF_MAX_MIN", "120"))
+MODEL_BACKOFF_MAX_MIN = _env_int("MODEL_BACKOFF_MAX_MIN", 120)
 MODEL_PROBE_MIN = 10
-MODEL_PROBE_BATCH = int(os.getenv("MODEL_PROBE_BATCH", "3"))
+MODEL_PROBE_BATCH = _env_int("MODEL_PROBE_BATCH", 3)
 
 # ── Cloudflare KV (آینه‌ی اختیاری «بیشتر») ──
 CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID", "")
@@ -75,17 +140,26 @@ CF_ENABLED = bool(CF_ACCOUNT_ID and CF_KV_NAMESPACE_ID and CF_API_TOKEN)
 
 # ── ارجاع (Referral) ──
 REFERRAL_ENABLED = os.getenv("REFERRAL_ENABLED", "1").strip() == "1"
-REFERRAL_PERCENT = max(0.0, min(50.0, float(os.getenv("REFERRAL_PERCENT", "10"))))
-# سقف تعداد اعتبارهای پرداخت‌محور برای هر معرف (core_referrals). قبلاً این متغیر در config نبود
-# و .env.example آن را مستند می‌کرد ⇒ هر مسیر اعتبار ارجاع با AttributeError می‌ترکید.
-REFERRAL_MAX_PER_USER = max(0, int(os.getenv("REFERRAL_MAX_PER_USER", "50")))
+# CFG-03 (فاز ۱۲): اعتبارسنجی زنده — مقدار خارج از بازه همین‌جا کلمپ و در CONFIG_ERRORS ثبت می‌شود
+REFERRAL_PERCENT = _env_float("REFERRAL_PERCENT", 10.0, 0.0, 50.0)
+# REF-3/تصمیم ۸ (فاز ۱۲): سقف «تعداد» منسوخ شد — پاداش با هر خرید تعلق می‌گیرد و سقف اختیاریِ
+# مبلغی از پنل سوپرادمین (تنظیم ref_cap_amount؛ ۰ = نامحدود) اعمال می‌شود. این متغیر فقط برای
+# سازگاری importهای قدیمی نگه داشته شده و هیچ مسیری از مقدار آن استفاده نمی‌کند.
+REFERRAL_MAX_PER_USER = max(0, _env_int("REFERRAL_MAX_PER_USER", 50))
+
+# ── امنیت (SEC-09 / تصمیم ۱۰-الف، فاز ۱۲) ──
+# کلید رمزنگاری کلیدهای AI در حالت سکون؛ هر رشتهٔ دلخواه (با SHA-256 به کلید Fernet تبدیل می‌شود).
+# خالی ⇒ بدون رمزنگاری (سازگاری با نصب‌های موجود؛ استارت هشدار می‌دهد اگر کلید متن ساده وجود داشته باشد).
+SECRETS_KEY = os.getenv("SECRETS_KEY", "").strip()
+# فقط برای پرووایدرهای AI محلی (Ollama/LM Studio): اجازهٔ مقصد خصوصی برای base_url مدل
+ALLOW_PRIVATE_MODEL_HOSTS = os.getenv("ALLOW_PRIVATE_MODEL_HOSTS", "").strip() == "1"
 
 # ── کانال اجباری (فقط برای ادمین‌ها) ──
 MANDATORY_CHANNEL_ID = os.getenv("MANDATORY_CHANNEL_ID", "").strip()
 MANDATORY_CHANNEL_USERNAME = os.getenv("MANDATORY_CHANNEL_USERNAME", "").strip()
 
 # ── زمان ──
-DEFAULT_UTC_OFFSET = float(os.getenv("DEFAULT_UTC_OFFSET", "3.5"))
+DEFAULT_UTC_OFFSET = _env_float("DEFAULT_UTC_OFFSET", 3.5, -12.0, 14.0)
 # ARCH-10 (فاز ۷ · تصمیم ۱۱): منطقه‌ی پیش‌فرض با نام IANA؛ خالی ⇒ از DEFAULT_UTC_OFFSET استخراج می‌شود
 DEFAULT_TZ = os.getenv("DEFAULT_TZ", "").strip()
 UTC = timezone.utc
@@ -94,34 +168,34 @@ LANGS = ("fa", "en")
 # ── منبع و مدل ──
 SOURCE_COOLDOWN_MIN = 10
 SOURCE_FAIL_LIMIT = 3
-SOURCE_PAUSE_MIN = int(os.getenv("SOURCE_PAUSE_MIN", "30"))
-MAX_DAILY_POSTS_CAP = int(os.getenv("MAX_DAILY_POSTS_CAP", "500"))
-MIN_INTERVAL = int(os.getenv("MIN_INTERVAL", "30"))
+SOURCE_PAUSE_MIN = _env_int("SOURCE_PAUSE_MIN", 30)
+MAX_DAILY_POSTS_CAP = _env_int("MAX_DAILY_POSTS_CAP", 500)
+MIN_INTERVAL = _env_int("MIN_INTERVAL", 30)
 MAX_LOOKBACK = 168
 MAX_PPC = 5
 
 # ── هم‌زمانی و زمان‌بندی ──
-AI_CONCURRENCY = int(os.getenv("AI_CONCURRENCY", "3"))
-FETCH_CONCURRENCY = int(os.getenv("FETCH_CONCURRENCY", "8"))
-CYCLE_CONCURRENCY = int(os.getenv("CYCLE_CONCURRENCY", "2"))
-MAX_CYCLES_PER_TICK = int(os.getenv("MAX_CYCLES_PER_TICK", "4"))
-RECOVER_EVERY_MIN = int(os.getenv("RECOVER_EVERY_MIN", "5"))
-STALE_UPDATE_MAX_MIN = int(os.getenv("STALE_UPDATE_MAX_MIN", "60"))
-TICK_SECONDS = int(os.getenv("TICK_SECONDS", "120"))
-TEST_COOLDOWN_SEC = int(os.getenv("TEST_COOLDOWN_SEC", "120"))
-CB_RATE = float(os.getenv("CB_RATE", "0.6"))
-ABUSE_RATE_SEC = float(os.getenv("ABUSE_RATE_SEC", "1.0"))
+AI_CONCURRENCY = _env_int("AI_CONCURRENCY", 3)
+FETCH_CONCURRENCY = _env_int("FETCH_CONCURRENCY", 8)
+CYCLE_CONCURRENCY = _env_int("CYCLE_CONCURRENCY", 2)
+MAX_CYCLES_PER_TICK = _env_int("MAX_CYCLES_PER_TICK", 4)
+RECOVER_EVERY_MIN = _env_int("RECOVER_EVERY_MIN", 5)
+STALE_UPDATE_MAX_MIN = _env_int("STALE_UPDATE_MAX_MIN", 60)
+TICK_SECONDS = _env_int("TICK_SECONDS", 120)
+TEST_COOLDOWN_SEC = _env_int("TEST_COOLDOWN_SEC", 120)
+CB_RATE = _env_float("CB_RATE", 0.6)
+ABUSE_RATE_SEC = _env_float("ABUSE_RATE_SEC", 1.0)
 # SEC-03 (فاز ۳): محدودیت نرخ سراسری per-user — سقف به‌روزرسانی از هر نوع (دستور/کال‌بک/پیام) در پنجرهٔ ثانیه
-GLOBAL_RATE_MAX = int(os.getenv("GLOBAL_RATE_MAX", "40"))
-GLOBAL_RATE_WINDOW = float(os.getenv("GLOBAL_RATE_WINDOW", "10"))
-MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "500"))     # backpressure صف ready هر کانال
-PAY_STUCK_MIN = int(os.getenv("PAY_STUCK_MIN", "10"))        # بازیابی پرداخت گیرکرده در processing
+GLOBAL_RATE_MAX = _env_int("GLOBAL_RATE_MAX", 40)
+GLOBAL_RATE_WINDOW = _env_float("GLOBAL_RATE_WINDOW", 10.0)
+MAX_QUEUE_SIZE = _env_int("MAX_QUEUE_SIZE", 500)     # backpressure صف ready هر کانال
+PAY_STUCK_MIN = _env_int("PAY_STUCK_MIN", 10)        # بازیابی پرداخت گیرکرده در processing
 
 # ── ماندگاری محدودیت نرخ حساس ──
 RATE_PERSIST_PREFIXES = ("test:", "req:", "rcpt:", "tok:", "cmd:", "sup:", "srcadd:", "srcr:", "dl:", "disc:", "mtest:")
 
 # UISEC-06 (فاز ۶): مهلت state فرم‌های ورودی — پس از این مدت state منقضی و ورودی بعدی رد می‌شود
-AWAIT_TTL_SEC = int(os.getenv("AWAIT_TTL_SEC", "1800"))
+AWAIT_TTL_SEC = _env_int("AWAIT_TTL_SEC", 1800)
 
 # ── ابزارهای مشترک ──
 _FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")

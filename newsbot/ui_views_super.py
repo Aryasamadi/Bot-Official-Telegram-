@@ -16,7 +16,8 @@ from newsbot.core_channels import list_channels, mandatory_cfg
 from newsbot.core_sources import count_sources
 from newsbot.core_articles import count_articles
 from newsbot.core_payments import pay_pending, pay_get, pay_set, pay_approve_atomic, PayError
-from newsbot.core_referrals import credit_referral_on_payment
+from newsbot.core_referrals import credit_referral_on_payment, referral_cfg
+from newsbot.secret_store import decrypt as decrypt_key   # SEC-09: نمایش ماسک‌شدهٔ کلید رمزنگاری‌شده
 from newsbot.ai_models import list_models, get_model
 from newsbot.text_format import strip_tags
 from newsbot.ui_i18n import tr, gtext, TEXT_KEYS
@@ -121,12 +122,20 @@ def _code_version():
     return "unknown"
 
 
+async def view_s_ref(update, context):
+    """REF-3/تصمیم ۸ (فاز ۱۲): تنظیم درصد پاداش و سقف مبلغی از پنل سوپرادمین."""
+    lang = L(update); pct, cap = referral_cfg()
+    text = tr(lang, "s_ref_title") + tr(lang, "s_ref_line_p", p=f"{pct:g}") + tr(lang, "s_ref_line_c", c=(tr(lang, "s_ref_unlimited") if cap <= 0 else _fmt_price(cap)))
+    if not config.REFERRAL_ENABLED: text += "\n" + tr(lang, "ref_off")
+    kb = [[B(tr(lang, "s_ref_setp"), "s:ref_p"), B(tr(lang, "s_ref_setc"), "s:ref_c")], [B(tr(lang, "back"), "s:home")]]
+    await render(update, context, text, kb)
+
 async def view_super_home(update, context):
     lang = L(update); models = list_models()
     down = sum(1 for m in models if m["active"] and m["status"] == "down"); auto = gget("automation_enabled", True); n_pay = len(pay_pending())
     text = tr(lang, "s_title", m=len(models), ms=tr(lang, "s_all_ok") if not down else tr(lang, "s_down", n=down), a=len(list_users("admin")), u=len(list_users()), p=n_pay, dc=len(disc_list()), due=gget("load_due", 0), hb=ago_text(gget("heartbeat"), lang))
     kb = [[B(tr(lang, "s_report"), "s:report"), B(tr(lang, "s_health"), "s:health")], [B(tr(lang, "s_plans"), "s:plans"), B(tr(lang, "s_discs"), "s:discs")], [B(tr(lang, "s_users"), "s:users:0"), B(tr(lang, "s_admins"), "s:admins:0")],
-          [B(tr(lang, "s_models"), "s:models"), B(tr(lang, "s_pays", n=n_pay), "s:pays")], [B(tr(lang, "s_mand"), "s:mand"), B(tr(lang, "s_texts"), "s:texts")], [B(tr(lang, "s_bc"), "s:bc"), B(tr(lang, "s_auto", i=onoff(auto)), "s:auto")], [B(tr(lang, "s_me"), "a:home")]]
+          [B(tr(lang, "s_models"), "s:models"), B(tr(lang, "s_pays", n=n_pay), "s:pays")], [B(tr(lang, "s_mand"), "s:mand"), B(tr(lang, "s_texts"), "s:texts")], [B(tr(lang, "s_bc"), "s:bc"), B(tr(lang, "s_auto", i=onoff(auto)), "s:auto")], [B(tr(lang, "s_ref"), "s:ref")], [B(tr(lang, "s_me"), "a:home")]]
     await render(update, context, text, kb)
 
 async def view_s_mand(update, context):
@@ -210,7 +219,7 @@ async def view_s_models(update, context):
 async def view_s_model(update, context, mid):
     lang = L(update); m = get_model(mid)
     if not m: return await view_s_models(update, context)
-    key = m["api_key"] or ""; masked = (key[:3] + "…" + key[-2:]) if len(key) > 12 else "—"   # FIX v4: ماسک سخت‌گیرانه‌تر (قبلاً ۹ کاراکتر واقعی لو می‌رفت)
+    key = decrypt_key(m["api_key"] or ""); masked = (key[:3] + "…" + key[-2:]) if len(key) > 12 else "—"   # FIX v4: ماسک سخت‌گیرانه‌تر (قبلاً ۹ کاراکتر واقعی لو می‌رفت)
     text = tr(lang, "s_model_view", name=esc(m["name"]), kind=esc(m["kind"]), model=esc(m["model"]), base=esc(m["base_url"]), key=esc(masked), pr=m["priority"] or 10, temp=0.5 if m["temperature"] is None else m["temperature"], mx=m["max_tokens"] or 2500, st=tr(lang, "s_m_off" if not m["active"] else "s_m_ok" if m["status"] == "ok" else "s_m_down"), ok=m["ok_count"] or 0, fc=m["fail_count"] or 0, lo=ago_text(m["last_ok"], lang), lf=ago_text(m["last_fail"], lang), err=f"\n<code>{esc(redact(m['last_error'] or '')[:150])}</code>" if m["last_error"] else "")
     kb = [[B(tr(lang, "s_model_test"), f"s:model_test:{mid}"), B(tr(lang, "toggle"), f"s:model_t:{mid}")]] + pairs([B(f"✏️ {f[2] if lang == 'en' else f[1]}", f"s:model_e:{mid}:{f[0]}") for f in MODEL_FIELDS]) + [[B(tr(lang, "s_model_del"), f"s:model_d:{mid}")], [B(tr(lang, "back"), "s:models")]]
     if m["owner_id"] is None:
@@ -269,7 +278,7 @@ async def _decide_pay_locked(update, context, rid, approve, from_list, lang):
             try: paid_num = float(str(r["final_price"] or "").strip())
             except (TypeError, ValueError): paid_num = None
             if paid_num is None: paid_num = _price_num(p)
-            res = credit_referral_on_payment(r["user_id"], paid_num)
+            res = credit_referral_on_payment(r["user_id"], paid_num, ref_key=f"pay:{rid}")   # REF-3: پاداش هر خرید (idempotent per-payment)
             if res:   # معرف مطلع می‌شود: مبلغ دقیق واریزشده به کیف پول
                 ref_id, amt = res
                 await notify_user_fn(ref_id, tr(user_lang(ref_id) or "fa", "ref_reward", amount=_fmt_price(amt)))

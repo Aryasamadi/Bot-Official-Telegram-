@@ -13,7 +13,7 @@ from newsbot.core_channels import relocalize_all, mandatory_configured, mandator
 from newsbot.core_plans import get_plan, plan_txt, list_plans, assign_plan, upgrade_quote, _fmt_price
 from newsbot.core_discounts import disc_valid, discount_price
 from newsbot.core_payments import pay_pending_for
-from newsbot.core_referrals import referral_stats, referral_link
+from newsbot.core_referrals import referral_stats, referral_link, referral_cfg
 from newsbot.ui_i18n import tr, gtext
 from newsbot.ui_widgets import B, U, esc, render, popup, pairs, L, uname
 from newsbot.ui_views_admin import view_admin_home
@@ -54,10 +54,11 @@ async def view_referral(update, context):
         await popup(update, context, tr(lang, "ref_off")); return await view_user_home(update, context)
     try:
         invited, earned = referral_stats(uid)
-        text = (tr(lang, "ref_title", p=f"{config.REFERRAL_PERCENT:g}")
+        pct, cap = referral_cfg()   # REF-3/تصمیم ۸ (فاز ۱۲): مقدار زندهٔ پنل (درصد + سقف مبلغی)
+        text = (tr(lang, "ref_title", p=f"{pct:g}")
                 + tr(lang, "ref_line", n=invited, c=_fmt_price(earned)))
-        if config.REFERRAL_MAX_PER_USER > 0:   # REF-3: شفافیت سقف در UI (مقدار از config؛ تثبیت عدد با تصمیم ۸)
-            text += tr(lang, "ref_cap_line", cap=config.REFERRAL_MAX_PER_USER)
+        if cap > 0:
+            text += tr(lang, "ref_cap_line", cap=_fmt_price(cap))
         text += tr(lang, "ref_link", link=referral_link(uid))
         await render(update, context, text, [[B(tr(lang, "back"), "home")]])
     except Exception as e:

@@ -179,7 +179,11 @@ def test_migrate_ensure_schema_creates_meta_and_trigger():
     class _AC:
         def __init__(self): self.sqls = []
         async def post(self, url, json=None, headers=None, timeout=None):
-            self.sqls.append((json or {}).get("sql", ""))
+            payload = json or {}
+            if "batch" in payload:   # DB-24: اسکیما حالا در یک batch اتمیک می‌رود
+                self.sqls.extend(p.get("sql", "") for p in payload["batch"])
+            else:
+                self.sqls.append(payload.get("sql", ""))
             return _Resp()
 
     ac = _AC()

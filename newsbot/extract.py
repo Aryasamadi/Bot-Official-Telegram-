@@ -9,7 +9,7 @@ import trafilatura
 from bs4 import BeautifulSoup
 from newsbot import config
 from newsbot.discover import _get, _mk_media, _bad_media_url, _ext_kind, clean_url
-from newsbot.timeutils import parse_dt
+from newsbot.timeutils import parse_dt, zone_of
 
 
 def _ld_image(soup):
@@ -129,21 +129,23 @@ def _traf(raw, url):
     try: return json.loads(data) if data else {}
     except Exception: return {}
 
-def _parse_page(raw, url):
+def _parse_page(raw, url, tz=None):
     d = _traf(raw, url); soup = BeautifulSoup(raw, "lxml")
     title = (d.get("title") or _meta(soup, "og:title", "twitter:title") or (soup.h1.get_text(" ", strip=True) if soup.h1 else "") or (soup.title.string if soup.title and soup.title.string else "") or "").strip()
+    # ARCH-11 (فاز ۷): تاریخِ بی‌tz صفحه «ساعت محلی سایت» است → با منطقهٔ کانال برچسب می‌خورد (پیش‌فرض UTC).
+    zone = zone_of(tz) if tz is not None and str(tz).strip() else config.UTC
     pub = None
     if d.get("date"):
-        try: pub = datetime.strptime(d["date"][:10], "%Y-%m-%d").replace(tzinfo=config.UTC).isoformat()
+        try: pub = datetime.strptime(d["date"][:10], "%Y-%m-%d").replace(tzinfo=zone).isoformat()
         except Exception: pub = None
     if not pub:
         for n in ("article:published_time", "og:published_time", "pubdate", "publishdate", "publish-date", "date", "DC.date.issued", "article:modified_time", "og:updated_time"):
-            v = parse_dt(_meta(soup, n))
+            v = parse_dt(_meta(soup, n), tz)
             if v: pub = v.isoformat(); break
     if not pub:
-        t = soup.find("time", datetime=True); v = parse_dt(t["datetime"]) if t else None
+        t = soup.find("time", datetime=True); v = parse_dt(t["datetime"], tz) if t else None
         if not v:
-            m = re.search(r'"datePublished"\s*:\s*"([^"]+)"', raw); v = parse_dt(m.group(1)) if m else None
+            m = re.search(r'"datePublished"\s*:\s*"([^"]+)"', raw); v = parse_dt(m.group(1), tz) if m else None
         pub = v.isoformat() if v else None
     media = _find_media(soup, url); nxt = _next_page_url(soup, url); text = (d.get("text") or "").strip()
     soup_t = _soup_text(soup)
@@ -166,14 +168,15 @@ def _merge_text(a, b):
         seen.add(k); out.append(p.strip())
     return "\n\n".join(out)
 
-async def extract_article(url, fallback_html=""):
-    """کل متن خبر خوانده می‌شود: اگر مقاله چندصفحه‌ای باشد (rel=next) تا MAX_ARTICLE_PAGES صفحه دنبال و به هم دوخته می‌شود."""
+async def extract_article(url, fallback_html="", tz=None):
+    """کل متن خبر خوانده می‌شود: اگر مقاله چندصفحه‌ای باشد (rel=next) تا MAX_ARTICLE_PAGES صفحه دنبال و به هم دوخته می‌شود.
+    tz (ARCH-11): منطقهٔ کانال برای برچسب‌زدن تاریخ‌های بی‌tz صفحه."""
     raw = None
     try:
         r = await _get(url, feed=False)
         if r.status_code == 200 and "html" in r.headers.get("content-type", "text/html").lower(): raw = r.text
     except Exception: pass
-    page = await asyncio.to_thread(_parse_page, raw, url) if raw else {"title": "", "text": "", "published": None, "media": None, "author": None, "site": None, "next": ""}
+    page = await asyncio.to_thread(_parse_page, raw, url, tz) if raw else {"title": "", "text": "", "published": None, "media": None, "author": None, "site": None, "next": ""}
     seen_pages, nxt, hops = {clean_url(url)}, page.get("next") or "", 0
     while nxt and hops < max(0, config.MAX_ARTICLE_PAGES - 1) and len(page["text"]) < config.MAX_ARTICLE_CHARS:
         hops += 1
@@ -182,7 +185,7 @@ async def extract_article(url, fallback_html=""):
         try:
             r2 = await _get(nxt, feed=False)
             if r2.status_code != 200: break
-            p2 = await asyncio.to_thread(_parse_page, r2.text, nxt)
+            p2 = await asyncio.to_thread(_parse_page, r2.text, nxt, tz)
         except Exception: break
         if not p2 or len(p2["text"]) < 120: break
         page["text"] = _merge_text(page["text"], p2["text"])

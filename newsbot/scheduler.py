@@ -9,14 +9,14 @@ from newsbot.db import q, gget, gset
 from newsbot.logutils import log, log_event, metrics_text
 from newsbot.timeutils import now_utc, now_iso, parse_dt, fmt_date, ago_text, off_label
 from newsbot.notify import notify_user
-from newsbot.core_users import expiring_users, list_admins, count_users, admin_limits, usage_today, is_super, remaining
+from newsbot.core_users import expiring_users, list_admins, count_users, admin_limits, usage_today, is_super, remaining, channel_posts_today
 from newsbot.core_plans import get_plan, plan_txt, list_plans, recover_stuck_payments
 from newsbot.core_channels import list_channels, get_settings, get_channel, in_quiet
 from newsbot.core_sources import list_sources
 from newsbot.core_articles import ready_count, count_articles, recover_publications
 from newsbot.core_payments import pay_pending
 from newsbot.core_discounts import disc_list
-from newsbot.ai_models import list_models, probe_down_models, any_model_available
+from newsbot.ai_models import list_models, probe_down_models, any_model_available, tokens_today
 from newsbot.cycle import run_channel_cycle, flush_ready
 from newsbot.ui_i18n import tr
 
@@ -127,6 +127,7 @@ def report_text(uid=None, cid=None, lang="fa"):
     fa = lang != "en"; hb = gget("heartbeat"); hb_age = (now_utc() - parse_dt(hb)).total_seconds() if hb else 1e9; hb_icon = "🟢" if hb_age < config.TICK_SECONDS * 4 else "🔴"
     if cid is None:
         roles = {r["role"]: r["c"] for r in count_users()}; models = list_models(); ok = sum(1 for m in models if m["active"] and m["status"] == "ok"); down = sum(1 for m in models if m["active"] and m["status"] == "down")
+        tk = tokens_today()   # PLB-03 (فاز ۷): متریک توکن/هزینهٔ AI از جدول ai_usage
         size = os.path.getsize(config.DB_FILE) / 1024 / 1024 if os.path.exists(config.DB_FILE) else 0; auto = gget("automation_enabled", True)
         # یک اسکن گروه‌بندی‌شده به‌جای ۵ کوئری شمارش جدا (گزارش مالک روی دیتابیس بزرگ محسوس بود)
         _a24 = {r["status"]: r["c"] for r in q("SELECT status, COUNT(*) c FROM articles WHERE created_at >=? GROUP BY status", ((now_utc() - timedelta(hours=24)).isoformat(),))}
@@ -139,6 +140,7 @@ def report_text(uid=None, cid=None, lang="fa"):
                        f"👥 کاربران {sum(roles.values())} · مدیران {roles.get('admin', 0)} · کلان {roles.get('super', 0)}\n"
                        f"🧾 پلن‌ها {len(list_plans())} · 🛎 پرداخت معلق {len(pay_pending())} · 🎟 کد تخفیف {len(disc_list())}\n"
                        f"🤖 مدل‌ها ✅{ok} 🔴{down} از {len(models)}\n"
+                       f"🧮 توکن AI ۲۴h: {tk['calls']} فراخوانی · ↑{tk['prompt']} ↓{tk['completion']}\n"
                        f"📢 کانال‌ها {q('SELECT COUNT(*) c FROM channels', one=True)['c']} · 🌐 منابع فعال {q('SELECT COUNT(*) c FROM sources WHERE active=1', one=True)['c']}\n"
                        f"📰 ۲۴h · 🔎 کشف {n()} · ✅ منتشر {n('published')} · ♻️ ردشده {n('rejected')}\n"
                        f"❌ ناموفق {n('failed')} · 📝 صف {nq}\n"
@@ -151,13 +153,14 @@ def report_text(uid=None, cid=None, lang="fa"):
                 f"👥 users {sum(roles.values())} · admins {roles.get('admin', 0)} · super {roles.get('super', 0)}\n"
                 f"🧾 plans {len(list_plans())} · 🛎 pending payments {len(pay_pending())} · 🎟 discount codes {len(disc_list())}\n"
                 f"🤖 models ✅{ok} 🔴{down} of {len(models)}\n"
+                f"🧮 AI tokens 24h: {tk['calls']} calls · ↑{tk['prompt']} ↓{tk['completion']}\n"
                 f"📢 channels {q('SELECT COUNT(*) c FROM channels', one=True)['c']} · 🌐 active sources {q('SELECT COUNT(*) c FROM sources WHERE active=1', one=True)['c']}\n"
                 f"📰 24h · 🔎 found {n()} · ✅ published {n('published')} · ♻️ rejected {n('rejected')}\n"
                 f"❌ failed {n('failed')} · 📝 queue {nq}\n"
                 f"🔗 deep links {q('SELECT COUNT(*) c FROM deeplinks', one=True)['c']} · {'☁️ CF KV' if config.CF_ENABLED else '💾 local'} · 💾 {size:.2f} MB\n"
                 f"🕐 cycle {fmt_date(gget('last_cycle_start'), config.DEFAULT_UTC_OFFSET, True)} ➜ {fmt_date(gget('last_cycle_end'), config.DEFAULT_UTC_OFFSET, True)}\n"
                 + metrics_text(lang))
-    s = _gs(cid); ch = get_channel(cid); lim = admin_limits(uid); use = usage_today(uid); off = s["utc_offset"]; cap = lambda v: "∞" if v is None else v
+    s = _gs(cid); ch = get_channel(cid); lim = admin_limits(uid); use = usage_today(uid); off = s.get("tz") or s["utc_offset"]; cap = lambda v: "∞" if v is None else v
     quiet = f"{s['quiet_start']:02d}→{s['quiet_end']:02d}" if s["quiet_start"] is not None and s["quiet_end"] is not None else ("—")
     pname = "∞" if is_super(uid) else (plan_txt(lim["plan"], "name", lang) or ("بدون پلن" if fa else "no plan")); until = f" · {fmt_date(lim['expires'], off)}" if lim["expires"] else ""
     c = lambda st=None: count_articles(cid=cid, hours=24, status=st)
@@ -170,7 +173,7 @@ def report_text(uid=None, cid=None, lang="fa"):
                    f"📰 کشف ۲۴ ساعت: {c()}\n"
                    f"♻️ رد‌شده ۲۴ ساعت: {c('rejected')}\n"
                    f"❌ ناموفق ۲۴ ساعت: {c('failed')}\n\n"
-                   f"📢 پست امروز: {use['posts']}/{cap(lim['daily_posts'])}\n"
+                   f"📢 پست امروز: {use['posts']}/{cap(lim['daily_posts'])} · این کانال: {channel_posts_today(cid, off)}/{cap(s.get('daily_posts_cap'))}\n"
                    f"🧪 تست امروز: {use['tests']}/{cap(lim['daily_tests'])}\n\n"
                    f"⭐ حداقل امتیاز: {s['min_score']}\n"
                    f"🕰 بازهٔ خبر: {s['lookback_hours']} ساعت\n"
@@ -188,7 +191,7 @@ def report_text(uid=None, cid=None, lang="fa"):
             f"📰 Found 24h: {c()}\n"
             f"♻️ Rejected 24h: {c('rejected')}\n"
             f"❌ Failed 24h: {c('failed')}\n\n"
-            f"📢 Posts today: {use['posts']}/{cap(lim['daily_posts'])}\n"
+            f"📢 Posts today: {use['posts']}/{cap(lim['daily_posts'])} · this channel: {channel_posts_today(cid, off)}/{cap(s.get('daily_posts_cap'))}\n"
             f"🧪 Tests today: {use['tests']}/{cap(lim['daily_tests'])}\n\n"
             f"⭐ Min score: {s['min_score']}\n"
             f"🕰 News window: {s['lookback_hours']}h\n"

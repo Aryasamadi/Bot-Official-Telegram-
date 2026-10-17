@@ -103,6 +103,8 @@ async def _cycle(bot, uid, cid, test_mode, progress):
     _cy0 = time.monotonic(); cyid = f"cy{cid}-{secrets.token_hex(2)}"   # شناسهٔ همبستگی این چرخه
     log_ctx(op=cyid, channel=cid, article=None, source=None, model=None, stage="start")
     D = Diag(); res = _res(D); s = get_settings(cid); ch = get_channel(cid); lim = admin_limits(uid); lang = s["ui_lang"]; P = PROG[lang if lang in PROG else "fa"]
+    ch_tz = s.get("tz") or s["utc_offset"]   # ARCH-10/11: منطقهٔ کانال برای تاریخ‌های بی‌tz فید/صفحه و مرزهای روز
+    ran = False
     async def p(pct, txt):
         if progress:
             try: await progress(pct, txt)
@@ -113,7 +115,10 @@ async def _cycle(bot, uid, cid, test_mode, progress):
         _metrics["queue"] = ready_count(cid)
         gset("metrics", _metrics)                      # snapshot ماندگار (بعد از restart هم دیده می‌شود)
         log_event("INFO", f"چرخه تمام شد در {_ms}ms (found={res.get('found', 0)} accepted={res.get('accepted', 0)} published={res.get('published', 0)})")
-        res["msg"] = D.render(lang, with_stage=False); update_settings(cid, last_end=now_iso(), last_result=res["msg"][:1500], last_diag=D.to_json()); return res
+        res["msg"] = D.render(lang, with_stage=False)
+        # PLB-09 (فاز ۷): last_run فقط اگر خط لوله واقعاً آغاز شده باشد به‌روز می‌شود (نه در خروج‌های زودهنگام،
+        # نه وقتی چرخه وسط کار کرش/لغو شده) — وگرنه یک شکست، کانال را تا interval بعدی در سکوت نگه می‌داشت.
+        update_settings(cid, last_end=now_iso(), last_result=res["msg"][:1500], last_diag=D.to_json(), **({"last_run": now_iso()} if ran else {})); return res
     D.stage = "checks"
     if not ch: D.add("no_channel"); return fin()
     if not lim["active"]: D.add("plan_inactive"); D.hint("hint_quota"); return fin()
@@ -127,7 +132,7 @@ async def _cycle(bot, uid, cid, test_mode, progress):
     if mandatory_configured(lang):
         okm, _join = await mandatory_membership(bot, uid, lang)
         if not okm: D.add("mand_missing"); D.hint("hint_mand"); return fin()
-    target = 1 if test_mode else min(rem if rem is not None else 99, int(s["posts_per_cycle"])); update_settings(cid, last_run=now_iso()); await p(5, P["start"])
+    target = 1 if test_mode else min(rem if rem is not None else 99, int(s["posts_per_cycle"])); ran = True; await p(5, P["start"])
     # ══ stage 1/5: discover ══ منابع هم‌زمان (FETCH_SEM) و هر منبع مستقل خطا می‌دهد
     D.stage = "discover"; await p(10, P["src"].format(n=len(sources)))
     async def one(src):
@@ -137,7 +142,7 @@ async def _cycle(bot, uid, cid, test_mode, progress):
             nta = parse_dt(src["next_try_after"]) if "next_try_after" in src.keys() else None
             if fc >= config.SOURCE_FAIL_LIMIT and nta and now_utc() < nta: return src, name, None, False, "", "paused"
             if not test_mode and lf and (now_utc() - lf) < timedelta(minutes=config.SOURCE_COOLDOWN_MIN): return src, name, None, False, "", "cooldown"
-            items, changed, method = await discover_source(src, use_cache=not test_mode); return src, name, items, changed, method, None
+            items, changed, method = await discover_source(src, use_cache=not test_mode, tz=ch_tz); return src, name, items, changed, method, None
         except Exception as e: return src, str(src["url"])[:40], None, False, "", str(e)[:80]
     results = await asyncio.gather(*[one(src) for src in sources], return_exceptions=True)
     leftovers = q("SELECT id,url,title,published_at FROM articles WHERE channel_id=? AND status='discovered' AND source_id IN (SELECT id FROM sources WHERE active=1 AND channel_id=articles.channel_id) ORDER BY id DESC LIMIT 10", (cid,))
@@ -224,12 +229,15 @@ async def _cycle(bot, uid, cid, test_mode, progress):
     while i < len(candidates) and not stop:
         chunk = candidates[i:i + 3]; i += len(chunk); D.stage = "extract"
         await p(40 + int(50 * i / len(candidates)), P["extract"].format(i=i, n=len(candidates), t=(chunk[0]["title"] or chunk[0]["url"])[:40]))
-        arts = await asyncio.gather(*[extract_article(c["url"], c["html"]) for c in chunk], return_exceptions=True)
+        arts = await asyncio.gather(*[extract_article(c["url"], c["html"], tz=ch_tz) for c in chunk], return_exceptions=True)
         for c, art in zip(chunk, arts):
             if res["accepted"] >= target: stop = True; break
             aid = c["aid"]; res["processed"] += 1
             src_name = article_src_name(aid) or hostname(c["url"])
-            if not art or isinstance(art, Exception): article_update(aid, status="rejected", reason="extract_failed"); res["rejected"] += 1; cnt["extract"] += 1; step_add(_current_operation.get(), "src_extract_fail", key=src_name, status="fail"); continue
+            if not art or isinstance(art, Exception):
+                # PLB-06 (فاز ۷): شکست استخراج موقتی است (شبکه/فیلتر موقت سایت) و نباید «ردشدهٔ» قطعی شود؛
+                # failed از پنجرهٔ نرم دوباره برگردانده می‌شود (soft_window_candidate وضعیت‌های failed را می‌پذیرد).
+                article_update(aid, status="failed", reason="extract_failed"); res["errors"] += 1; cnt["extract"] += 1; step_add(_current_operation.get(), "src_extract_fail", key=src_name, status="fail"); continue
             if not art["title"]: art["title"] = c["title"] or hostname(c["url"])
             if not art["media"] and c["media"]: art["media"] = c["media"]
             D.stage = "filter"

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from newsbot import config
 from newsbot.db import q, db, _lock, _trx
 from newsbot.logutils import log
-from newsbot.timeutils import now_utc, now_iso, parse_dt, today_str
+from newsbot.timeutils import now_utc, now_iso, parse_dt, today_str, zone_of, offset_now
 
 
 def is_super(uid): return uid in config.SUPER_ADMIN_IDS
@@ -75,8 +75,12 @@ def admin_limits(uid):
                 next_plan=get_plan(u["next_plan_id"]) if u and u["next_plan_id"] else None)
 
 def admin_offset(uid):
+    """آفست جاریِ منطقهٔ کانال نخستِ ادمین — ARCH-10: از نام IANA (یا آفست قدیمی) برای همین لحظه مشتق می‌شود."""
     ch = q("SELECT settings FROM channels WHERE admin_id=? ORDER BY id LIMIT 1", (uid,), one=True)
-    try: return float(json.loads(ch["settings"]).get("utc_offset", config.DEFAULT_UTC_OFFSET)) if ch and ch["settings"] else config.DEFAULT_UTC_OFFSET
+    try:
+        st = json.loads(ch["settings"]) if ch and ch["settings"] else {}
+        val = st.get("tz") or st.get("utc_offset")
+        return offset_now(val) if val is not None else config.DEFAULT_UTC_OFFSET
     except Exception: return config.DEFAULT_UTC_OFFSET
 
 def usage_today(uid):
@@ -121,9 +125,9 @@ def channel_posts_today(cid, off):
         from newsbot.core_channels import get_channel
         ch = get_channel(cid)
         if not ch: return 0
-        off = float(off)
-        loc = now_utc() + timedelta(hours=off)
-        start = datetime(loc.year, loc.month, loc.day, tzinfo=config.UTC) - timedelta(hours=off)
+        z = zone_of(off)   # ARCH-10: نام IANA یا آفست؛ نیمه‌شب محلی DST-aware
+        loc = now_utc().astimezone(z)
+        start = datetime(loc.year, loc.month, loc.day, tzinfo=z).astimezone(config.UTC)
         n = 0
         for r in q("SELECT posted_at FROM posted WHERE channel_id=?", (ch["chat_id"],)):
             d = parse_dt(r["posted_at"])
@@ -150,8 +154,10 @@ def remaining(uid, field="posts", cid=None):
         except Exception: ch_cap = None
         if ch_cap:
             # مرز «امروزِ» سقف روزانه باید بر پایهٔ ساعت محلیِ خودِ کانال باشد، نه آفست ادمینی که چرخه را اجرا کرده؛
-            # فقط اگر کانال آفست ذخیره‌شده نداشت، به آفست ادمین/پیش‌فرض برمی‌گردیم.
-            try: ch_off = float(json.loads((get_channel(cid) or {})["settings"] or "{}").get("utc_offset"))
+            # فقط اگر کانال منطقه‌ای نداشت، به آفست ادمین/پیش‌فرض برمی‌گردیم. (ARCH-10: نام IANA هم پذیرفته می‌شود)
+            try:
+                ch_st = json.loads((get_channel(cid) or {})["settings"] or "{}")
+                ch_off = ch_st.get("tz") or ch_st.get("utc_offset")
             except Exception: ch_off = None
             if ch_off is None: ch_off = admin_offset(uid)
             ch_left = max(0, int(ch_cap) - channel_posts_today(cid, ch_off))

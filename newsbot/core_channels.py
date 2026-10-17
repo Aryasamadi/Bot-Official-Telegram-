@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from newsbot import config
 from newsbot.db import q, db, _lock, _trx, gget, gset
 from newsbot.logutils import log
-from newsbot.timeutils import now_utc, now_iso, parse_dt, tz_of
+from newsbot.timeutils import now_utc, now_iso, parse_dt, zone_of, offset_now, tz_name_for_offset, DEFAULT_TZ
 from newsbot.core_users import user_lang, is_super
 from newsbot.concurrency import ch_lock
 
@@ -270,7 +270,7 @@ def default_settings(lang="fa", channel_username=""):
     lang = lang if lang in config.LANGS else "fa"
     return {"ui_lang": lang, "enabled": True, "mode": "auto", "prompt": DEFAULT_PROMPT[lang], "topic": "", "language": "فارسی" if lang == "fa" else "English",
             "categories": [dict(c) for c in DEFAULT_CATEGORIES[lang]], "criteria": [dict(c) for c in DEFAULT_CRITERIA[lang]], "min_score": 60,
-            "lookback_hours": 72, "allow_undated": True, "quiet_start": None, "quiet_end": None, "utc_offset": config.DEFAULT_UTC_OFFSET,
+            "lookback_hours": 72, "allow_undated": True, "quiet_start": None, "quiet_end": None, "tz": DEFAULT_TZ, "utc_offset": config.DEFAULT_UTC_OFFSET,
             "include_media": True, "include_link": True, "signature": f"@{channel_username}" if channel_username else "@channel", "max_words": 500, "post_limit": config.POST_LIMIT_DEFAULT,
             "strict_ads": False, "interval_minutes": 60, "posts_per_cycle": 1, "hashtags": True, "daily_posts_cap": None,
             "last_run": None, "last_end": None, "last_result": "", "last_diag": None, "last_notified_diag": ""}
@@ -283,6 +283,16 @@ def get_settings(cid):
         except Exception: stored = {}
     base = stored.get("ui_lang") or (user_lang(ch["admin_id"]) if ch else None) or "fa"
     s = default_settings(base if base in config.LANGS else "fa", ch["username"] if ch else ""); s.update(stored); s["ui_lang"] = base if base in config.LANGS else "fa"
+    # ARCH-10 (فاز ۷): ردیف‌های قدیمی فقط utc_offset دارند → نام IANA متناظر استخراج و آفست از
+    # zoneinfo برای همین لحظه مشتق می‌شود (snapshot DST-aware؛ در هر خواندن به‌روز می‌شود).
+    # توجه: پیش‌فرضِ default_settings حالا tz دارد؛ مهاجرت باید از مقدارِ «ذخیره‌شده» تصمیم بگیرد،
+    # نه از دیکشنریِ ادغام‌شده — وگرنه ردیفِ قدیمیِ utc_offset=4.5 با tz پیش‌فرض رها می‌شد.
+    tz_val = stored.get("tz")
+    if not (isinstance(tz_val, str) and tz_val.strip()):
+        legacy = stored.get("utc_offset") if ("tz" not in stored and "utc_offset" in stored) else s.get("utc_offset")
+        s["tz"] = tz_name_for_offset(legacy)
+    try: s["utc_offset"] = offset_now(s["tz"])
+    except Exception: s["utc_offset"] = config.DEFAULT_UTC_OFFSET
     if s.get("prompt") in _LEGACY_PROMPTS: s["prompt"] = DEFAULT_PROMPT[s["ui_lang"]]   # مهاجرت پرامپت قدیمی
     for k in list(s):
         if k.startswith("_") and k != "_retry_until": s.pop(k)   # _retry_until وضعیت داخلیِ خواباندن صف است و باید بماند
@@ -320,5 +330,5 @@ def update_settings(cid, **kw): s = get_settings(cid); s.update(kw); save_settin
 def in_quiet(s):
     a, b = s.get("quiet_start"), s.get("quiet_end")
     if a is None or b is None or a == b: return False
-    h = datetime.now(tz_of(s.get("utc_offset"))).hour
+    h = datetime.now(zone_of(s.get("tz") or s.get("utc_offset"))).hour
     return (a <= h < b) if a < b else (h >= a or h < b)

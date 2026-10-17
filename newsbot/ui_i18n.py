@@ -2,7 +2,7 @@
 """دیکشنری دوزبانه‌ی رابط کاربری + متن‌های قابل ویرایش مدیر کلان + DIAG/STAGES.\nNEW v4: کلیدهای ref_* (ارجاع)، mand_* (کانال اجباری) و کلیدهای DIAG\n«queue_full / soft_window / mand_missing / hint_mand» اضافه شدند\n(در نسخهٔ قبل soft_window ثبت می‌شد ولی در DIAG نبود ⇒ render با KeyError می‌ترکید).\n"""
 from newsbot import config
 from newsbot.db import gget, gset
-from newsbot.timeutils import TZ_ZONES
+from newsbot.timeutils import tz_key_of
 from newsbot.ai_models import ai_err_text
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -249,8 +249,9 @@ TZ_NAMES = {"tehran": ("🇮🇷 تهران", "🇮 Tehran"), "istanbul": ("🇹
             "moscow": ("🇷🇺 مسکو", "🇷🇺 Moscow"), "berlin": ("🇩🇪 برلین", "🇩 Berlin"), "london": ("🇬🇧 لندن", "🇬🇧 London"), "beijing": ("🇨🇳 پکن", "🇨🇳 Beijing"), "tokyo": ("🇯🇵 توکیو", "🇯 Tokyo"), "sydney": ("🇦 سیدنی", "🇦🇺 Sydney"),
             "newyork": ("🇺🇸 نیویورک", "🇺🇸 New York"), "losangeles": ("🇺🇸 لس‌آنجلس", "🇺🇸 Los Angeles"), "saopaulo": ("🇧🇷 سائوپائولو", "🇧 São Paulo"), "utc": ("🌐 گرینویچ", "🌐 UTC")}
 
-def tz_city(off, lang):
-    z = next((k for k, o in TZ_ZONES if abs(o - float(off)) < 0.01), None); return TZ_NAMES[z][1 if lang == "en" else 0] if z else ""
+def tz_city(val, lang):
+    """نام شهرِ منطقه — ARCH-10: نام IANA («Asia/Tehran») یا آفست عددیِ قدیمی هر دو پذیرفته می‌شوند."""
+    z = tz_key_of(val); return TZ_NAMES[z][1 if lang == "en" else 0] if z else ""
 
 WIZ = {
     "cat_add": [("name", ("نام دسته (مثلاً خبری)", "Category name (e.g. News)"), "str"), ("emoji", ("یک ایموجی", "One emoji"), "str"), ("style", ("سبک نگارش (مثلاً: تیتر بولد، سه جمله، دو بولت)", "Writing style (e.g. bold headline, three sentences, two bullets)"), "str")],

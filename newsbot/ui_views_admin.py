@@ -151,6 +151,7 @@ async def view_sources(update, context, cid):
     srcs = list_sources(cid); lim = admin_limits(uid)
     text = tr(lang, "src_title", title=esc(ch["title"]), n=count_sources(uid), cap=cap(lim["max_sources"])) + "\n" + "".join(
         tr(lang, "src_line", i="🟢" if s["active"] else "🔴", b="🤖" if (s["bot_active"] is None or s["bot_active"]) else "🚫", host=esc(hostname(s["url"])) + (" 🔌" if _has_api(s) else ""), n=s["found_total"] or 0, err=tr(lang, "src_err", n=s["fail_count"]) if s["fail_count"] else "") for s in srcs)
+    if not srcs: text += "\n" + tr(lang, "src_none")
     kb = pairs([B(f"{'🟢' if s['active'] else '🔴'} {hostname(s['url'])[:22]}", f"a:srcv:{s['id']}") for s in srcs]) + [[B(tr(lang, "src_add"), f"a:srca:{cid}")], [B(tr(lang, "back"), f"a:ch:{cid}")]]
     await render(update, context, text, kb)
 
@@ -228,15 +229,22 @@ async def view_tz(update, context, cid):
 # ══════════════════════════════════════════════════════════════════════════
 # صف انتشار و مقاله‌ها
 # ══════════════════════════════════════════════════════════════════════════
-async def view_queue(update, context, cid, status="ready"):
+async def view_queue(update, context, cid, status="ready", sort=""):
     uid = update.effective_user.id; lang = L(update); ch = channel_owned(cid, uid)
     if not ch: return await view_admin_home(update, context)
     arts = articles_by_status(cid, status, 15 if status == "ready" else 5)
-    if status == "ready": text = tr(lang, "queue_title", title=esc(ch["title"]), n=len(arts))
-    else: text = tr(lang, "rej_title", title=esc(ch["title"])) + "\n" + "".join(f"\n• {esc((r['title'] or hostname(r['url']))[:40])} — <i>{esc(reason_text(r['reason'], lang))}</i>" for r in arts)
+    if status == "ready" and sort == "s":   # UX-06: مرتب‌سازی اختیاری بر اساس امتیاز (پیش‌فرض: قدیمی‌ترین اول)
+        arts = sorted(arts, key=lambda a: float(a["score"] or 0), reverse=True)
+    if status == "ready":
+        text = tr(lang, "queue_title", title=esc(ch["title"]), n=len(arts))
+        if not arts: text += "\n\n" + tr(lang, "queue_none")
+    else:
+        text = tr(lang, "rej_title", title=esc(ch["title"])) + ("\n\n" + tr(lang, "rej_none") if not arts else "\n" + "".join(f"\n• {esc((r['title'] or hostname(r['url']))[:40])} — <i>{esc(reason_text(r['reason'], lang))}</i>" for r in arts))
     kb = [[B(f"{'⭐' + str(a['score']) if a['score'] else '•'} {(a['title'] or hostname(a['url']))[:35]}", f"a:art:{a['id']}")] for a in arts]
     if status == "ready" and arts: kb.append([B(tr(lang, "pub_first"), f"a:pub:{arts[0]['id']}")])
-    if status == "ready": kb.append([B(tr(lang, "queue_reset"), f"a:qreset:{cid}")])
+    if status == "ready":
+        kb.append([B(tr(lang, "q_sort_time" if sort == "s" else "q_sort_score"), f"a:que:{cid}" + ("" if sort == "s" else ":s"))])
+        kb.append([B(tr(lang, "queue_reset"), f"a:qreset:{cid}")])
     kb.append([B(tr(lang, "back"), f"a:ch:{cid}")]); await render(update, context, text, kb)
 
 async def view_article(update, context, aid):

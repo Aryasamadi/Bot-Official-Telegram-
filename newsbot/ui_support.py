@@ -63,8 +63,8 @@ async def on_message(update, context):
             return await run_user_operation(update, context, f"input:{st.get('kind')}", st.get("cid") or st.get("data", {}).get("cid"), lambda: handle_input(update, context, st))
     from newsbot.opctx import _operations
     if uid in _operations:
-        from newsbot.ui_widgets import operation_text
-        return await popup(update, context, operation_text(lang, "busy"))
+        from newsbot.ui_widgets import operation_text, running_op_text
+        return await popup(update, context, operation_text(lang, "busy") + "\n\n" + running_op_text(lang, _operations[uid]))
     if is_super(uid) and msg.reply_to_message:
         target = support_map_get(uid * 10 ** 8 + msg.reply_to_message.message_id)
         if target:

@@ -238,7 +238,7 @@ async def dispatch(update, context, data):
         if b == "srca":
             if lim["max_sources"] is not None and count_sources(uid) >= lim["max_sources"]: await popup(update, context, tr(lang, "limit_sources", n=lim["max_sources"])); return await view_sources(update, context, cid)
             return await ask(update, context, tr(lang, "src_add_prompt"), "src_add", f"a:src:{cid}", cid=cid)
-        if b in ("que", "rej"): return await view_queue(update, context, cid, "ready" if b == "que" else "rejected")
+        if b in ("que", "rej"): return await view_queue(update, context, cid, "ready" if b == "que" else "rejected", d)
         return await view_channel(update, context, cid)
     # ---------------- مدیر کلان
     if a == "s":
@@ -459,11 +459,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _wait_for_running_operation(update, context, uid) -> bool:
     """عملیات در حال اجرا ⇒ پیام بزرگ «صبر کنید یا /cancel». خروجی True یعنی با کلیک کار داشتیم."""
     from newsbot.opctx import user_control
-    from newsbot.ui_widgets import _operations, L
+    from newsbot.ui_widgets import _operations, L, running_op_text
     lock = user_control(uid)
     if not lock.locked() or uid not in _operations:
         return False
-    _txt = operation_text(L(update), "busy_wait")
+    _txt = operation_text(L(update), "busy_wait") + "\n\n" + running_op_text(L(update), _operations[uid])
     qy = update.callback_query
     if qy:
         try:

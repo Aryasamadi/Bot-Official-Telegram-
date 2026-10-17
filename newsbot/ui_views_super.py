@@ -200,7 +200,9 @@ async def view_s_user(update, context, tid):
 
 async def view_s_models(update, context):
     lang = L(update); ms = list_models()
-    text = tr(lang, "s_models_title") + "\n" + "".join(f"\n{_mic(m)} <b>{esc(_mname(m))}</b> · <code>{esc(m['model'])}</code> · p{m['priority']} · ✅{m['ok_count']}" for m in ms)
+    text = tr(lang, "s_models_title") + "\n"
+    if not ms: text += "\n" + tr(lang, "s_model_none") + "\n"
+    else: text += "".join(f"\n{_mic(m)} <b>{esc(_mname(m))}</b> · <code>{esc(m['model'])}</code> · p{m['priority']} · ✅{m['ok_count']}" for m in ms)
     kb = pairs([B(f"{_mic(m)} {_mname(m)[:20]} (p{m['priority']})", f"s:model:{m['id']}") for m in ms]) + [[B(tr(lang, "s_model_add"), "s:model_add"), B(tr(lang, "s_models_test"), "s:models_test")], [B(tr(lang, "back"), "s:home")]]
     await render(update, context, text, kb)
 
@@ -219,14 +221,20 @@ async def view_s_model(update, context, mid):
 
 async def view_s_pays(update, context):
     lang = L(update); ps = pay_pending()
-    text = tr(lang, "s_pays_title") + ("".join(tr(lang, "s_pay_line", id=r["id"], who=esc(("@" + r["username"]) if r["username"] else (r["name"] or r["user_id"])), plan=esc(r["plan_name"]), price=esc(r["final_price"] or r["plan_price"]), t=r["created_at"][5:16]) for r in ps) or "\n" + tr(lang, "s_pay_none"))
-    kb = [[B(tr(lang, "s_pay_rc", id=r["id"]), f"s:pay_rc:{r['id']}"), B(tr(lang, "s_pay_ok"), f"s:pay_ok:{r['id']}:l"), B(tr(lang, "s_pay_no"), f"s:pay_no:{r['id']}:l")] for r in ps] + [[B(tr(lang, "back"), "s:home")]]
+    shown, hidden = ps[:10], max(0, len(ps) - 10)   # UX-06: حداکثر ۱۰ رسید در یک صفحه
+    text = tr(lang, "s_pays_title") + ("".join(tr(lang, "s_pay_line", id=r["id"], who=esc(("@" + r["username"]) if r["username"] else (r["name"] or r["user_id"])), plan=esc(r["plan_name"]), price=esc(r["final_price"] or r["plan_price"]), t=r["created_at"][5:16]) for r in shown) or "\n" + tr(lang, "s_pay_none"))
+    if hidden: text += tr(lang, "s_pays_more", n=hidden)
+    kb = [[B(tr(lang, "s_pay_rc", id=r["id"]), f"s:pay_rc:{r['id']}"), B(tr(lang, "s_pay_ok"), f"s:pay_ok:{r['id']}:l"), B(tr(lang, "s_pay_no"), f"s:pay_no:{r['id']}:l")] for r in shown] + [[B(tr(lang, "back"), "s:home")]]
     await render(update, context, text, kb)
 
 async def view_s_texts(update, context):
     lang = L(update); text = tr(lang, "s_texts_title") + "\n"
     for k in TEXT_KEYS: text += f"\n<b>{k}</b>\n🇮🇷 <i>{esc(strip_tags(gtext(k, 'fa'))[:60])}…</i>\n🇬🇧 <i>{esc(strip_tags(gtext(k, 'en'))[:60])}…</i>"
-    kb = [[B(f"✏️ {k} 🇮🇷", f"s:txt:{k}:fa"), B(f"✏️ {k} 🇬🇧", f"s:txt:{k}:en"), B("↩️🇮🇷", f"s:txtr:{k}:fa"), B("↩️🇬🇧", f"s:txtr:{k}:en")] for k in TEXT_KEYS] + [[B(tr(lang, "back"), "s:home")]]
+    kb = []
+    for k in TEXT_KEYS:
+        kb.append([B(f"✏️ {k} 🇮🇷", f"s:txt:{k}:fa"), B(f"✏️ {k} 🇬🇧", f"s:txt:{k}:en")])
+        kb.append([B(f"{tr(lang, 's_text_reset')} 🇮🇷", f"s:txtr:{k}:fa"), B(f"{tr(lang, 's_text_reset')} 🇬🇧", f"s:txtr:{k}:en")])
+    kb.append([B(tr(lang, "back"), "s:home")])
     await render(update, context, text, kb)
 
 async def decide_pay(update, context, rid, approve, from_list):

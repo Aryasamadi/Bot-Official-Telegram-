@@ -119,6 +119,14 @@ TXT = {
     "confirm_reset_q": ("♻️ {what} صفر شود؟", "♻️ Reset {what}?"),
     "confirm_pay_no_q": ("❌ این رسید رد شود؟", "❌ Reject this receipt?"),
     "s_what_free": ("سهمیهٔ رایگان", "free quota"), "s_what_tests": ("شمارندهٔ تست", "test counter"), "s_what_posts": ("شمارندهٔ پست", "post counter"),
+    # ---- حالت‌های خالی و مرتب‌سازی (فاز ۹ — UX-02/UX-06/UX-07)
+    "src_none": ("\n⚠️ هنوز منبعی ندارید.\nاز «➕ افزودن منبع» یک فید RSS یا لینک صفحه اضافه کنید.", "\n⚠️ No sources yet.\nUse “➕ Add source” to add an RSS feed or page URL."),
+    "queue_none": ("📭 صف خالی است — مطلبی برای انتشار نیست.\nاز «🧪 تست فوری» یک پیش‌نمایش بسازید.", "📭 The queue is empty — nothing to publish.\nRun “🧪 Quick test” to generate a preview."),
+    "rej_none": ("📭 موردی رد نشده است.", "📭 Nothing has been rejected."),
+    "s_model_none": ("⚠️ هنوز مدلی تعریف نشده.\nمدل‌های عمومی می‌توانند شلوغ شوند؛ دست‌کم یک مدل اضافه کنید.", "⚠️ No models defined yet.\nShared models can get busy; add at least one."),
+    "s_pays_more": ("\n\n… و {n} رسید قدیمی‌تر دیگر", "\n\n… and {n} older receipt(s)"),
+    "q_sort_score": ("⭐ مرتب‌سازی بر اساس امتیاز", "⭐ Sort by score"), "q_sort_time": ("🕐 مرتب‌سازی بر اساس زمان", "🕐 Sort by time"),
+    "s_text_reset": ("↩️ پیش‌فرض", "↩️ Default"),
     # ---- منابع
     "src_title": ("🌐 <b>منابع {title}</b> · {n}/{cap}\n💡 فید <b>RSS</b> بهترین نتیجه را می‌دهد\n🟢 وضعیت کانال · 🤖 وضعیت ربات", "🌐 <b>Sources {title}</b> · {n}/{cap}\n💡 An <b>RSS</b> feed gives the best results\n🟢 Channel status · 🤖 Bot status"),
     "src_line": ("\n{i}{b} {host} · 🆕 {n}{err}", "\n{i}{b} {host} · 🆕 {n}{err}"), "src_err": (" · ⚠️×{n}", " · ⚠️×{n}"), "src_add": ("➕ افزودن منبع", "➕ Add source"),
@@ -212,7 +220,7 @@ TXT = {
     "s_model_view": ("🤖 <b>{name}</b>\n\n📦 نوع: {kind}\n🧬 مدل: <code>{model}</code>\n🔗 نشانی: <code>{base}</code>\n📊 وضعیت: {st}\n🎯 اولویت: {pr}\n🌡 دما: {temp}\n📤 حداکثر توکن: {mx}\n\n✅ موفق: {ok}\n⚠️ خطا: {fc}\n🕐 آخرین موفق: {lo}\n🕐 آخرین خطا: {lf}", "🤖 <b>{name}</b>\n\n📦 Kind: {kind}\n🧬 Model: <code>{model}</code>\n🔗 Base: <code>{base}</code>\n📊 Status: {st}\n🎯 Priority: {pr}\n🌡 Temperature: {temp}\n📤 Max tokens: {mx}\n\n✅ OK: {ok}\n⚠️ Fails: {fc}\n🕐 Last OK: {lo}\n🕐 Last fail: {lf}"),
     "s_m_off": ("⏸ خاموش", "⏸ off"), "s_m_ok": ("🟢 سالم", "🟢 healthy"), "s_m_down": ("🔴 خراب", "🔴 down"), "s_model_test": ("🧪 تست", "🧪 Test"), "s_model_del": ("🗑 حذف مدل", "🗑 Delete model"),
     "s_model_testing": ("🧪 در حال تست…", "🧪 Testing…"), "s_model_res": ("{i} {t}s: {out}", "{i} {t}s: {out}"), "s_model_added": ("✅ مدل «{name}» اضافه شد · {res}", "✅ Model “{name}” added · {res}"), "s_model_need": ("⚠️ Base URL و نام مدل الزامی است", "⚠️ Base URL and model name are required"), "s_model_on": ("🟢 مدل روشن شد", "🟢 Model on"), "s_model_off": ("⏸ مدل خاموش شد", "⏸ Model off"),
-    "s_pays_title": ("🛎 <b>پرداخت‌های معلق</b>", "🛎 <b>Pending payments</b>"), "s_pay_none": ("📭 خالی", "📭 none"), "s_pay_line": ("\n• #{id} {who} · 🕐 {t}\n🧾 <b>{plan}</b> · 💰 {price}", "\n• #{id} {who} · 🕐 {t}\n🧾 <b>{plan}</b> · 💰 {price}"), "s_pay_rc": ("📎 #{id}", "📎 #{id}"),
+    "s_pays_title": ("🛎 <b>پرداخت‌های معلق</b>", "🛎 <b>Pending payments</b>"), "s_pay_none": ("📭 هیچ رسید در انتظاری وجود ندارد.", "📭 No pending receipts."), "s_pay_line": ("\n• #{id} {who} · 🕐 {t}\n🧾 <b>{plan}</b> · 💰 {price}", "\n• #{id} {who} · 🕐 {t}\n🧾 <b>{plan}</b> · 💰 {price}"), "s_pay_rc": ("📎 #{id}", "📎 #{id}"),
     "s_pay_ok": ("✅ تأیید", "✅ Approve"), "s_pay_no": ("❌ رد", "❌ Reject"), "s_pay_done_ok": ("✅ تأیید شد · پلن فعال یا رزرو", "✅ Approved · plan activated or queued"), "s_pay_done_no": ("❌ رد شد", "❌ Rejected"), "s_pay_seen": ("⚠️ قبلاً بررسی شده", "⚠️ Already handled"),
     "s_pay_new": ("🛎 <b>پرداخت #{id}</b>\n👤 {who} (<code>{uid}</code>)\n🧾 <b>{plan}</b> · 💰 {price}{disc}{note}", "🛎 <b>Payment #{id}</b>\n👤 {who} (<code>{uid}</code>)\n🧾 <b>{plan}</b> · 💰 {price}{disc}{note}"),
     "s_bc_prompt": ("پیام همگانی (متن/عکس/ویدیو؛ فرمت حفظ می‌شود):", "Broadcast message (text/photo/video; formatting kept):"), "s_bc_confirm": ("📣 ارسال به <b>{n}</b> کاربر؟", "📣 Send to <b>{n}</b> users?"), "s_bc_go": ("✅ ارسال", "✅ Send"), "s_bc_sending": ("📣 ارسال به {n} کاربر…", "📣 Sending to {n} users…"), "s_bc_done": ("📣 موفق {ok} · ناموفق {fail}", "📣 ok {ok} · failed {fail}"),

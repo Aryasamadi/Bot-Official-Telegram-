@@ -92,6 +92,29 @@ async def http_post(url, **kw):
     from newsbot.net_http import http
     return await http().post(url, timeout=httpx.Timeout(120, connect=15), **kw)
 
+def _usage_dict(u, ptkey, ctkey):
+    """استخراج مصرف توکن از بدنه‌ی provider (PLB-03)؛ نامعتبر/صفر ⇒ None."""
+    if not isinstance(u, dict): return None
+    try:
+        pt = int(u.get(ptkey) or 0); ct = int(u.get(ctkey) or 0)
+    except Exception: return None
+    return {"pt": pt, "ct": ct} if (pt or ct) else None
+
+def _record_usage(mid, usage):
+    """PLB-03 (فاز ۷): ثبت متریک مصرف توکن در جدول ai_usage (روز UTC). خطای ثبت هرگز مسیر تولید را نمی‌شکند."""
+    if not usage: return
+    try:
+        q("INSERT INTO ai_usage(day,model_id,calls,ptok,ctok) VALUES(?,?,1,?,?) ON CONFLICT(day,model_id) DO UPDATE SET calls=calls+1, ptok=ptok+excluded.ptok, ctok=ctok+excluded.ctok",
+          (now_utc().strftime("%Y-%m-%d"), mid, int(usage.get("pt") or 0), int(usage.get("ct") or 0)), commit=True)
+    except Exception: log.warning("ai_usage record failed", exc_info=True)
+
+def tokens_today():
+    """جمع مصرف امروز (UTC) — تعداد فراخوانی و توکن‌های ورودی/خروجی (نمایش در گزارش مالک)."""
+    try:
+        r = q("SELECT COALESCE(SUM(calls),0) c, COALESCE(SUM(ptok),0) p, COALESCE(SUM(ctok),0) t FROM ai_usage WHERE day=?", (now_utc().strftime("%Y-%m-%d"),), one=True)
+        return {"calls": int(r["c"] or 0), "prompt": int(r["p"] or 0), "completion": int(r["t"] or 0)}
+    except Exception: return {"calls": 0, "prompt": 0, "completion": 0}
+
 async def _call_model(m, system, user):
     kind = m["kind"] or detect_kind(m["base_url"]); base = (m["base_url"] or "").rstrip("/"); key = m["api_key"] or ""; model = m["model"]; temp = 0.5 if m["temperature"] is None else float(m["temperature"]); mx = int(m["max_tokens"] or 2500)
     if kind == "anthropic":
@@ -101,7 +124,7 @@ async def _call_model(m, system, user):
         if not isinstance(blocks, list) or any(not isinstance(b, dict) for b in blocks): raise AIResponseError("malformed provider content")
         parts = [b.get("text") for b in blocks if b.get("type") == "text"]
         if any(not isinstance(p, str) for p in parts): raise AIResponseError("invalid response text")
-        return _ai_text(" ".join(parts))
+        return _ai_text(" ".join(parts)), _usage_dict(j.get("usage"), "input_tokens", "output_tokens")
     if kind == "gemini":
         model = model.replace("models/", ""); root = base if re.search(r"/v1(beta)?$", base) else base + "/v1beta"
         r = await _post(f"{root}/models/{model}:generateContent", params={"key": key}, json={"system_instruction": {"parts": [{"text": system}]}, "contents": [{"role": "user", "parts": [{"text": user}]}], "generationConfig": {"temperature": temp, "maxOutputTokens": mx}})
@@ -111,14 +134,15 @@ async def _call_model(m, system, user):
         if not isinstance(content, dict): raise AIResponseError("provider blocked response")
         parts = content.get("parts")
         if not isinstance(parts, list) or any(not isinstance(p, dict) or not isinstance(p.get("text"), str) for p in parts): raise AIResponseError("malformed provider parts")
-        return _ai_text(" ".join(p["text"] for p in parts))
+        return _ai_text(" ".join(p["text"] for p in parts)), _usage_dict(j.get("usageMetadata"), "promptTokenCount", "candidatesTokenCount")
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     if "openrouter" in base: headers.update({"HTTP-Referer": "https://t.me", "X-Title": "NewsBot"})
     body = {"model": model, "temperature": temp, "max_tokens": mx, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     url = base if base.endswith("/chat/completions") else base + "/chat/completions"
     r = await _post(url, headers=headers, json=body)
     if r.status_code == 404 and not re.search(r"/v\d", base): r = await _post(base + "/v1/chat/completions", headers=headers, json=body)
-    return _openai_content(_provider_json(r))
+    j = _provider_json(r)
+    return _openai_content(j), _usage_dict(j.get("usage"), "prompt_tokens", "completion_tokens")
 
 async def _mark_fail(m, err):
     cur = get_model(m["id"]) or m   # اسنپ‌شاتِ ورودی ممکن است کهنه باشد؛ شمارنده از سطر فعلی خوانده می‌شود
@@ -200,6 +224,23 @@ def _validate_generation(text):
     if not isinstance(post, str) or not strip_tags(post).strip(): raise AIResponseError("invalid empty post")
     if not isinstance(scores, dict) or not scores: raise AIResponseError("missing scores")
 
+def _validate_salvageable(text):
+    """PLB-01 (فاز ۷): قراردادِ نرمِ مسیر تولید.
+
+    JSON کاملاً بدشکل («malformed AI output») هنوز محتوای بی‌مصرف است و مدل بعدی امتحان می‌شود؛
+    ولی پاسخِ prose یا JSONِ سالم با فیلدهای ناقص به generate می‌رسد تا مسیر salvage آن را
+    واقعاً نجات دهد (پیش‌تر قرارداد سختِ missing scores/output مانع هر salvage موفق می‌شد)."""
+    _validate_output(text)
+    if INJ_RESIDUE.search(text): raise AIResponseError("injection residue in AI output")
+    j = parse_json(text)
+    if isinstance(j, dict):
+        if j.get("error"): raise AIResponseError("invalid AI output")
+        if j.get("is_ad") is not True:
+            post = j.get("post")
+            if post is not None and (not isinstance(post, str) or not strip_tags(post).strip()):
+                raise AIResponseError("invalid empty post")
+    return text
+
 async def _try_models(groups, system, user, owner_id=None, on_queue=None, validate=None, explicit_id=None):
     def _sort_key(m):
         fc = m["fail_count"] or 0; okc = m["ok_count"] or 0
@@ -231,13 +272,14 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                         await _ai_event("unavailable", label); continue
                     async with AI_SEM:
                         await _ai_event("start", label, stage)
-                        raw_out = await _call_model(current, system, user)
+                        raw_out, usage = await _call_model(current, system, user)
                         content_fail = True                       # از این نقطه هر خطا مربوط به محتواست نه provider
                         # بررسی ساختارِ خروجی هم «خطای محتوا» است: قبلاً پیش از این پرچم اجرا می‌شد و یک JSON
                         # کمی خراب، مدل سالم را down می‌کرد و هزینهٔ مدل بعدی را هم تحمیل می‌کرد.
                         text = await asyncio.to_thread(_validate_output, raw_out)
                         if validate: await asyncio.to_thread(validate, text)
                         content_fail = False
+                        _record_usage(current["id"], usage)       # PLB-03: مصرف توکنِ فراخوانی موفق
                         await _mark_ok(current)
                         await _ai_event("success", label)
                         return text, label, None

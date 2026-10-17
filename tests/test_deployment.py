@@ -29,13 +29,34 @@ def _env(db_file):
 # ── خودآزماییِ استقرار ──
 
 def test_self_check_passes_on_fresh_database():
-    """`run.py --check` باید روی دیتابیس تازه موفق شود (گیتِ پیش از دیپلوی)."""
+    """`run.py --check` باید روی دیتابیس تازه موفق شود (گیتِ پیش از دیپلوی).
+    ARCH-04/C7 (فاز ۸، تصمیم ۱۳): خودآزمایی فقط‌خواندنی است — نباید هیچ فایلی بسازد و
+    ساخت/مهاجرت دیتابیس فقط در اجرای عادی انجام می‌شود."""
     with tempfile.TemporaryDirectory() as d:
         db = os.path.join(d, "fresh.db")
         r = subprocess.run([PY, "run.py", "--check"], cwd=ROOT, env=_env(db),
                            capture_output=True, text=True, timeout=120)
         assert r.returncode == 0, f"خودآزمایی شکست خورد:\n{r.stdout[-800:]}\n{r.stderr[-800:]}"
-        assert os.path.isfile(db), "خودآزمایی باید دیتابیس را بسازد"
+        assert not os.path.exists(db), "خودآزمایی فقط‌خواندنی نباید دیتابیس بسازد"
+        assert os.listdir(d) == [], "خودآزمایی نباید هیچ فایل/پوشه‌ای کنار دیتابیس بسازد"
+
+
+def test_self_check_does_not_touch_existing_database():
+    """خودآزمایی روی دیتابیس موجود نباید چیزی به آن بنویسد (بدون تغییر محتوا/فهرست فایل‌ها)."""
+    import hashlib
+    with tempfile.TemporaryDirectory() as d:
+        db = os.path.join(d, "existing.db")
+        code = "from newsbot.app import init_core; init_core(); print('SEEDED')"
+        r = subprocess.run([PY, "-c", code], cwd=ROOT, env=_env(db),
+                           capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0 and "SEEDED" in r.stdout, r.stderr[-500:]
+        before_files = sorted(os.listdir(d))
+        before_hash = hashlib.sha256(open(db, "rb").read()).hexdigest()
+        r2 = subprocess.run([PY, "run.py", "--check"], cwd=ROOT, env=_env(db),
+                            capture_output=True, text=True, timeout=120)
+        assert r2.returncode == 0, f"خودآزمایی شکست خورد:\n{r2.stdout[-800:]}\n{r2.stderr[-800:]}"
+        assert sorted(os.listdir(d)) == before_files, "خودآزمایی فایل جدیدی کنار دیتابیس ساخت"
+        assert hashlib.sha256(open(db, "rb").read()).hexdigest() == before_hash, "خودآزمایی محتوای دیتابیس را تغییر داد"
 
 
 def test_preflight_rejects_missing_bot_token():

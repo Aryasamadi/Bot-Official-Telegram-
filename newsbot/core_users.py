@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """کاربران، نقش‌ها، زبان، سهمیه‌ها و کووتاهای روزانه.
-FIX v4: channel_posts_today مقادیر posted_at را به datetime آگاه تجزیه و مقایسه می‌کند
-(نه رشته‌ی ISO) تا اختلاف آفست UTC سقف روزانه‌ی کانال را خراب نکند.
+FIX v4: channel_posts_today بر «مرز نیمه‌شب محلی کانال» حساب می‌کند (DST-aware).
+DB-13 (فاز ۱۰): شمارش با predicate ایندکس‌دار posted_at>=? در SQL انجام می‌شود (بدون اسکن کامل کانال)؛
+پس از کانونیکال‌سازی DB-14، ترتیب الفبایی رشته‌های ISO دقیقاً ترتیب زمانی است.
 """
 import json, time
 from datetime import datetime, timedelta
 from newsbot import config
 from newsbot.db import q, db, _lock, _trx
 from newsbot.logutils import log
-from newsbot.timeutils import now_utc, now_iso, parse_dt, today_str, zone_of, offset_now
+from newsbot.timeutils import now_utc, now_iso, parse_dt, today_str, zone_of, offset_now, iso_fixed
 
 
 def is_super(uid): return uid in config.SUPER_ADMIN_IDS
@@ -117,25 +118,31 @@ def ai_claim(uid):
         return cur.rowcount > 0
     return bool(_trx(_go))
 
+_RESET_FIELDS = ("tests", "posts", "ai")
+
 def usage_reset(uid, field="tests"):
+    """DB-26: صفر کردن سهمیهٔ امروز — نام ستون فقط از فهرست سفید (قبلاً f-string بدون اعتبارسنجی).
+    توجه (BIZ-08): این تابع تنها سهمیهٔ روزانهٔ *پلنِ* ادمین (جدول usage) را صفر می‌کند؛
+    سقف روزانهٔ هر کانال از جدول posted مشتق می‌شود و جداگانه محاسبه می‌شود — بازنشانی آن از این‌جا
+    عمداً انجام نمی‌شود چون ردیف‌های posted سند دقیقاً-یک‌بارِ انتشارند (حذفشان قواعد یکتایی را می‌شکند)."""
+    if field not in _RESET_FIELDS: raise ValueError(f"unknown usage field: {field}")
     q(f"UPDATE usage SET {field}=0 WHERE admin_id=? AND day=?", (uid, today_str(admin_offset(uid))), commit=True)
 
 def channel_posts_today(cid, off):
     """تعداد پست‌های منتشرشده‌ی «امروزِ» خودِ این کانال (بر پایه‌ی ساعت محلی کانال) از جدول posted.
     سهمیه‌ی usage سراسریِ ادمین است؛ سقف روزانه‌ی کانال باید از شمارش همان کانال دربیاید.
-    FIX v4: مقایسه با datetime آگاه انجام می‌شود؛ مقایسه‌ی رشته‌ی ISO با آفست‌های متفاوت غلط بود."""
+    FIX v4: مقایسه بر مرز نیمه‌شب محلی (DST-aware) است.
+    DB-13: شمارش در SQL با predicate روی posted_at انجام می‌شود و از idx_posted_ch_at(channel_id، posted_at)
+    استفاده می‌کند؛ posted_at ذخیره‌شده کانونیکال UTC است (DB-14) و مرز با iso_fixed ساخته می‌شود."""
     try:
         from newsbot.core_channels import get_channel
         ch = get_channel(cid)
         if not ch: return 0
         z = zone_of(off)   # ARCH-10: نام IANA یا آفست؛ نیمه‌شب محلی DST-aware
         loc = now_utc().astimezone(z)
-        start = datetime(loc.year, loc.month, loc.day, tzinfo=z).astimezone(config.UTC)
-        n = 0
-        for r in q("SELECT posted_at FROM posted WHERE channel_id=?", (ch["chat_id"],)):
-            d = parse_dt(r["posted_at"])
-            if d and d >= start: n += 1
-        return n
+        cut = iso_fixed(datetime(loc.year, loc.month, loc.day, tzinfo=z))
+        r = q("SELECT COUNT(*) c FROM posted WHERE channel_id=? AND posted_at>=?", (ch["chat_id"], cut), one=True)
+        return int(r["c"] or 0)
     except Exception:
         log.debug("channel_posts_today failed cid=%s", cid, exc_info=True)
         return 0

@@ -25,7 +25,17 @@ _TZ_KEY = {iana: key for key, iana in TZ_ZONES}
 _FALLBACK_IANA = "Asia/Tehran"
 
 def now_utc(): return datetime.now(UTC)
-def now_iso(): return now_utc().isoformat()
+
+def iso_fixed(dt):
+    """DB-14: قالب استانداردِ ذخیرهٔ زمان — UTC-aware با کسر ثانیهٔ ثابت (۶ رقم).
+    چرا: ستون‌های زمانی به‌صورت *رشته* در SQL مقایسه می‌شوند (plan_expires، posted_at، …)؛
+    با قالب یکنواخت، ترتیب الفبایی دقیقاً ترتیب زمانی است. قبلاً isoformat() در صورت صفر بودن
+    کسر ثانیه آن را حذف می‌کرد و طول رشته‌ها/مرزهای مقایسه ناهمگون می‌شد.
+    ورودی بیtz به‌جای «ساعت محلی سیستم» با UTC برچسب می‌خورد (explicit is better)."""
+    if dt.tzinfo is None: dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat(timespec="microseconds")
+
+def now_iso(): return iso_fixed(now_utc())
 
 def zone_of(val):
     """tzinfo از «نام IANA»، رشته‌ی عددی («3.5») یا آفست عددی.

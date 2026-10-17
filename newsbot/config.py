@@ -26,6 +26,9 @@ DATA_TTL_HOURS = int(os.getenv("DATA_TTL_HOURS", "72"))
 DEDUP_TTL_HOURS = int(os.getenv("DEDUP_TTL_HOURS", "72"))
 DEEPLINK_TTL_DAYS = int(os.getenv("DEEPLINK_TTL_DAYS", "30"))
 DEEPLINK_KEEP_MIN = 5000
+# DB-23 / تصمیم ۱۴ (۱۷ اکتبر ۲۰۲۶): آرشیو مقالات قدیمی‌تر از این آستانه — همراه بکاپ پیش از حذف
+ARCHIVE_DAYS = max(30, int(os.getenv("ARCHIVE_DAYS", "365")))
+ARCHIVE_BACKUP_KEEP = 2      # تعداد فایل‌های بکاپ آرشیو که نگه داشته می‌شود
 
 # ── تلگرام ──
 API_BASE = os.getenv("TELEGRAM_API_BASE", "").strip()

@@ -67,6 +67,9 @@ async def view_admin_home(update, context):
     if not lim["active"]: text += "\n\n" + tr(lang, "plan_inactive")
     text += "\n\n" + (tr(lang, "pick_channel") if chs else tr(lang, "no_channels"))
     kb = pairs([B(f"{'🟢' if get_settings(c['id'])['enabled'] else '🔴'} {c['title'][:22]}", f"a:ch:{c['id']}") for c in chs])
+    if len(chs) == 1:   # UX-01/08: با یک کانال، میان‌بر پرکاربردها بالای پنل
+        c0 = chs[0]["id"]
+        kb.insert(0, [B(tr(lang, "queue", n=ready_count(c0)), f"a:que:{c0}"), B(tr(lang, "test"), f"a:test:{c0}")])
     kb.append([B(tr(lang, "ch_add"), "a:chadd")]); kb.append([B(tr(lang, "my_plan"), "a:plan")])
     if is_super(uid): kb.append([B(tr(lang, "super_panel"), "s:home")])
     await render(update, context, text, kb)

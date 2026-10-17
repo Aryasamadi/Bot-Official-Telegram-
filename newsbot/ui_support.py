@@ -69,10 +69,12 @@ async def on_message(update, context):
         target = support_map_get(uid * 10 ** 8 + msg.reply_to_message.message_id)
         if target:
             try: await support_reply(context, uid, msg, target); await _ack(msg, tr(lang, "sup_sent"))
-            except Exception as e: await msg.reply_text(tr(lang, "sup_fail", e=str(e)[:100]))
+            except Exception: log.exception("support reply failed uid=%s", uid); await msg.reply_text(tr(lang, "sup_fail"))
             return
     if support_is_open(uid) and not is_super(uid):
         if not rate_ok(f"sup:{uid}", 2): return
-        sent = await support_forward(context, user, msg); await _ack(msg, tr(lang, "sup_received") if sent else tr(lang, "sup_fail", e="—"), InlineKeyboardMarkup([[B(tr(lang, "sup_close"), "u:man_close")]])); return
+        sent = await support_forward(context, user, msg)
+        if not sent: log.warning("support forward failed uid=%s", uid)
+        await _ack(msg, tr(lang, "sup_received") if sent else tr(lang, "sup_fail"), InlineKeyboardMarkup([[B(tr(lang, "sup_close"), "u:man_close")]])); return
     if not user_lang(uid): return await view_lang(update, context)
     context.user_data["panel"] = None; await go_home(update, context)

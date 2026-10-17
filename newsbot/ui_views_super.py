@@ -193,7 +193,8 @@ async def view_s_user(update, context, tid):
     lang = L(update); u = get_user(tid)
     if not u: return await view_s_users(update, context)
     lim = admin_limits(tid); use = usage_today(tid); off = admin_offset(tid)
-    text = tr(lang, "s_user_view", name=esc(uname(u)), id=tid, role=esc(u["role"]), ban=tr(lang, "s_ban_y" if u["banned"] else "s_ban_n"), lang=esc(u["lang"]) or "—", prem="💎" if u["premium"] else "", plan=esc(plan_txt(lim["plan"], "name", lang) or tr(lang, "no_plan")), act="🟢" if lim["active"] else "🔴", exp=tr(lang, "until", d=fmt_date(lim["expires"], off)) if lim["expires"] else "",
+    role_txt = tr(lang, "role_admin" if u["role"] == "admin" else ("role_user" if u["role"] == "user" else "role_super"))
+    text = tr(lang, "s_user_view", name=esc(uname(u)), id=tid, role=role_txt, ban=tr(lang, "s_ban_y" if u["banned"] else "s_ban_n"), lang=esc(u["lang"]) or "—", prem="💎" if u["premium"] else "", plan=esc(plan_txt(lim["plan"], "name", lang) or tr(lang, "no_plan")), act="🟢" if lim["active"] else "🔴", exp=tr(lang, "until", d=fmt_date(lim["expires"], off)) if lim["expires"] else "",
               nxt=("\n" + tr(lang, "plans_next", name=esc(plan_txt(lim["next_plan"], "name", lang)))) if lim["next_plan"] else "", p=use["posts"], t=use["tests"], c=len(list_channels(tid)), s=count_sources(tid), d=count_articles(tid, 24), pub=count_articles(tid, 24, "published"), free=onoff(u["free_used"]), join=(u["created_at"] or "")[:10], seen=ago_text(u["last_seen"], lang))
     kb = [[B(tr(lang, "s_uplan"), f"s:uplan:{tid}"), B(tr(lang, "s_urevoke"), f"s:urevoke:{tid}")], [B(tr(lang, "s_uban"), f"s:uban:{tid}"), B(tr(lang, "s_umsg"), f"s:umsg:{tid}")], [B(tr(lang, "s_ureport"), f"s:ureport:{tid}"), B(tr(lang, "s_ufree"), f"s:ufree:{tid}")], [B(tr(lang, "s_utests"), f"s:utests:{tid}"), B(tr(lang, "s_uposts"), f"s:uposts:{tid}")], [B(tr(lang, "back"), "s:users:0")]]
     await render(update, context, text, kb)
@@ -214,9 +215,8 @@ async def view_s_model(update, context, mid):
     kb = [[B(tr(lang, "s_model_test"), f"s:model_test:{mid}"), B(tr(lang, "toggle"), f"s:model_t:{mid}")]] + pairs([B(f"✏️ {f[2] if lang == 'en' else f[1]}", f"s:model_e:{mid}:{f[0]}") for f in MODEL_FIELDS]) + [[B(tr(lang, "s_model_del"), f"s:model_d:{mid}")], [B(tr(lang, "back"), "s:models")]]
     if m["owner_id"] is None:
         selected = gget("test_model_id") == mid
-        label = ("Unset Test Model" if selected else "Use as Test Model") if lang == "en" else ("برداشتن انتخاب Test Model" if selected else "استفاده به‌عنوان Test Model")
-        text += "\nTest Model: " + (("Selected" if selected else "Not selected") if lang == "en" else ("منتخب" if selected else "انتخاب نشده"))
-        kb.insert(1, [B(label, f"s:model_test_pick:{mid}")])
+        text += "\n" + tr(lang, "s_tm_line", st=tr(lang, "s_tm_selected" if selected else "s_tm_not_sel"))
+        kb.insert(1, [B(tr(lang, "s_tm_unset" if selected else "s_tm_use"), f"s:model_test_pick:{mid}")])
     await render(update, context, text, kb)
 
 async def view_s_pays(update, context):

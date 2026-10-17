@@ -127,6 +127,14 @@ TXT = {
     "s_pays_more": ("\n\n… و {n} رسید قدیمی‌تر دیگر", "\n\n… and {n} older receipt(s)"),
     "q_sort_score": ("⭐ مرتب‌سازی بر اساس امتیاز", "⭐ Sort by score"), "q_sort_time": ("🕐 مرتب‌سازی بر اساس زمان", "🕐 Sort by time"),
     "s_text_reset": ("↩️ پیش‌فرض", "↩️ Default"),
+    # ---- اصطلاحات و نقش‌ها (فاز ۹ — UX-03/BIZ-04)
+    "s_tm_use": ("استفاده به‌عنوان مدل تست", "Use as Test Model"), "s_tm_unset": ("برداشتن انتخاب مدل تست", "Unset Test Model"),
+    "s_tm_selected": ("منتخب", "Selected"), "s_tm_not_sel": ("انتخاب نشده", "Not selected"),
+    "s_tm_line": ("مدل تست: {st}", "Test Model: {st}"),
+    "s_tm_picked": ("✅ مدل تست انتخاب شد", "Test Model selected"), "s_tm_cleared": ("↩️ انتخاب مدل تست برداشته شد", "Test Model cleared"),
+    "role_super": ("مدیر کلان", "super admin"), "role_admin": ("ادمین", "admin"), "role_user": ("کاربر", "user"),
+    "assign_role_note": ("ℹ️ با تخصیص پلن، نقش کاربر در صورت نیاز خودکار به‌روز می‌شود.", "ℹ️ Assigning a plan may update the user's role automatically."),
+    "s_pay_rc_err": ("❌ رسید قابل ارسال نبود؛ بعداً دوباره تلاش کنید.", "❌ The receipt could not be sent; please try again later."),
     # ---- منابع
     "src_title": ("🌐 <b>منابع {title}</b> · {n}/{cap}\n💡 فید <b>RSS</b> بهترین نتیجه را می‌دهد\n🟢 وضعیت کانال · 🤖 وضعیت ربات", "🌐 <b>Sources {title}</b> · {n}/{cap}\n💡 An <b>RSS</b> feed gives the best results\n🟢 Channel status · 🤖 Bot status"),
     "src_line": ("\n{i}{b} {host} · 🆕 {n}{err}", "\n{i}{b} {host} · 🆕 {n}{err}"), "src_err": (" · ⚠️×{n}", " · ⚠️×{n}"), "src_add": ("➕ افزودن منبع", "➕ Add source"),
@@ -154,7 +162,7 @@ TXT = {
     "b_hashtags": ("#️⃣ هشتگ {i}", "#️⃣ Hashtags {i}"), "b_link": ("🔗 منبع در ربات {i}", "🔗 Source in bot {i}"), "b_media": ("🖼 رسانه {i}", "🖼 Media {i}"), "b_strict": ("🛡 فیلتر سخت {i}", "🛡 Strict filter {i}"),
     "tog_hashtags": ("#️⃣ هشتگ", "#️⃣ Hashtags"), "tog_include_link": ("🔗 منبع در ربات", "🔗 Source in bot"), "tog_include_media": ("🖼 رسانه", "🖼 Media"), "tog_strict_ads": ("🛡 فیلتر سخت تبلیغ", "🛡 Strict ad filter"), "tog_allow_undated": ("📅 بدون تاریخ", "📅 Undated"),
     "togd_hashtags": ("هشتگ‌های مرتبط در انتهای پست اضافه می‌شوند", "Related hashtags are added at the end of the post"), "togd_include_link": ("منبع خبر فقط در «ادامه در ربات» نمایش داده می‌شود", "The news source is shown only in “continue in bot”"), "togd_include_media": ("تصویر یا ویدیوی خبر همراه پست ارسال می‌شود", "The news photo or video is sent with the post"), "togd_strict_ads": ("فیلتر سخت‌گیرانه‌تر، تبلیغ‌ها را زودتر رد می‌کند", "The stricter filter rejects ad-like articles earlier"), "togd_allow_undated": ("مقالاتِ بدون تاریخ هم منتشر می‌شوند", "Articles without a publish date are published too"),
-    "cats_title": ("🗂 <b>دسته‌ها</b>\nAI برای هر مقاله یکی را انتخاب و با سبک آن می‌نویسد.", "🗂 <b>Categories</b>\nAI picks one per article and writes in its style."), "cat_add": ("➕ دسته", "➕ Category"),
+    "cats_title": ("🗂 <b>دسته‌ها</b>\nهوش مصنوعی برای هر مقاله یکی را انتخاب و با سبک آن می‌نویسد.", "🗂 <b>Categories</b>\nAI picks one per article and writes in its style."), "cat_add": ("➕ دسته", "➕ Category"),
     "cat_view": ("{e} <b>{name}</b>\n📐 {style}", "{e} <b>{name}</b>\n📐 {style}"), "cat_edit": ("✏️ سبک", "✏️ Style"), "cat_style_prompt": ("سبک نگارش جدید این دسته:", "New writing style for this category:"),
     "cat_added": ("✅ دسته اضافه شد", "✅ Category added"), "cat_updated": ("✅ سبک بروزرسانی شد", "✅ Style updated"), "cat_min": ("⚠️ حداقل یک دسته لازم است", "⚠️ At least one category required"),
     "crits_title": ("📏 <b>معیارها</b>\nامتیاز ۰–۱۰۰ · زیر {m} رد می‌شود.", "📏 <b>Criteria</b>\nScore 0–100 · below {m} is rejected."), "crit_add": ("➕ معیار", "➕ Criterion"),
@@ -186,7 +194,7 @@ TXT = {
     "myplan": ("🧾 <b>پلن من: {name}</b>\n\n📌 وضعیت: {st}\n📅 انقضا: {exp}{nxt}\n\n📢 پست امروز: {p}/{pc}\n🧪 تست امروز: {t}/{tc}\n🌐 منابع: {s}/{sc}\n📣 کانالها: {c}/{cc}", "🧾 <b>My plan: {name}</b>\n\n📌 Status: {st}\n📅 Expires: {exp}{nxt}\n\n📢 Posts today: {p}/{pc}\n🧪 Tests today: {t}/{tc}\n🌐 Sources: {s}/{sc}\n📣 Channels: {c}/{cc}"),
     "st_active": ("🟢 فعال", "🟢 active"), "st_expired": ("🔴 غیرفعال", "🔴 inactive"), "exp_at": (" · تا {d}", " · until {d}"), "upgrade_btn": ("⬆️ ارتقا / تمدید", "⬆️ Upgrade / renew"),
     # ---- دلیل کوتاه ردشده‌ها (بدون جزئیات فنی)
-    "rj_extract": ("متن قابل استخراج نبود", "no extractable text"), "rj_ad": ("فیلتر تبلیغ", "ad filter"), "rj_ai_ad": ("تبلیغ (تشخیص AI)", "ad (AI)"), "rj_score": ("امتیاز کمتر از حداقل", "below minimum score"),
+    "rj_extract": ("متن قابل استخراج نبود", "no extractable text"), "rj_ad": ("فیلتر تبلیغ", "ad filter"),     "rj_ai_ad": ("تبلیغ (تشخیص هوش مصنوعی)", "ad (AI)"), "rj_score": ("امتیاز کمتر از حداقل", "below minimum score"),
     "rj_ai": ("سرویس هوش مصنوعی پاسخ نداد", "AI service did not respond"), "rj_send": ("ارسال به کانال ناموفق", "sending to channel failed"), "rj_dup": ("تکراری", "duplicate"),
     "rj_admin": ("ربات ادمین کانال نیست", "bot is not channel admin"), "rj_old": ("قدیمی‌تر از بازه", "older than window"), "rj_undated": ("بدون تاریخ", "undated"), "rj_other": ("نامشخص", "unspecified"),
     # ---- تست
@@ -219,11 +227,11 @@ TXT = {
     "s_models_title": ("<b>مدل‌ها</b>", "<b>Models</b>"),
     "s_model_view": ("🤖 <b>{name}</b>\n\n📦 نوع: {kind}\n🧬 مدل: <code>{model}</code>\n🔗 نشانی: <code>{base}</code>\n📊 وضعیت: {st}\n🎯 اولویت: {pr}\n🌡 دما: {temp}\n📤 حداکثر توکن: {mx}\n\n✅ موفق: {ok}\n⚠️ خطا: {fc}\n🕐 آخرین موفق: {lo}\n🕐 آخرین خطا: {lf}", "🤖 <b>{name}</b>\n\n📦 Kind: {kind}\n🧬 Model: <code>{model}</code>\n🔗 Base: <code>{base}</code>\n📊 Status: {st}\n🎯 Priority: {pr}\n🌡 Temperature: {temp}\n📤 Max tokens: {mx}\n\n✅ OK: {ok}\n⚠️ Fails: {fc}\n🕐 Last OK: {lo}\n🕐 Last fail: {lf}"),
     "s_m_off": ("⏸ خاموش", "⏸ off"), "s_m_ok": ("🟢 سالم", "🟢 healthy"), "s_m_down": ("🔴 خراب", "🔴 down"), "s_model_test": ("🧪 تست", "🧪 Test"), "s_model_del": ("🗑 حذف مدل", "🗑 Delete model"),
-    "s_model_testing": ("🧪 در حال تست…", "🧪 Testing…"), "s_model_res": ("{i} {t}s: {out}", "{i} {t}s: {out}"), "s_model_added": ("✅ مدل «{name}» اضافه شد · {res}", "✅ Model “{name}” added · {res}"), "s_model_need": ("⚠️ Base URL و نام مدل الزامی است", "⚠️ Base URL and model name are required"), "s_model_on": ("🟢 مدل روشن شد", "🟢 Model on"), "s_model_off": ("⏸ مدل خاموش شد", "⏸ Model off"),
+    "s_model_testing": ("🧪 در حال تست…", "🧪 Testing…"), "s_model_progress": ("🧪 تست مدل {i}/{n}: <b>{name}</b>", "🧪 Testing model {i}/{n}: <b>{name}</b>"), "s_model_res": ("{i} {t}s: {out}", "{i} {t}s: {out}"), "s_model_added": ("✅ مدل «{name}» اضافه شد · {res}", "✅ Model “{name}” added · {res}"), "s_model_need": ("⚠️ Base URL و نام مدل الزامی است", "⚠️ Base URL and model name are required"), "s_model_on": ("🟢 مدل روشن شد", "🟢 Model on"), "s_model_off": ("⏸ مدل خاموش شد", "⏸ Model off"),
     "s_pays_title": ("🛎 <b>پرداخت‌های معلق</b>", "🛎 <b>Pending payments</b>"), "s_pay_none": ("📭 هیچ رسید در انتظاری وجود ندارد.", "📭 No pending receipts."), "s_pay_line": ("\n• #{id} {who} · 🕐 {t}\n🧾 <b>{plan}</b> · 💰 {price}", "\n• #{id} {who} · 🕐 {t}\n🧾 <b>{plan}</b> · 💰 {price}"), "s_pay_rc": ("📎 #{id}", "📎 #{id}"),
     "s_pay_ok": ("✅ تأیید", "✅ Approve"), "s_pay_no": ("❌ رد", "❌ Reject"), "s_pay_done_ok": ("✅ تأیید شد · پلن فعال یا رزرو", "✅ Approved · plan activated or queued"), "s_pay_done_no": ("❌ رد شد", "❌ Rejected"), "s_pay_seen": ("⚠️ قبلاً بررسی شده", "⚠️ Already handled"),
     "s_pay_new": ("🛎 <b>پرداخت #{id}</b>\n👤 {who} (<code>{uid}</code>)\n🧾 <b>{plan}</b> · 💰 {price}{disc}{note}", "🛎 <b>Payment #{id}</b>\n👤 {who} (<code>{uid}</code>)\n🧾 <b>{plan}</b> · 💰 {price}{disc}{note}"),
-    "s_bc_prompt": ("پیام همگانی (متن/عکس/ویدیو؛ فرمت حفظ می‌شود):", "Broadcast message (text/photo/video; formatting kept):"), "s_bc_confirm": ("📣 ارسال به <b>{n}</b> کاربر؟", "📣 Send to <b>{n}</b> users?"), "s_bc_go": ("✅ ارسال", "✅ Send"), "s_bc_sending": ("📣 ارسال به {n} کاربر…", "📣 Sending to {n} users…"), "s_bc_done": ("📣 موفق {ok} · ناموفق {fail}", "📣 ok {ok} · failed {fail}"),
+    "s_bc_prompt": ("پیام همگانی (متن/عکس/ویدیو؛ فرمت حفظ می‌شود):", "Broadcast message (text/photo/video; formatting kept):"), "s_bc_confirm": ("📣 ارسال به <b>{n}</b> کاربر؟", "📣 Send to <b>{n}</b> users?"), "s_bc_go": ("✅ ارسال", "✅ Send"),     "s_bc_sending": ("📣 ارسال به {n} کاربر…", "📣 Sending to {n} users…"), "s_bc_progress": ("📣 ارسال همگانی: {i}/{n}", "📣 Broadcasting: {i}/{n}"), "s_bc_done": ("📣 موفق {ok} · ناموفق {fail}", "📣 ok {ok} · failed {fail}"),
     "s_texts_title": ("<b>متن‌ها</b>\nجای‌گذار: <code>{name}</code> <code>{plan}</code> <code>{price}</code>", "<b>Texts</b>\nPlaceholders: <code>{name}</code> <code>{plan}</code> <code>{price}</code>"),
     "s_text_prompt": ("متن جدید «{k}» ({lg}):", "New “{k}” text ({lg}):"), "s_text_saved": ("✅ متن ذخیره شد", "✅ Text saved"), "s_text_reset_done": ("↩️ پیش‌فرض شد", "↩️ Reset to default"),
     "s_health": ("سلامت", "Health"),
@@ -236,7 +244,7 @@ TXT = {
     "mand_user_notice": ("برای استفاده از ربات، عضو کانال شوید.", "Join the channel to use the bot."),
     "s_umsg_prompt": ("پیام برای این کاربر:", "Message to this user:"), "s_umsg_sent": ("✅ ارسال شد", "✅ Sent"), "s_umsg_head": ("📩 <b>پیام مدیریت:</b>\n\n", "📩 <b>Admin message:</b>\n\n"),
     "sup_open": ("💬 <b>پشتیبانی</b>\nهر پیامی بفرستید مستقیم به مدیر می‌رسد و پاسخ همین‌جا می‌آید.", "💬 <b>Support</b>\nAny message goes straight to the admin; replies arrive here."), "sup_close": ("❌ پایان گفتگو", "❌ End chat"), "sup_closed": ("✅ گفتگو پایان یافت", "✅ Chat ended"),
-    "sup_reply_head": ("💬 <b>پاسخ پشتیبانی:</b>\n", "💬 <b>Support reply:</b>\n"), "sup_sent": ("✅ ارسال شد", "✅ Sent"), "sup_fail": ("❌ ارسال نشد: {e}", "❌ Not sent: {e}"), "sup_received": ("✅", "✅"),
+    "sup_reply_head": ("💬 <b>پاسخ پشتیبانی:</b>\n", "💬 <b>Support reply:</b>\n"), "sup_sent": ("✅ ارسال شد", "✅ Sent"), "sup_fail": ("❌ ارسال نشد؛ کمی بعد دوباره تلاش کنید.", "❌ Couldn't send; please try again shortly."), "sup_received": ("✅", "✅"),
     "dl_notfound": ("🔎 متأسفم، نسخهٔ کامل این مطلب پیدا نشد — ممکن است پاک شده باشد. لطفاً از خودِ کانال پست را باز کن یا چند دقیقه بعد دوباره امتحان کن.", "🔎 Sorry, this full version could not be found — it may have been removed. Please open the post in the channel or try again later."), "dl_source": ("🔗 Source", "🔗 Source"),
 }
 

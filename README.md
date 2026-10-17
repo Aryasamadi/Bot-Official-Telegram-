@@ -9,7 +9,7 @@
 [![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-21.6%2B-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://python-telegram-bot.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-default-003B57?style=flat-square&logo=sqlite&logoColor=white)](#-پیکربندی)
 [![Cloudflare D1](https://img.shields.io/badge/Cloudflare-D1%20optional-F38020?style=flat-square&logo=cloudflare&logoColor=white)](#-پیکربندی)
-[![Tests](https://img.shields.io/badge/tests-415%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
+[![Tests](https://img.shields.io/badge/tests-432%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
 [![i18n](https://img.shields.io/badge/i18n-fa%20%7C%20en-8B5CF6?style=flat-square)](#)
 
 **ربات تک‌پروسه‌ای مدیریت خودکار کانال تلگرام** — منابع خبری را می‌خواند، با چند مدل هوش مصنوعی بازنویسی و امتیازدهی می‌کند، و به‌صورت **crash-safe** منتشر می‌کند.
@@ -350,9 +350,10 @@ stateDiagram-v2
 ## 🧪 تست‌ها
 
 ```bash
-pytest -q                              # ۴۱۵ تست
+pytest -q                              # ۴۳۲ تست
 python -m pyflakes newsbot tools run.py tests   # نگهبان ایستا
 python tools/final_verification.py     # راستی‌آزمایی مستقل (۱۷ بررسی)
+python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08 · docs/PERFORMANCE.md)
 ```
 
 | مجموعهٔ تست | چه چیزی را قفل می‌کند |
@@ -367,6 +368,8 @@ python tools/final_verification.py     # راستی‌آزمایی مستقل (�
 | `test_ui_routing.py` | همهٔ صفحات پنل بدون کرش |
 | `test_deployment.py` | چرخهٔ واقعی پشتیبان → بازگردانی |
 | `test_secrets_and_text.py` | ماسک رازها · نرمال‌سازی متن |
+| `test_phase13_tech_debt.py` | رسید کیف پول (v6) · صف/ری‌ترای اعلان سوپر · بنچمارک · مرزهای اعتبارسنجی |
+| `test_phase13_business_isolation.py` | ایزولهٔ سهمیه/کیف پول/تنظیمات بین مستأجرها |
 
 > **«تست‌نشده = رد‌شده».** هیچ تستی برای سبز شدن تغییر نکرده و هیچ `except` خالی‌ای خطا را پنهان نمی‌کند.
 

@@ -11,7 +11,7 @@ from telegram.error import RetryAfter
 from telegram.ext import ContextTypes
 from newsbot import config
 from newsbot.db import q, gget, gset
-from newsbot.timeutils import today_str, local_clock, TZ_ZONES
+from newsbot.timeutils import today_str, local_clock, TZ_ZONES, offset_now
 from newsbot.ratelimit import rate_ok, rate_free, rate_left, rate_mark, rate_clear, global_rate_ok
 from newsbot.concurrency import ch_lock
 from newsbot.core_users import (admin_limits, admin_offset, usage_reset, is_super, user_lang,
@@ -191,13 +191,14 @@ async def dispatch(update, context, data):
         if b == "tz": return await view_tz(update, context, cid)
         if b == "tzs":
             if not d.isdigit() or int(d) >= len(TZ_ZONES): return await popup(update, context, tr(lang, "notfound"))
-            z, off = TZ_ZONES[int(d)]; old_day, new_day = today_str(s["utc_offset"]), today_str(off)
-            update_settings(cid, utc_offset=off)
+            iana = TZ_ZONES[int(d)][1]   # ARCH-10: نام IANA ذخیره می‌شود؛ آفست فقط snapshot نمایشی است
+            old_day, new_day = today_str(s.get("tz") or s["utc_offset"]), today_str(iana)
+            update_settings(cid, tz=iana, utc_offset=offset_now(iana))
             if old_day != new_day:      # جابه‌جایی مرزِ روز نباید سهمیهٔ امروز را صفر کند (سوءاستفاده و بی‌اعتباری شمارش)
                 prev = q("SELECT posts,tests FROM usage WHERE admin_id=? AND day=?", (uid, old_day), one=True)
                 if prev: q("INSERT INTO usage(admin_id,day,posts,tests) VALUES(?,?,?,?) ON CONFLICT(admin_id,day) DO UPDATE SET posts=MAX(posts,?), tests=MAX(tests,?)",
                            (uid, new_day, prev["posts"], prev["tests"], prev["posts"], prev["tests"]), commit=True)
-            await popup(update, context, tr(lang, "tz_set", city=tz_city(off, lang), tz=off_label_safe(off), loc=local_clock(off))); return await view_sched(update, context, cid)
+            await popup(update, context, tr(lang, "tz_set", city=tz_city(iana, lang), tz=off_label_safe(iana), loc=local_clock(iana))); return await view_sched(update, context, cid)
         if b == "con": return await view_content(update, context, cid)
         if b == "cat": return await view_cats(update, context, cid)
         if b == "cata": return await wiz_start(update, context, "cat_add", f"a:cat:{cid}", cid=cid)

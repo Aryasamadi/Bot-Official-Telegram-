@@ -8,7 +8,7 @@ import asyncio, json, time
 from newsbot import config
 from newsbot.db import gget
 from newsbot.logutils import log_event, redact
-from newsbot.timeutils import ago_text, fmt_date, local_clock, utc_clock, off_label
+from newsbot.timeutils import ago_text, fmt_date, local_clock, utc_clock, off_label, tz_key_of
 from newsbot.ui_widgets import notify_user_fn, notify_supers
 from newsbot.ratelimit import rate_left, rate_free, rate_mark, rate_clear
 from newsbot.concurrency import ch_lock
@@ -81,7 +81,8 @@ async def view_channel(update, context, cid):
     s = get_settings(cid); on = s["enabled"]
     text = (tr(lang, "ch_panel", title=esc(ch["title"])) + (f" · @{ch['username']}" if ch["username"] else "") + "\n" + tr(lang, "ch_status", i="🟢" if on else "🔴", st=tr(lang, "on" if on else "off"), mode=tr(lang, "auto" if s["mode"] == "auto" else "review")) + "\n" +
             tr(lang, "ch_stats", s=len(list_sources(cid, True)), q=ready_count(cid), p=count_articles(cid=cid, hours=24, status="published"), r=count_articles(cid=cid, hours=24, status="rejected"), a=ago_text(s["last_run"], lang)))
-    text += quota_bars_safe([("📝", channel_posts_today(cid, admin_offset(uid)), s.get("daily_posts_cap"))])
+    # BIZ-06 (فاز ۷): نوار سقف کانال باید با «ساعت محلیِ خودِ کانال» شمرده شود، نه آفست ادمین (که فقط کانال نخست اوست)
+    text += quota_bars_safe([("📝", channel_posts_today(cid, s.get("tz") or s["utc_offset"]), s.get("daily_posts_cap"))])
     kb = [[B(tr(lang, "test"), f"a:test:{cid}"), B(tr(lang, "report"), f"a:rep:{cid}")],
           [B(tr(lang, "sources", n=len(list_sources(cid))), f"a:src:{cid}"), B(tr(lang, "queue", n=ready_count(cid)), f"a:que:{cid}")],
           [B(tr(lang, "sched"), f"a:sch:{cid}"), B(tr(lang, "content"), f"a:con:{cid}")],
@@ -208,20 +209,20 @@ def hour_grid(prefix): return [[B(f"{h:02d}", f"{prefix}:{h}") for h in range(r,
 async def view_sched(update, context, cid):
     uid = update.effective_user.id; lang = L(update); ch = channel_owned(cid, uid)
     if not ch: return await view_admin_home(update, context)
-    s = get_settings(cid); off = s["utc_offset"]; quiet = f"{s['quiet_start']:02d}→{s['quiet_end']:02d}" if s["quiet_start"] is not None and s["quiet_end"] is not None else tr(lang, "none")
-    text = tr(lang, "sched_title", title=esc(ch["title"]), iv=s["interval_minutes"], ppc=s["posts_per_cycle"], lb=s["lookback_hours"], ud=onoff(s["allow_undated"]), quiet=quiet, city=tz_city(off, lang), tz=off_label(off), loc=local_clock(off), utc=utc_clock(), mode=tr(lang, "mode_auto" if s["mode"] == "auto" else "mode_review"))
+    s = get_settings(cid); tz = s.get("tz") or s["utc_offset"]; quiet = f"{s['quiet_start']:02d}→{s['quiet_end']:02d}" if s["quiet_start"] is not None and s["quiet_end"] is not None else tr(lang, "none")
+    text = tr(lang, "sched_title", title=esc(ch["title"]), iv=s["interval_minutes"], ppc=s["posts_per_cycle"], lb=s["lookback_hours"], ud=onoff(s["allow_undated"]), quiet=quiet, city=tz_city(tz, lang), tz=off_label(tz), loc=local_clock(tz), utc=utc_clock(), mode=tr(lang, "mode_auto" if s["mode"] == "auto" else "mode_review"))
     kb = [[B(tr(lang, "b_interval", n=s["interval_minutes"]), f"a:set:{cid}:interval_minutes"), B(tr(lang, "b_ppc", n=s["posts_per_cycle"]), f"a:set:{cid}:posts_per_cycle")], [B(tr(lang, "b_daily_cap", n=str(s.get("daily_posts_cap") or "∞")), f"a:set:{cid}:daily_posts_cap")], [B(tr(lang, "b_lookback", n=s["lookback_hours"]), f"a:set:{cid}:lookback_hours"), B(tr(lang, "b_undated", i=onoff(s["allow_undated"])), f"a:tog:{cid}:allow_undated")],
           [B(tr(lang, "b_quiet"), f"a:quiet:{cid}"), B(tr(lang, "b_tz"), f"a:tz:{cid}")], [B(tr(lang, "b_mode", m=tr(lang, "auto" if s["mode"] == "auto" else "review")), f"a:mode:{cid}")], [B(tr(lang, "back"), f"a:ch:{cid}")]]
     await render(update, context, text, kb)
 
 async def view_quiet(update, context, cid):
-    lang = L(update); s = get_settings(cid)
-    await render(update, context, tr(lang, "quiet_pick_start", tz=off_label(s["utc_offset"]), loc=local_clock(s["utc_offset"])), hour_grid(f"a:qs:{cid}") + [[B(tr(lang, "quiet_off"), f"a:qoff:{cid}")], [B(tr(lang, "back"), f"a:sch:{cid}")]])
+    lang = L(update); s = get_settings(cid); tz = s.get("tz") or s["utc_offset"]
+    await render(update, context, tr(lang, "quiet_pick_start", tz=off_label(tz), loc=local_clock(tz)), hour_grid(f"a:qs:{cid}") + [[B(tr(lang, "quiet_off"), f"a:qoff:{cid}")], [B(tr(lang, "back"), f"a:sch:{cid}")]])
 
 async def view_tz(update, context, cid):
     from newsbot.timeutils import TZ_ZONES
-    lang = L(update); s = get_settings(cid); cur = float(s["utc_offset"]); i = 1 if lang == "en" else 0
-    rows = pairs([B(("✅ " if abs(o - cur) < 0.01 else "") + f"{TZ_NAMES[z][i]} {off_label(o)}", f"a:tzs:{cid}:{k}") for k, (z, o) in enumerate(TZ_ZONES)])
+    lang = L(update); s = get_settings(cid); cur = tz_key_of(s.get("tz") or s["utc_offset"]); i = 1 if lang == "en" else 0
+    rows = pairs([B(("✅ " if z == cur else "") + f"{TZ_NAMES[z][i]} {off_label(iana)}", f"a:tzs:{cid}:{k}") for k, (z, iana) in enumerate(TZ_ZONES)])
     await render(update, context, tr(lang, "tz_pick", utc=utc_clock()), rows + [[B(tr(lang, "back"), f"a:sch:{cid}")]])
 
 # ══════════════════════════════════════════════════════════════════════════

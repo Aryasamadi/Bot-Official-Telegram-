@@ -35,6 +35,11 @@ MAX_MEDIA_BYTES = MAX_MEDIA_MB * 1024 * 1024
 MAX_PAGE_BYTES = int(os.getenv("MAX_PAGE_MB", "8")) * 1024 * 1024
 CAPTION_LIMIT, MSG_LIMIT = 1024, 4096
 RETRY_AFTER_MAX = int(os.getenv("RETRY_AFTER_MAX", "120"))
+# ARCH-02 (فاز ۷): سقفِ کلِ یک درخواست fetch/دانلود رسانه — httpx فقط per-read timeout دارد
+FETCH_TOTAL_SEC = max(5, int(os.getenv("FETCH_TOTAL_SEC", "60")))
+MEDIA_TOTAL_SEC = max(10, int(os.getenv("MEDIA_TOTAL_SEC", "600")))
+# PLB-10 (فاز ۷): سقف احترام به Retry-After در retryهای کشف خوراک
+FEED_RETRY_AFTER_MAX = max(1, int(os.getenv("FEED_RETRY_AFTER_MAX", "15")))
 
 # ── محتوا ──
 MAX_ARTICLE_CHARS = int(os.getenv("MAX_ARTICLE_CHARS", "120000"))
@@ -78,6 +83,8 @@ MANDATORY_CHANNEL_USERNAME = os.getenv("MANDATORY_CHANNEL_USERNAME", "").strip()
 
 # ── زمان ──
 DEFAULT_UTC_OFFSET = float(os.getenv("DEFAULT_UTC_OFFSET", "3.5"))
+# ARCH-10 (فاز ۷ · تصمیم ۱۱): منطقه‌ی پیش‌فرض با نام IANA؛ خالی ⇒ از DEFAULT_UTC_OFFSET استخراج می‌شود
+DEFAULT_TZ = os.getenv("DEFAULT_TZ", "").strip()
 UTC = timezone.utc
 LANGS = ("fa", "en")
 

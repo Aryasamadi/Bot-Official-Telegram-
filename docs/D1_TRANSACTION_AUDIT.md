@@ -64,6 +64,16 @@ Sites removed from this table (now atomic via `_trx` or deleted):
   meaningless across REST requests).
 - The SQLite→D1 migration tool creates `meta`, installs the referral trigger, and verifies
   data with canonical row-content fingerprints (not only row counts).
+- **Phase 10 (DB-24):** the full schema bootstrap (`SCHEMA` + `DB_INDEXES` + `meta` +
+  referral trigger) is sent to D1 as **one atomic `batch` request** by both
+  `db._exec_schema` (app startup path) and the migration tool. A failure anywhere rolls the
+  whole batch back — no partially-applied schema. On SQLite the same bootstrap runs inside
+  a single `BEGIN IMMEDIATE` transaction with rollback.
+- **Phase 10 (DB-21):** the migration tool now follows the live-bot coordination protocol:
+  a WAL-safe `sqlite3.backup` snapshot of the source, a `heartbeat` freshness guard
+  (refuses to run while the bot heart-beated < 5 min ago, `--force` to override), a
+  freshness/version guard on the target, and `meta.last_migrate_at` recorded on success.
+  See `docs/DEPLOY_RUNBOOK.md` for the operator checklist.
 
 ## Required next step
 

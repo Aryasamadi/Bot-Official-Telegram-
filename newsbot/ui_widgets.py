@@ -247,6 +247,31 @@ def operation_text(lang, key):
     }
     return texts[key][1 if lang == "en" else 0]
 
+# UISEC-07: به‌جای نمایش خامِ نوع عملیات در پیام «در حال اجرا»، عملیات را با زبان ساده می‌گوید
+_RUNNING_WORDS = (
+    ("a:test", ("🧪 ساخت پیش‌نمایش (تست) در حال اجراست…", "🧪 A test run is in progress…")),
+    ("a:pub", ("🚀 انتشار مطلب در حال اجراست…", "🚀 Publishing is in progress…")),
+    ("a:tog", ("⏳ روشن/خاموش‌کردن اتوماسیون در حال اجراست…", "⏳ Toggling automation…")),
+    ("a:srcr", ("🔌 بررسی منبع در حال اجراست…", "🔌 Checking the source…")),
+    ("a:qreset2", ("♻️ ریست صف در حال اجراست…", "♻️ Resetting the queue…")),
+    ("s:bc_go", ("📣 ارسال همگانی در حال اجراست…", "📣 Broadcast is in progress…")),
+    ("u:req", ("🎫 ثبت درخواست پلن در حال اجراست…", "🎫 Submitting your plan request…")),
+    ("u:free", ("🎁 فعال‌سازی پلن رایگان در حال اجراست…", "🎁 Activating the free plan…")),
+)
+
+def running_op_text(lang, op):
+    """عملیاتِ در حال اجرا را به زبان کاربر توصیف می‌کند (زمان سپری‌شده از ۳ ثانیه به بعد)."""
+    kind = getattr(op, "operation_type", "") or ""
+    k = kind.split(":", 1)[1] if kind.startswith(("callback:", "command:", "input:")) else kind
+    words = next((w for pref, w in _RUNNING_WORDS if k.startswith(pref)), None)
+    base = (words[1 if lang == "en" else 0] if words
+            else ("⏳ درخواست قبلی شما هنوز در حال اجراست…" if lang != "en" else "⏳ Your previous request is still running…"))
+    try:
+        el = int(time.time() - float(getattr(op, "t0", 0) or 0))
+        if el >= 3: base += f" ({el}s)"
+    except Exception: pass
+    return base
+
 # ══════════════════════════════════════════════════════════════════════════
 # نوشتن وضعیت روی پیام (زنده و پایانی)
 # ══════════════════════════════════════════════════════════════════════════

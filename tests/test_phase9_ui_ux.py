@@ -196,7 +196,7 @@ def test_confirm_article_delete_requires_yes():
 
 
 def test_confirm_source_delete_and_api_clear():
-    from newsbot.core_sources import add_source, get_source, set_source_api
+    from newsbot.core_sources import add_source, get_source
     from newsbot.ui_dispatch import dispatch
     cid = _ch(9602)
     sid = add_source(1, cid, "https://example.com/feed", "منبع-۹", api_url="https://api.example.com", api_key="k9")
@@ -294,3 +294,94 @@ def test_urevoke_renders_confirm_only():
     assert "لغو شود" in render_text(up, ctx)
     assert any(d == "s:urevoke2:10" for _, d in _buttons(up))
     assert any(d == "s:user:10" for _, d in _buttons(up))
+
+
+# ── UISEC-07: توصیف سادهٔ عملیات در حال اجرا ──
+
+def test_running_op_text_describes_operation():
+    import time as _t
+    from newsbot.ui_widgets import running_op_text
+    op = type("Op", (), {"operation_type": "callback:a:test:9601", "t0": _t.time() - 7})()
+    fa = running_op_text("fa", op)
+    assert "تست" in fa and "(7s)" in fa
+    en = running_op_text("en", op)
+    assert "test" in en
+    op2 = type("Op", (), {"operation_type": "command:start", "t0": 0})()
+    assert "در حال اجرا" in running_op_text("fa", op2)
+    op3 = type("Op", (), {"operation_type": "callback:a:pub:9601", "t0": 0})()
+    assert "انتشار" in running_op_text("fa", op3)
+
+
+def test_wait_for_running_operation_names_current_operation():
+    from newsbot.opctx import Operation, user_control
+    from newsbot.ui_dispatch import _wait_for_running_operation
+    from newsbot.ui_widgets import _operations
+    up, ctx = FakeUpdate(), FakeContext()
+    op = Operation(1, 9601, "callback:a:test:9601", 1)
+    _operations[1] = op
+    try:
+        lock = user_control(1)
+        async def scenario():
+            async with lock:
+                return await _wait_for_running_operation(up, ctx, 1)
+        assert asyncio.run(scenario()) is True
+        alert = up.callback_query.answers[-1][0][0]
+        assert "تست" in alert and "/cancel" in alert
+    finally:
+        _operations.pop(1, None)
+
+
+# ── UX-02: حالت‌های خالی قابل‌فهم ──
+
+def test_empty_states_sources_queue_rejected():
+    from newsbot.ui_dispatch import dispatch
+    cid = _ch(9603)
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, f"a:src:{cid}"))
+    assert "هنوز منبعی" in render_text(up, ctx)
+    up2, ctx2 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up2, ctx2, f"a:que:{cid}"))
+    assert "صف خالی" in render_text(up2, ctx2)
+    up3, ctx3 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up3, ctx3, f"a:rej:{cid}"))
+    assert "موردی رد نشده" in render_text(up3, ctx3)
+
+
+def test_empty_state_models():
+    from newsbot.ai_models import delete_model, list_models
+    from newsbot.ui_dispatch import dispatch
+    for m in list_models(): delete_model(m["id"])
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, "s:models"))
+    assert "هنوز مدلی" in render_text(up, ctx)
+    _buttons(up)
+
+
+# ── UX-06: مرتب‌سازی صف بر اساس امتیاز ──
+
+def test_queue_sort_by_score_toggle():
+    from newsbot.core_articles import article_insert, article_update
+    from newsbot.ui_dispatch import dispatch
+    cid = _ch(9604)
+    a1 = article_insert(1, cid, "<p>1</p>", "https://e.com/s1", "اول", 0, "2026-01-01T00:00:00", status="ready")
+    a2 = article_insert(1, cid, "<p>2</p>", "https://e.com/s2", "دوم", 0, "2026-01-02T00:00:00", status="ready")
+    article_update(a1, score=5); article_update(a2, score=9)
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, f"a:que:{cid}"))
+    assert _buttons(up)[0][0].startswith("⭐5"), "پیش‌فرض باید قدیمی‌ترین (امتیاز ۵) اول باشد"
+    assert any("امتیاز" in t for t, _ in _buttons(up)), "دکمهٔ مرتب‌سازی باید برچسب متنی داشته باشد"
+    up2, ctx2 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up2, ctx2, f"a:que:{cid}:s"))
+    assert _buttons(up2)[0][0].startswith("⭐9"), "با سورت امتیازی باید مطلب ۹ اول باشد"
+    assert any("زمان" in t for t, _ in _buttons(up2))
+
+
+# ── UX-07: دکمه‌های بازنشانی متن، برچسب‌دار ──
+
+def test_texts_view_reset_buttons_have_labels():
+    from newsbot.ui_dispatch import dispatch
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, "s:texts"))
+    texts = [t for t, _ in _buttons(up)]
+    assert any("پیش‌فرض" in t for t in texts)
+    assert all(re.search(r"[A-Za-z0-9\u0600-\u06FF]", t) for t in texts), f"دکمهٔ بدون برچسب متنی: {texts}"

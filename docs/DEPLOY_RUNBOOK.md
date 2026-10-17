@@ -94,6 +94,36 @@ systemctl start bot-ai-automatic
   2. `tests/test_deployment.py::test_sqlite_backup_and_restore_roundtrip` — چرخهٔ کامل
      بکاپ ← بازگردانی ← اجرای `--check` ← خواندن داده (دریل بازیابی).
 
+## ۵.۱ مهاجرت SQLite → D1 (پروتکل هماهنگ با ربات زنده — فاز ۱۰ / DB-21)
+
+ابزار: `tools/migrate_sqlite_to_d1.py` · بازگردانی: `tools/restore_d1_to_sqlite.py`
+
+1. **توقف ربات توصیه‌شده:** اگر ربات در ۵ دقیقهٔ گذشته heartbeat زده باشد، ابزار بدون
+   `--force` اجرا نمی‌شود (گارد `LIVE_HEARTBEAT_SEC=300`). اول سرویس را ببندید:
+   `systemctl stop bot-ai-automatic`.
+2. ابزار خودش از مبدأ یک **snapshot سازگار** (`sqlite3.backup`، WAL-safe) می‌سازد؛ حتی در
+   اجرای هم‌زمان هم دادهٔ نیمه‌نوشته خوانده نمی‌شود؛ snapshot موقت پایان کار حذف می‌گردد.
+3. **گارد مقصد (DB-03):** اگر D1 داده داشته باشد فقط با `--force`؛ اگر `meta.schema_version`
+   مقصد از بیلد فعلی جدیدتر باشد **حتی با `--force`** متوقف می‌شود.
+4. اسکیمای D1 (SCHEMA + ایندکس‌ها + `meta` + trigger ارجاع) در **یک batch اتمیک** ساخته
+   می‌شود (DB-24)؛ سپس داده‌ها با `INSERT OR REPLACE` و در پایان **verify هر ردیف**
+   (fingerprint) — عدم تطابق ⇒ `exit 1` و هیچ تغییری در انتخاب بک‌اند ندهید.
+5. پس از موفقیت `INSERT OR REPLACE INTO meta(key,value) VALUES('last_migrate_at', …)` ثبت
+   می‌شود؛ همین کلید تاریخ آخرین مهاجرت را نشان می‌دهد.
+6. `DB_BACKEND=d1` را تنها پس از «verify موفق» ست کنید. بازگشت:
+   `python tools/restore_d1_to_sqlite.py restored.db` که در پایان همان verify را اجرا
+   می‌کند و در صورت نقص `exit 1` می‌دهد.
+
+> نسخهٔ اسکیما (DB-25): `SCHEMA_VERSION=4` منبع واحد در `newsbot/__init__.py` است؛
+> ابزارها و `db.py` همان را import می‌کنند. بیلد قدیمی روی دیتابیس جدیدتر در استارت
+> refuse می‌شود (downgrade ممنوع).
+
+**آرشیو و بهداشت DB (DB-23 / تصمیم ۱۴ — ۳۶۵ روز):** در `cleanup()` مقالات قدیمی‌تر از
+`ARCHIVE_DAYS` (پیش‌فرض ۳۶۵) *پس از* گرفتن بکاپ اتمیک در `<کنار DB>/backups/` حذف می‌شوند
+(۲ بکاپ آخر نگه داشته می‌شود، `ARCHIVE_BACKUP_KEEP`). VACUUM حداکثر ماهی یک‌بار و فقط وقتی
+freelist از آستانه بگذرد اجرا می‌شود؛ `PRAGMA optimize` هر cleanup. این پوشه هم باید در
+بکاپ‌های VPS لحاظ شود.
+
 ## ۶. پایش و هشدار پایه
 
 - **شکست deploy:** خودِ GitHub Actions ایمیلِ شکستِ workflow را برای اجراکننده می‌فرستد

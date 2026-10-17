@@ -5,11 +5,11 @@ extract.py و publish.py از همین‌جا import می‌کنند (یک من�
 """
 import asyncio, html, json, re
 from datetime import timedelta
-from urllib.parse import urljoin, urlparse, parse_qsl, urlencode
+from urllib.parse import urljoin, urlparse, parse_qsl, urlencode, urlunparse
 import feedparser
 from bs4 import BeautifulSoup
 from newsbot import config
-from newsbot.net_http import fetch, FetchError, UA_FEED
+from newsbot.net_http import fetch, FetchError, UA_FEED, retry_after_seconds
 from newsbot.core_sources import normalize_url, source_ok, source_fail, get_source, set_source_active
 from newsbot.text_format import strip_tags
 from newsbot.timeutils import now_utc, parse_dt
@@ -19,11 +19,30 @@ from newsbot.ai_models import hostname
 FEED_ACCEPT = "application/rss+xml, application/atom+xml, application/rdf+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.5"
 FEED_PATHS = ("/feed", "/feed/", "/rss", "/rss/", "/rss.xml", "/feed.xml", "/atom.xml", "/index.xml", "/feeds/posts/default?alt=rss", "/?feed=rss2", "/feed/rss", "/feed/atom", "/rss/all", "/rss/news", "/news/rss", "/news/feed", "/blog/feed", "/fa/rss", "/en/rss", "/feeds")
 SITEMAP_PATHS = ("/news-sitemap.xml", "/sitemap-news.xml", "/sitemap_news.xml", "/post-sitemap.xml", "/sitemap-posts.xml", "/sitemap.xml", "/sitemap_index.xml")
+# PLB-08 (فاز ۷): پارامترهای tracking/سهمیه — دو نشر مختلفِ یک مقاله نباید دو آیتم شوند
+_TRACK_PARAMS = ("utm_", "fbclid", "gclid", "dclid", "gbraid", "wbraid", "msclkid", "yclid", "igshid", "mc_", "ref", "smid",
+                 "cmpid", "xtor", "ftag", "campaign", "wt_mc", "ref_src", "ito", "_hsenc", "_hsmi", "s_kwcid", "epik",
+                 "s_cid", "adid", "at_", "share_id", "output", "amp")
 
 def clean_url(u):
+    """canonical‌سازی آدرس (PLB-08): حذف پارامترهای tracking، پیشوند www.، پورت پیش‌فرض، fragment
+    و پسوند مسیر /amp — تا URLهای مختلفِ یک مقاله یک hash/Dedup واحد بدهند."""
     try:
-        p = urlparse(str(u).strip()); qs = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if not k.lower().startswith(("utm_", "fbclid", "gclid", "mc_", "ref", "igshid"))]
-        return normalize_url(p._replace(query=urlencode(qs), fragment="").geturl())
+        p = urlparse(str(u).strip())
+        qs = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if not k.lower().startswith(_TRACK_PARAMS)]
+        netloc = p.netloc
+        try:
+            host = (p.hostname or "").lower().rstrip(".")
+            if host.startswith("www."): host = host[4:]
+            if host:
+                cred = ""
+                if p.username or p.password: cred = (p.username or "") + ((":" + p.password) if p.password else "") + "@"
+                port = p.port
+                keep = port and not ((p.scheme.lower() == "http" and port == 80) or (p.scheme.lower() == "https" and port == 443))
+                netloc = cred + host + (f":{port}" if keep else "")
+        except Exception: pass
+        path = re.sub(r"/amp/?$", "", p.path, flags=re.I) or "/"
+        return normalize_url(urlunparse(p._replace(scheme=p.scheme.lower(), netloc=netloc, path=path, params="", query=urlencode(qs), fragment="")))
     except Exception: return normalize_url(u)
 
 def _struct_dt(st):
@@ -34,12 +53,14 @@ def datetime_from_struct(t):
     from datetime import datetime
     return datetime(*t, tzinfo=config.UTC).isoformat()
 
-def _entry_dt(e):
+def _entry_dt(e, tz=None):
+    """تاریخ آیتم فید. struct_timeها UTC هستند (feedparser در تبدیل با تقویم خودش UTC می‌سازد)،
+    ولی رشته‌های بی‌tz با timezone کانال برچسب می‌خورند (ARCH-11: «ساعت محلی سایت» = tz منبع)."""
     for k in ("published_parsed", "updated_parsed", "created_parsed"):
         d = _struct_dt(e.get(k))
         if d: return d
     for k in ("published", "updated", "dc_date", "date"):
-        d = parse_dt(e.get(k))
+        d = parse_dt(e.get(k), tz)
         if d: return d.isoformat()
     return None
 
@@ -95,7 +116,7 @@ def _entry_html(e):
     if c and isinstance(c, list) and c[0].get("value"): return c[0]["value"]
     return e.get("summary") or e.get("description") or ""
 
-def _feed_items(feed, base, limit):
+def _feed_items(feed, base, limit, tz=None):
     items, seen = [], set()
     for e in feed.entries:
         link = e.get("link") or next((l.get("href") for l in e.get("links", []) if l.get("rel") == "alternate"), None) or e.get("id") or ""
@@ -103,23 +124,23 @@ def _feed_items(feed, base, limit):
         if not str(link).startswith("http"): link = urljoin(base, link)
         link = clean_url(link)
         if link in seen or not urlparse(link).netloc: continue
-        seen.add(link); items.append({"url": link, "title": re.sub(r"\s+", " ", strip_tags(e.get("title") or "")).strip(), "published": _entry_dt(e), "html": _entry_html(e), "media": _entry_media(e, link)})
+        seen.add(link); items.append({"url": link, "title": re.sub(r"\s+", " ", strip_tags(e.get("title") or "")).strip(), "published": _entry_dt(e, tz), "html": _entry_html(e), "media": _entry_media(e, link)})
     items.sort(key=lambda x: x["published"] or "", reverse=True)
     return items[:limit]
 
-def _sitemap_items(xml, limit):
+def _sitemap_items(xml, limit, tz=None):
     out, since = [], now_utc() - timedelta(days=7)   # مرز زمانی به‌صورت datetime آگاهانه نگه داشته می‌شود
     for m in re.finditer(r"<url>(.*?)</url>", xml, re.S):
         blk = m.group(1); loc = re.search(r"<loc>\s*(.*?)\s*</loc>", blk, re.S)
         if not loc: continue
         d = re.search(r"<(?:news:)?publication_date>\s*(.*?)\s*<", blk) or re.search(r"<lastmod>\s*(.*?)\s*</lastmod>", blk)
         t = re.search(r"<news:title>\s*(.*?)\s*</news:title>", blk, re.S)
-        pub = parse_dt(d.group(1)) if d else None
+        pub = parse_dt(d.group(1), tz) if d else None
         if pub and pub < since: continue   # مقایسهٔ datetime آگاهانه (نه رشتهٔ ISO) تا اختلاف آفست در مرز ۷ روز، آیتم را اشتباهاً حذف نکند
         out.append({"url": clean_url(html.unescape(loc.group(1))), "title": html.unescape(strip_tags(t.group(1))).strip() if t else "", "published": pub.isoformat() if pub else None, "html": "", "media": None})
     out.sort(key=lambda x: x["published"] or "", reverse=True); return out[:limit]
 
-def _json_feed_items(content, base, limit):
+def _json_feed_items(content, base, limit, tz=None):
     """فید JSON (JSON Feed: content-type application/feed+json) با کلیدهای version/title/items[]."""
     try: j = json.loads(content.decode("utf-8", "ignore") if isinstance(content, (bytes, bytearray)) else content)
     except Exception: return None
@@ -133,24 +154,24 @@ def _json_feed_items(content, base, limit):
         u = clean_url(u)
         if u in seen or not urlparse(u).netloc: continue
         seen.add(u)
-        pd = parse_dt(d.get("date_published") or d.get("date_modified"))
+        pd = parse_dt(d.get("date_published") or d.get("date_modified"), tz)
         body = d.get("content_html") or d.get("content_text") or d.get("summary") or ""
         out.append({"url": u, "title": re.sub(r"\s+", " ", strip_tags(d.get("title") or "")).strip(),
                     "published": pd.isoformat() if pd else None, "html": body if "<" in body else html.escape(body), "media": None})
     out.sort(key=lambda x: x["published"] or "", reverse=True); return out[:limit]
 
-def _parse_any(content, base, limit):
+def _parse_any(content, base, limit, tz=None):
     """بایت‌های پاسخ → آیتم‌ها (فید RSS/JSON یا سایت‌مپ) یا None"""
     head = content[:4096].lower()
     if b"<sitemapindex" in head: return None
-    if b"<urlset" in head: return _sitemap_items(content.decode("utf-8", "ignore"), limit) or None
+    if b"<urlset" in head: return _sitemap_items(content.decode("utf-8", "ignore"), limit, tz) or None
     if b"<html" in head and not (b"<rss" in head or b"<feed" in head or b"<rdf" in head): return None
     if head.lstrip()[:1] in (b"{", b"["):
-        jf = _json_feed_items(content, base, limit)
+        jf = _json_feed_items(content, base, limit, tz)
         if jf: return jf
     try: f = feedparser.parse(content)
     except Exception: return None
-    return _feed_items(f, base, limit) if f.entries else None
+    return _feed_items(f, base, limit, tz) if f.entries else None
 
 async def _get(url, cond=None, feed=False):
     h = {"Accept": FEED_ACCEPT} if feed else {}
@@ -158,10 +179,15 @@ async def _get(url, cond=None, feed=False):
     r = await fetch(url, headers=h)
     if r.status_code in (403, 406, 429, 503):
         p = urlparse(url); ref = f"{p.scheme}://{p.netloc}/"
+        # PLB-10 (فاز ۷): برای 429/503 به Retry-After سرور احترام می‌گذاریم (با سقف FEED_RETRY_AFTER_MAX)
+        # تا بنر «بیش از حد درخواست» با تلاش فوری دوباره تشدید نشود؛ 403/406 فوری می‌ماند (فیلتر محتوایی است، نه نرخ).
+        delay = retry_after_seconds(r.headers.get("retry-after")) if r.status_code in (429, 503) else None
         for extra in ({"User-Agent": UA_FEED}, {"Referer": ref, "Accept-Language": "en-US,en;q=0.9,fa;q=0.8", "Sec-Fetch-Mode": "navigate"}):
             try:
+                if delay: await asyncio.sleep(min(delay, config.FEED_RETRY_AFTER_MAX))
                 r2 = await fetch(url, headers={**h, **extra})
                 if r2.status_code == 200: return r2
+                if r2.status_code in (429, 503): delay = retry_after_seconds(r2.headers.get("retry-after"))
             except Exception: pass
     return r
 
@@ -218,7 +244,7 @@ def _api_first(d, *names):
         if isinstance(v, (str, int, float)) and str(v).strip(): return str(v).strip()
     return ""
 
-def _api_items(raw, base, limit):
+def _api_items(raw, base, limit, tz=None):
     try: j = json.loads(raw) if isinstance(raw, (str, bytes, bytearray)) else raw
     except Exception: return []
     out, seen = [], set()
@@ -233,7 +259,7 @@ def _api_items(raw, base, limit):
         title = strip_tags(_api_first(d, "title", "headline", "name", "heading", "subject"))
         body = _api_first(d, "content", "body", "text", "description", "summary", "excerpt", "abstract", "trailText")
         pub = _api_first(d, "publishedAt", "published_at", "published", "pubDate", "date", "date_published", "created_at", "createdAt", "updated_at", "webPublicationDate")
-        pd = parse_dt(pub); img = _api_first(d, "urlToImage", "image", "image_url", "imageUrl", "thumbnail", "thumb", "enclosure", "cover", "featured_image", "picture", "media")
+        pd = parse_dt(pub, tz); img = _api_first(d, "urlToImage", "image", "image_url", "imageUrl", "thumbnail", "thumb", "enclosure", "cover", "featured_image", "picture", "media")
         vid = _api_first(d, "video", "video_url", "videoUrl", "mp4")
         media = (_mk_media(vid, "video", u) if vid else None) or (_mk_media(img, "photo", u) if img else None)
         out.append({"url": u, "title": re.sub(r"\s+", " ", title)[:300], "published": pd.isoformat() if pd else None, "html": body if "<" in body else html.escape(body), "media": media})
@@ -243,7 +269,7 @@ def _has_api(src):
     try: return bool(src["api_url"])
     except Exception: return False
 
-async def _api_discover(src, limit):
+async def _api_discover(src, limit, tz=None):
     """کلید API هم داخل آدرس ({key}) و هم در هدرهای رایج فرستاده می‌شود تا با اکثر سرویس‌ها بی‌تنظیمِ اضافه کار کند."""
     api = str(src["api_url"]); key = (src["api_key"] or "").strip()
     url = api
@@ -252,26 +278,27 @@ async def _api_discover(src, limit):
     if key and key not in url: h.update({"Authorization": f"Bearer {key}", "X-Api-Key": key, "apikey": key})
     r = await fetch(url, headers=h)
     if r.status_code != 200: raise FetchError(r.status_code, url)
-    items = await asyncio.to_thread(_api_items, r.text, url, limit)
+    items = await asyncio.to_thread(_api_items, r.text, url, limit, tz)
     if not items: raise RuntimeError("API: no items")
     source_ok(src["id"]); return items, True, "api"
 
-async def discover_source(src, limit=25, use_cache=True):
-    """خروجی: (items, changed, method) — method: api | feed | sitemap | html ؛ changed=False یعنی 304 (بدون تغییر)"""
+async def discover_source(src, limit=25, use_cache=True, tz=None):
+    """خروجی: (items, changed, method) — method: api | feed | sitemap | html ؛ changed=False یعنی 304 (بدون تغییر)
+    tz (ARCH-11): منطقه‌ای که تاریخ‌های بی‌tz فید/سایت‌مپ/API با آن برچسب می‌خورند (منطقهٔ کانال)."""
     cond = {}
     if src["etag"]: cond["If-None-Match"] = src["etag"]
     if src["last_modified"]: cond["If-Modified-Since"] = src["last_modified"]
     try:
-        if _has_api(src): return await _api_discover(src, limit)
+        if _has_api(src): return await _api_discover(src, limit, tz)
         if src["feed_url"] and use_cache:
             r = await _get(src["feed_url"], cond, feed=True)
             if r.status_code == 304: source_ok(src["id"], src["feed_url"], src["etag"], src["last_modified"]); return [], False, "feed"
             if r.status_code == 200:
-                items = await asyncio.to_thread(_parse_any, r.content, src["feed_url"], limit)
+                items = await asyncio.to_thread(_parse_any, r.content, src["feed_url"], limit, tz)
                 if items: source_ok(src["id"], src["feed_url"], r.headers.get("etag"), r.headers.get("last-modified")); return items, True, "sitemap" if b"<urlset" in r.content[:4096].lower() else "feed"
         r = await _get(src["url"], feed=False)
         if r.status_code != 200: raise FetchError(r.status_code, src["url"])
-        items = await asyncio.to_thread(_parse_any, r.content, src["url"], limit)
+        items = await asyncio.to_thread(_parse_any, r.content, src["url"], limit, tz)
         if items: source_ok(src["id"], src["url"], r.headers.get("etag"), r.headers.get("last-modified")); return items, True, "feed"
         soup = await asyncio.to_thread(BeautifulSoup, r.text, "lxml"); p = urlparse(src["url"]); origin = f"{p.scheme}://{p.netloc}"; cands = []
         for tag in soup.find_all("link", attrs={"type": re.compile(r"application/(rss|atom|rdf)\+xml|application/feed\+json", re.I)}):
@@ -286,7 +313,7 @@ async def discover_source(src, limit=25, use_cache=True):
             try: rr = await _get(fu, feed=True)
             except Exception: continue
             if rr.status_code == 200:
-                items = await asyncio.to_thread(_parse_any, rr.content, fu, limit)
+                items = await asyncio.to_thread(_parse_any, rr.content, fu, limit, tz)
                 if items: source_ok(src["id"], fu, rr.headers.get("etag"), rr.headers.get("last-modified")); return items, True, "feed"
         smaps = list(SITEMAP_PATHS)
         try:
@@ -300,7 +327,7 @@ async def discover_source(src, limit=25, use_cache=True):
             if rr.status_code != 200: continue
             head = rr.content[:4096].lower()
             if b"<urlset" in head:
-                items = await asyncio.to_thread(_sitemap_items, rr.content.decode("utf-8", "ignore"), limit)
+                items = await asyncio.to_thread(_sitemap_items, rr.content.decode("utf-8", "ignore"), limit, tz)
                 if items: source_ok(src["id"], su); return items, True, "sitemap"
             elif b"<sitemapindex" in head:
                 kids = re.findall(r"<sitemap>.*?<loc>\s*(.*?)\s*</loc>", rr.content.decode("utf-8", "ignore"), re.S)
@@ -309,7 +336,7 @@ async def discover_source(src, limit=25, use_cache=True):
                     try: rk = await _get(html.unescape(ku), feed=True)
                     except Exception: continue
                     if rk.status_code == 200 and b"<urlset" in rk.content[:4096].lower():
-                        items = await asyncio.to_thread(_sitemap_items, rk.content.decode("utf-8", "ignore"), limit)
+                        items = await asyncio.to_thread(_sitemap_items, rk.content.decode("utf-8", "ignore"), limit, tz)
                         if items: source_ok(src["id"], html.unescape(ku)); return items, True, "sitemap"
         items = await asyncio.to_thread(_html_links, soup, src["url"], limit)
         if items: source_ok(src["id"])

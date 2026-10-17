@@ -5,7 +5,9 @@ FIX v4:
   • is_private_host: بررسی مشترک IP خصوصی برای همه‌ی URLهای کاربری (منبع/API/مدل)
   • fetch و _GuardedStream (در publish.py) از public_url_strict استفاده می‌کنند
 """
-import asyncio, ipaddress, json, re, secrets, socket
+import asyncio, ipaddress, json, re, secrets, socket, time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlparse
 import httpx
 from newsbot import config
@@ -121,36 +123,61 @@ class FetchError(RuntimeError):
     """خطای HTTP با کد وضعیت؛ برای پیام اختصاصی ۴۰۳ هنگام افزودن منبع."""
     def __init__(self, status, url=""): super().__init__(f"HTTP {status}"); self.status = int(status); self.url = url
 
+def retry_after_seconds(value):
+    """ARCH-02/PLB-10 (فاز ۷): هدر Retry-After (ثانیه یا HTTP-date) → ثانیه؛ خالی/نامعتبر/گذشته ⇒ None.
+    مشترک بین retry کشف خوراک (discover) و دانلود رسانه (publish)."""
+    v = str(value or "").strip()
+    if not v: return None
+    try:
+        secs = float(v)
+        return secs if secs > 0 else None
+    except ValueError: pass
+    try:
+        when = parsedate_to_datetime(v)
+        if when.tzinfo is None: when = when.replace(tzinfo=timezone.utc)
+        secs = (when - datetime.now(timezone.utc)).total_seconds()
+        return secs if secs > 0 else None
+    except Exception: return None
+
 async def fetch(url, **kw):
-    """GET امن با redirect محدود؛ هر مقصد redirect دوباره اعتبارسنجی و اندازه پاسخ واقعاً محدود می‌شود."""
+    """GET امن با redirect محدود؛ هر مقصد redirect دوباره اعتبارسنجی و اندازه پاسخ واقعاً محدود می‌شود.
+    ARCH-02 (فاز ۷): علاوه بر timeout هر خواندنِ httpx، سقف زمانیِ کلِ درخواست (FETCH_TOTAL_SEC)
+    هم اعمال می‌شود؛ سرورِ کندپاسخ (slow-loris) دیگر منابع را بی‌نهایت قفل نمی‌کند ⇒ FetchError(504)."""
     current = str(url)
     req_kw = dict(kw); req_kw.pop("follow_redirects", None)
     headers = dict(req_kw.pop("headers", {}) or {})
     history = []
+    deadline = time.monotonic() + config.FETCH_TOTAL_SEC
     for _ in range(6):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0: raise FetchError(504, current)
         if not await asyncio.to_thread(public_url_strict, current): raise FetchError(403, current)
         previous_host = urlparse(current).hostname or ""
         async with FETCH_SEM:
-            async with http().stream("GET", current, headers=headers, follow_redirects=False, **req_kw) as r:
-                if r.status_code in (301, 302, 303, 307, 308):
-                    location = r.headers.get("location")
-                    if not location: return httpx.Response(r.status_code, headers=r.headers, content=b"", request=r.request)
-                    nxt = urljoin(current, location)
-                    if not await asyncio.to_thread(public_url_strict, nxt): raise FetchError(403, nxt)
-                    next_host = urlparse(nxt).hostname or ""
-                    if previous_host.lower().rstrip(".") != next_host.lower().rstrip("."):
-                        headers = {k: v for k, v in headers.items() if k.lower() not in {"authorization", "x-api-key", "apikey", "cookie"}}
-                    history.append(r)
-                    current = nxt
-                    continue
-                try:
-                    if int(r.headers.get("content-length") or 0) > config.MAX_PAGE_BYTES: raise FetchError(413, current)
-                except (TypeError, ValueError): pass
-                chunks = bytearray()
-                async for chunk in r.aiter_bytes(262144):
-                    chunks.extend(chunk)
-                    if len(chunks) > config.MAX_PAGE_BYTES: raise FetchError(413, current)
-                return httpx.Response(r.status_code, headers=r.headers, content=bytes(chunks), request=r.request, extensions=r.extensions, history=history)
+            try:
+                async with asyncio.timeout(remaining):
+                    async with http().stream("GET", current, headers=headers, follow_redirects=False, **req_kw) as r:
+                        if r.status_code in (301, 302, 303, 307, 308):
+                            location = r.headers.get("location")
+                            if not location: return httpx.Response(r.status_code, headers=r.headers, content=b"", request=r.request)
+                            nxt = urljoin(current, location)
+                            if not await asyncio.to_thread(public_url_strict, nxt): raise FetchError(403, nxt)
+                            next_host = urlparse(nxt).hostname or ""
+                            if previous_host.lower().rstrip(".") != next_host.lower().rstrip("."):
+                                headers = {k: v for k, v in headers.items() if k.lower() not in {"authorization", "x-api-key", "apikey", "cookie"}}
+                            history.append(r)
+                            current = nxt
+                            continue
+                        try:
+                            if int(r.headers.get("content-length") or 0) > config.MAX_PAGE_BYTES: raise FetchError(413, current)
+                        except (TypeError, ValueError): pass
+                        chunks = bytearray()
+                        async for chunk in r.aiter_bytes(262144):
+                            chunks.extend(chunk)
+                            if len(chunks) > config.MAX_PAGE_BYTES: raise FetchError(413, current)
+                        return httpx.Response(r.status_code, headers=r.headers, content=bytes(chunks), request=r.request, extensions=r.extensions, history=history)
+            except TimeoutError as e:
+                raise FetchError(504, current) from e
     raise FetchError(310, current)
 
 # ── Cloudflare KV (آینه‌ی اختیاری «بیشتر») ──

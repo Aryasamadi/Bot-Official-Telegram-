@@ -17,6 +17,7 @@ class FakeUser:
     last_name = ""
     is_premium = False
     language_code = "fa"
+    def __init__(self, uid=1): self.id = uid
 
 
 class FakeMessage:
@@ -50,8 +51,8 @@ class FakeChat:
 
 
 class FakeUpdate:
-    def __init__(self):
-        self.effective_user = FakeUser()
+    def __init__(self, uid=1):
+        self.effective_user = FakeUser(uid)
         self.effective_message = FakeMessage()
         self.callback_query = FakeQuery()
         self.message = FakeMessage()
@@ -59,9 +60,10 @@ class FakeUpdate:
 
 
 class FakeBot:
-    def __init__(self): self.sent = []
+    def __init__(self): self.sent = []; self.edits = []
     async def send_message(self, *a, **kw): self.sent.append((a, kw)); return FakeMessage()
-    async def edit_message_text(self, *a, **kw): return FakeMessage()
+    async def copy_message(self, *a, **kw): return FakeMessage()
+    async def edit_message_text(self, text=None, **kw): self.edits.append(text); return FakeMessage()
     async def get_chat_member(self, *a, **kw): return type("M", (), {"status": "administrator"})()
     async def get_me(self): return type("B", (), {"id": 123, "username": "testbot"})()
 
@@ -385,3 +387,115 @@ def test_texts_view_reset_buttons_have_labels():
     texts = [t for t, _ in _buttons(up)]
     assert any("پیش‌فرض" in t for t in texts)
     assert all(re.search(r"[A-Za-z0-9\u0600-\u06FF]", t) for t in texts), f"دکمهٔ بدون برچسب متنی: {texts}"
+
+
+# ── UX-01/08: میان‌بر کانال یکتا در خانه ──
+
+def test_admin_home_shortcut_with_single_channel():
+    from newsbot.core_users import ensure_user
+    from newsbot.db import q
+    from newsbot.core_channels import add_channel, channel_by_chat
+    from newsbot.ui_dispatch import dispatch
+    ensure_user(2, "u2", "U2")
+    q("UPDATE users SET role='admin', lang='fa' WHERE id=2", commit=True)
+    add_channel(2, 9606, "ch-u2", "u2chan", 1)
+    cid = channel_by_chat(9606)["id"]
+    up, ctx = FakeUpdate(uid=2), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, "a:home"))
+    row0 = [d for _, d in _buttons(up)][:2]
+    assert row0 == [f"a:que:{cid}", f"a:test:{cid}"], "با یک کانال باید میان‌بر صف/تست بالای پنل باشد"
+
+
+# ── UX-04: پیشرفت عملیات‌های طولانی ──
+
+def test_models_test_reports_progress(monkeypatch):
+    from newsbot.ai_models import add_model
+    from newsbot.ui_dispatch import dispatch
+    async def fake_test(mid):
+        return True, "ok", 0.05
+    monkeypatch.setattr("newsbot.ui_dispatch.test_model", fake_test)
+    m1 = add_model("https://api.example.com/v1", "sk-a", "m-a", name="مدل الف")
+    m2 = add_model("https://api.example.com/v1", "sk-b", "m-b", name="مدل ب")
+    up, ctx = FakeUpdate(), FakeContext()
+    from newsbot.opctx import Operation, _current_operation
+    op = Operation(1, None, "callback:s:models_test", 1)
+    tok = _current_operation.set(op)
+    try: asyncio.run(_call(dispatch, up, ctx, "s:models_test"))
+    finally: _current_operation.reset(tok)
+    joined = "\n".join(str(x or "") for x in ctx.bot.edits) + "\n" + "\n".join(str(kw.get("text") or "") for _, kw in ctx.bot.sent)
+    assert "1/" in joined and "2/" in joined, "پیشرفت هر مدل باید گزارش شود"
+    from newsbot.ai_models import delete_model
+    for mid in (m1, m2): delete_model(mid)
+
+
+def test_broadcast_reports_progress():
+    from newsbot.core_users import ensure_user
+    from newsbot.opctx import Operation, _current_operation
+    from newsbot.ui_dispatch import dispatch
+    ensure_user(11, None, "U11")
+    up, ctx = FakeUpdate(), FakeContext()
+    ctx.user_data["bc_src"] = (1, 10)
+    op = Operation(1, None, "callback:s:bc_go", 1)
+    tok = _current_operation.set(op)
+    try: asyncio.run(_call(dispatch, up, ctx, "s:bc_go"))
+    finally: _current_operation.reset(tok)
+    joined = "\n".join(str(x or "") for x in ctx.bot.edits) + "\n" + "\n".join(str(kw.get("text") or "") for _, kw in ctx.bot.sent)
+    assert "ارسال همگانی" in joined, "پیشرفت ارسال همگانی باید گزارش شود"
+
+
+# ── GAP-04: دسترس‌پذیری عملی (برچسب متنی دکمه‌ها، توازن HTML، راهنما) ──
+
+_LABEL_RE = re.compile(r"[A-Za-z0-9\u0600-\u06FF]")
+
+
+def test_all_main_buttons_have_textual_labels():
+    from newsbot.ui_dispatch import dispatch
+    cid = _ch(9607)
+    targets = [
+        "a:home", "a:plan", f"a:ch:{cid}", f"a:src:{cid}", f"a:que:{cid}", f"a:rej:{cid}",
+        f"a:sch:{cid}", f"a:quiet:{cid}", f"a:con:{cid}", f"a:cat:{cid}", f"a:cri:{cid}",
+        f"a:myai:{cid}", f"a:rep:{cid}", "s:home", "s:health", "s:plans", "s:discs", "s:models",
+        "s:pays", "s:users", "s:texts", "s:mand", "u:plans", "s:user:9",
+    ]
+    for data in targets:
+        up, ctx = FakeUpdate(), FakeContext()
+        asyncio.run(_call(dispatch, up, ctx, data))
+        for t, _d in _buttons(up):
+            assert _LABEL_RE.search(t), f"دکمهٔ بدون برچسب متنی در {data}: «{t}»"
+
+
+def _html_balanced(t):
+    stack = []
+    for m in re.finditer(r"<(/?)([a-zA-Z]+)([^>]*)>", t):
+        close, tag = m.group(1), m.group(2).lower()
+        if tag in ("br",): continue
+        if close:
+            if not stack or stack.pop() != tag: return False
+        else: stack.append(tag)
+    return not stack
+
+
+def test_rendered_html_tags_are_balanced():
+    from newsbot.ui_i18n import DEFAULT_TEXTS
+    from newsbot.ui_dispatch import dispatch
+    texts = []
+    texts.append(DEFAULT_TEXTS["help"]["fa"]); texts.append(DEFAULT_TEXTS["help"]["en"])
+    texts.append(DEFAULT_TEXTS["about"]["fa"]); texts.append(DEFAULT_TEXTS["about"]["en"])
+    texts.append(DEFAULT_TEXTS["pay"]["fa"].format(plan="پلن", price="۱۰۰"))
+    cid = _ch(9608)
+    for data in ("a:home", f"a:ch:{cid}", f"a:que:{cid}", f"a:rej:{cid}", f"a:cat:{cid}", f"a:cri:{cid}", "s:home", "s:health", "s:models", "s:users", "s:texts"):
+        up, ctx = FakeUpdate(), FakeContext()
+        asyncio.run(_call(dispatch, up, ctx, data))
+        texts.append(render_text(up, ctx))
+    for t in texts:
+        clean = re.sub(r"<code>.*?</code>", "", t, flags=re.S)
+        assert _html_balanced(clean), f"HTML نامتوازن:\n{t[:400]}"
+
+
+def test_help_lists_core_commands():
+    from newsbot.ui_i18n import DEFAULT_TEXTS
+    cmds = ["/create", "/ref", "/man", "/lang", "/about", "/cancel"]
+    for lang in ("fa", "en"):
+        h = DEFAULT_TEXTS["help"][lang]
+        for c in cmds:
+            assert c in h, f"دستور {c} در راهنمای {lang} نیست"

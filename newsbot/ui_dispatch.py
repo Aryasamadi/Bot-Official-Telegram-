@@ -33,7 +33,7 @@ from newsbot.scheduler import report_text
 from newsbot.logutils import log
 from newsbot.text_format import fit_html, split_html, strip_tags
 from newsbot.ui_i18n import tr, TOGGLABLE, tz_city, FIELD_LABEL, SCHED_FIELDS
-from newsbot.ui_widgets import (B, pairs, esc, render, popup, ask, wiz_start, operation_status,
+from newsbot.ui_widgets import (B, pairs, esc, render, popup, ask, wiz_start, operation_status, onoff,
                                 operation_text, run_user_operation, run_model_test,
                                 clear_interaction, L)
 from newsbot.opctx import _current_operation
@@ -176,7 +176,7 @@ async def dispatch(update, context, data):
             if d == "enabled" and new and await mand_gate(update, context, uid, lang): return   # NEW v4: روشن‌کردن اتوماسیون بدون عضویت تأییدشده ممکن نیست
             update_settings(cid, **{d: new})
             if d == "enabled": await popup(update, context, tr(lang, "tog_enabled" if new else "tog_disabled")); return await view_channel(update, context, cid)
-            else: await popup(update, context, f"{tr(lang, 'tog_' + d)}: {'✅' if new else '⛔'}\n{tr(lang, 'togd_' + d)}")
+            else: await popup(update, context, f"{tr(lang, 'tog_' + d)}: {onoff(new)}\n{tr(lang, 'togd_' + d)}")
             return await (view_sched if d == "allow_undated" else view_content)(update, context, cid)
         if b == "set":
             if d not in FIELD_LABEL: return await popup(update, context, tr(lang, "notfound"))
@@ -262,11 +262,13 @@ async def dispatch(update, context, data):
         if b == "bc_go":
             src = ud.pop("bc_src", None)
             if not src: return await view_super_home(update, context)
-            users = list_users(); ok = fail = 0; await render(update, context, tr(lang, "s_bc_sending", n=len(users)))
-            for u in users:
+            users = list_users(); ok = fail = 0; total = len(users)
+            await operation_status(context, tr(lang, "s_bc_sending", n=total))
+            for i, u in enumerate(users, 1):
                 try: await context.bot.copy_message(u["id"], src[0], src[1]); ok += 1
                 except RetryAfter as e: await asyncio.sleep(min(config.RETRY_AFTER_MAX, float(e.retry_after) + 1)); fail += 1
                 except Exception: fail += 1
+                if i % 15 == 0 or i == total: await operation_status(context, tr(lang, "s_bc_progress", i=i, n=total))   # UX-04
                 await asyncio.sleep(.06)
             await popup(update, context, tr(lang, "s_bc_done", ok=ok, fail=fail)); return await view_super_home(update, context)
         if b == "plans": return await view_s_plans(update, context)
@@ -304,7 +306,7 @@ async def dispatch(update, context, data):
         if b == "uassign":
             exp, queued = assign_plan(tid, int(d)); pl = get_plan(int(d)); ul = user_lang(tid) or "fa"; ds = fmt_date_safe(exp, admin_offset(tid))
             await notify_user_wrap(tid, tr(ul, "pay_approved", name=esc(plan_txt(pl, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=ds)))
-            await popup(update, context, tr(lang, "s_assigned_q" if queued else "s_assigned", d=ds)); return await view_s_user(update, context, tid)
+            await popup(update, context, tr(lang, "s_assigned_q" if queued else "s_assigned", d=ds) + "\n" + tr(lang, "assign_role_note")); return await view_s_user(update, context, tid)
         if b == "urevoke": return await _confirm(update, context, lang, tr(lang, "confirm_revoke_q"), f"s:urevoke2:{tid}", f"s:user:{tid}")
         if b == "urevoke2": revoke_plan(tid); await popup(update, context, tr(lang, "s_revoked")); return await view_s_user(update, context, tid)
         if b == "uban":
@@ -352,11 +354,15 @@ async def dispatch(update, context, data):
                 return await popup(update, context, tr(lang, "notfound"))
             selected = gget("test_model_id") == m["id"]
             gset("test_model_id", None if selected else m["id"])
-            await popup(update, context, ("Test Model cleared" if selected else "Test Model selected") if lang == "en" else ("انتخاب Test Model برداشته شد" if selected else "Test Model انتخاب شد"))
+            await popup(update, context, tr(lang, "s_tm_cleared" if selected else "s_tm_picked"))
             return await view_s_model(update, context, m["id"])
         if b == "models_test":
-            await operation_status(context, tr(lang, "s_model_testing")); res = []
-            for m in list_models_wrap(): ok, out, t = await test_model(m["id"]); res.append(f"{'✅' if ok else '❌'} {esc(m['name'])} ({t}s)" + ("" if ok else f": {esc(out[:60])}"))
+            ms = list_models_wrap()
+            await operation_status(context, tr(lang, "s_model_testing"))
+            res = []
+            for i, m in enumerate(ms, 1):
+                await operation_status(context, tr(lang, "s_model_progress", i=i, n=len(ms), name=esc(str(m["name"] or m["model"]))))   # UX-04
+                ok, out, t = await test_model(m["id"]); res.append(f"{'✅' if ok else '❌'} {esc(m['name'])} ({t}s)" + ("" if ok else f": {esc(out[:60])}"))
             ud["notice"] = "\n".join(res) or "—"; return await view_s_models(update, context)
         if b == "pays": return await view_s_pays(update, context)
         if b == "pay_rc":
@@ -364,7 +370,9 @@ async def dispatch(update, context, data):
             r = pay_get(int(c))
             if r and r["receipt_msg"]:
                 try: await context.bot.copy_message(uid, r["receipt_chat"], r["receipt_msg"])
-                except Exception as e: await popup(update, context, str(e)[:100])
+                except Exception:
+                    log.exception("pay receipt copy failed rid=%s", int(c))
+                    await popup(update, context, tr(lang, "s_pay_rc_err"))
             return await view_s_pays(update, context)
         if b == "pay_no": return await _confirm(update, context, lang, tr(lang, "confirm_pay_no_q"), f"s:pay_no2:{c}" + (f":{d}" if d else ""), "s:pays")
         if b in ("pay_ok", "pay_no2"): return await decide_pay(update, context, int(c), b == "pay_ok", d == "l")

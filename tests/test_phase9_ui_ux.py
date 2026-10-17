@@ -165,3 +165,132 @@ def test_user_view_escapes_role_and_lang_fields():
     asyncio.run(_call(dispatch, up, ctx, "s:user:77"))
     text = render_text(up, ctx)
     assert "<b>role" not in text and "<i>fa" not in text
+
+
+# ── UX-05/UISEC-05: تأیید دوسطحی اقدامات مخرب ──
+
+def _buttons(up):
+    mk = up.callback_query.markups[-1]
+    return [(btn.text, btn.callback_data) for row in mk.inline_keyboard for btn in row]
+
+
+def _ch(chat_id, title="ch"):
+    from newsbot.core_channels import add_channel, channel_by_chat
+    add_channel(1, chat_id, title, f"u{chat_id}", 1)
+    return channel_by_chat(chat_id)["id"]
+
+
+def test_confirm_article_delete_requires_yes():
+    from newsbot.core_articles import article_insert, get_article
+    from newsbot.ui_dispatch import dispatch
+    cid = _ch(9601)
+    aid = article_insert(1, cid, "<p>x</p>", "https://e.com/1", "t1", 0, "2026-01-01T00:00:00")
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, f"a:artd:{aid}"))
+    assert get_article(aid), "پیش از تأیید نباید حذف شود"
+    assert any(d == f"a:artd2:{aid}" for _, d in _buttons(up))
+    assert any(d == f"a:art:{aid}" for _, d in _buttons(up))
+    up2, ctx2 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up2, ctx2, f"a:artd2:{aid}"))
+    assert not get_article(aid), "پس از تأیید باید حذف شود"
+
+
+def test_confirm_source_delete_and_api_clear():
+    from newsbot.core_sources import add_source, get_source, set_source_api
+    from newsbot.ui_dispatch import dispatch
+    cid = _ch(9602)
+    sid = add_source(1, cid, "https://example.com/feed", "منبع-۹", api_url="https://api.example.com", api_key="k9")
+    assert sid
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, f"a:srcd:{sid}"))
+    assert get_source(sid), "پیش از تأیید نباید حذف شود"
+    assert any(d == f"a:srcd2:{sid}" for _, d in _buttons(up))
+    up2, ctx2 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up2, ctx2, f"a:srcapix:{sid}"))
+    assert get_source(sid)["api_url"], "پیش از تأیید نباید کلید پاک شود"
+    assert any(d == f"a:srcapix2:{sid}" for _, d in _buttons(up2))
+    up3, ctx3 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up3, ctx3, f"a:srcapix2:{sid}"))
+    assert not get_source(sid)["api_url"], "پس از تأیید باید کلید پاک شود"
+    up4, ctx4 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up4, ctx4, f"a:srcd2:{sid}"))
+    assert not get_source(sid)
+
+
+def test_confirm_model_delete_requires_yes():
+    from newsbot.ai_models import add_model, get_model
+    from newsbot.ui_dispatch import dispatch
+    mid = add_model("https://api.openai.com/v1", "sk-test9", "gpt-4o-mini", name="مدل ۹")
+    assert mid
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, f"s:model_d:{mid}"))
+    assert get_model(mid), "پیش از تأیید نباید حذف شود"
+    assert any(d == f"s:model_d2:{mid}" for _, d in _buttons(up))
+    up2, ctx2 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up2, ctx2, f"s:model_d2:{mid}"))
+    assert not get_model(mid)
+
+
+def test_confirm_ban_toggle_requires_yes():
+    from newsbot.core_users import ensure_user, get_user
+    from newsbot.ui_dispatch import dispatch
+    ensure_user(9, None, "U9")
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, "s:uban:9"))
+    assert not get_user(9)["banned"], "پیش از تأیید نباید مسدود شود"
+    assert any(d == "s:uban2:9" for _, d in _buttons(up))
+    up2, ctx2 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up2, ctx2, "s:uban2:9"))
+    assert get_user(9)["banned"]
+    up3, ctx3 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up3, ctx3, "s:uban:9"))
+    assert any("مسدودیت" in t for t, _ in _buttons(up3)) or any("برداشته" in render_text(up3, ctx3) for _ in [0])
+    assert any(d == "s:uban2:9" for _, d in _buttons(up3))
+    up4, ctx4 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up4, ctx4, "s:uban2:9"))
+    assert not get_user(9)["banned"]
+
+
+def test_confirm_plan_delete_requires_yes():
+    from newsbot.core_plans import create_plan, get_plan
+    from newsbot.db import q
+    from newsbot.ui_dispatch import dispatch
+    create_plan(name="پلن ۹", days=30, price=99000)
+    pid = q("SELECT id FROM plans ORDER BY id DESC LIMIT 1", one=True)["id"]
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, f"s:plan_d:{pid}"))
+    assert get_plan(pid), "پیش از تأیید نباید حذف شود"
+    assert any(d == f"s:plan_d2:{pid}" for _, d in _buttons(up))
+    up2, ctx2 = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up2, ctx2, f"s:plan_d2:{pid}"))
+    assert not get_plan(pid)
+
+
+def test_pay_no_renders_confirm_and_no_goes_back():
+    from newsbot.ui_dispatch import dispatch
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, "s:pay_no:999:l"))
+    assert "رد شود" in render_text(up, ctx)
+    assert any(d == "s:pay_no2:999:l" for _, d in _buttons(up))
+    assert any(d == "s:pays" for _, d in _buttons(up))
+
+
+def test_txtr_renders_confirm_without_reset():
+    from newsbot.db import gget
+    from newsbot.ui_dispatch import dispatch
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, "s:txtr:welcome:fa"))
+    assert "پیش‌فرض" in render_text(up, ctx)
+    assert any(d == "s:txtr2:welcome:fa" for _, d in _buttons(up))
+    assert gget("text_welcome_fa") is None, "پیش از تأیید نباید بازنشانی/ویرایش شود"
+
+
+def test_urevoke_renders_confirm_only():
+    from newsbot.core_users import ensure_user
+    from newsbot.ui_dispatch import dispatch
+    ensure_user(10, None, "U10")
+    up, ctx = FakeUpdate(), FakeContext()
+    asyncio.run(_call(dispatch, up, ctx, "s:urevoke:10"))
+    assert "لغو شود" in render_text(up, ctx)
+    assert any(d == "s:urevoke2:10" for _, d in _buttons(up))
+    assert any(d == "s:user:10" for _, d in _buttons(up))

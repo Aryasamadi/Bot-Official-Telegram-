@@ -74,14 +74,15 @@ UNIQUE_INDEXES = [
      "CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_channel_url ON sources(channel_id,url)"),
 ]
 
-# trigger اتمیک: claim شرطیِ اعتبار ارجاع و شارژ کیف پول در *یک* دستور SQL (sqlite و D1 هر دو اجرا می‌کنند)
+# trigger اتمیک (v5 — فاز ۱۲/REF-3): شارژ کیف پول معرف در *یک* دستور SQL همراه با به‌روزرسانی ردیف
+# ارجاع؛ با «پاداش هر خرید» سازگار است (delta افزایش credit_amount، نه فقط گذار credited ۰→۱).
 REFERRAL_CREDIT_TRIGGER = """
 CREATE TRIGGER IF NOT EXISTS trg_referral_credit_wallet
-AFTER UPDATE OF credited ON referrals
+AFTER UPDATE OF credit_amount ON referrals
 FOR EACH ROW
-WHEN OLD.credited = 0 AND NEW.credited = 1 AND NEW.credit_amount > 0
+WHEN NEW.credit_amount > COALESCE(OLD.credit_amount, 0)
 BEGIN
-    UPDATE users SET credit=COALESCE(credit,0)+NEW.credit_amount WHERE id=NEW.referrer_id;
+    UPDATE users SET credit=COALESCE(credit,0)+(NEW.credit_amount-COALESCE(OLD.credit_amount,0)) WHERE id=NEW.referrer_id;
 END
 """
 
@@ -327,7 +328,8 @@ def _ensure_schema(conn):
                     conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
                     have[tbl].add(col)
             normalize_iso_columns(conn)   # DB-14 — پیش از هر مقایسهٔ رشته‌ایِ زمان
-            # claim اعتبار ارجاع + شارژ کیف پول باید یک statement اتمیک باشد؛ trigger همان UPDATE را اجرا می‌کند
+            # REF-3 v5: تعریف trigger عوض شده؛ نسخهٔ قدیمی (credited ۰→۱) باید جایگزین شود
+            conn.execute("DROP TRIGGER IF EXISTS trg_referral_credit_wallet")
             conn.execute(REFERRAL_CREDIT_TRIGGER)
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
             # ژورنال انتشار از جدول عمومی settings به جدول اختصاصی منتقل می‌شود (مایگریشن افزایشی و غیرمخرب)

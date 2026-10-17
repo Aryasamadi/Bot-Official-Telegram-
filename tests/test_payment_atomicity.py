@@ -214,7 +214,7 @@ def test_referral_cap_line_present_in_source():
     from pathlib import Path
     src = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_views_user.py").read_text(encoding="utf-8")
     i18n = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_i18n.py").read_text(encoding="utf-8")
-    assert "ref_cap_line" in src and "REFERRAL_MAX_PER_USER" in src
+    assert "ref_cap_line" in src and "referral_cfg" in src
     assert '"ref_cap_line"' in i18n
 
 

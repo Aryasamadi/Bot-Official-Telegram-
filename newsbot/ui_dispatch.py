@@ -45,7 +45,7 @@ from newsbot.ui_views_admin import (view_admin_home, view_channel, channel_reche
                                     PLAN_FIELDS, MODEL_FIELDS, fl)
 from newsbot.ui_views_super import (view_super_home, view_health, view_s_plans, view_s_plan, view_s_discs,
                                     view_s_disc, view_s_users, view_s_user, view_s_models, view_s_model,
-                                    view_s_pays, view_s_texts, view_s_mand, decide_pay)
+                                    view_s_pays, view_s_texts, view_s_mand, decide_pay, view_s_ref)
 
 
 async def dispatch(update, context, data):
@@ -247,6 +247,9 @@ async def dispatch(update, context, data):
         if b == "report": return await render(update, context, report_text(None, None, lang), [[B(tr(lang, "refresh"), "s:report")], [B(tr(lang, "back"), "s:home")]])
         if b == "health": return await view_health(update, context)
         if b == "auto": new = not gget("automation_enabled", True); gset("automation_enabled", new); await popup(update, context, tr(lang, "s_auto_on" if new else "s_auto_off")); return await view_super_home(update, context)
+        if b == "ref": return await view_s_ref(update, context)   # REF-3 (فاز ۱۲): تنظیمات پاداش دعوت
+        if b == "ref_p": return await ask(update, context, tr(lang, "s_ref_prompt_p"), "refpct", "s:ref")
+        if b == "ref_c": return await ask(update, context, tr(lang, "s_ref_prompt_c"), "refcap", "s:ref")
         if b == "texts": return await view_s_texts(update, context)
         if b == "mand": return await view_s_mand(update, context)
         if b == "mand_t":

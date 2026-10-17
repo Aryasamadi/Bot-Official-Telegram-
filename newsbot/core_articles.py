@@ -7,7 +7,7 @@ import asyncio, json, time
 from datetime import timedelta
 from telegram.error import BadRequest, RetryAfter, NetworkError, Forbidden
 from newsbot import config
-from newsbot.db import q, db, _lock, _safe_fields, _trx, gget, gset
+from newsbot.db import q, db, _lock, _safe_fields, _trx, gget, gset, arun
 from newsbot.logutils import log
 from newsbot.timeutils import now_utc, now_iso, today_str
 from newsbot.ratelimit import rate_mark, rate_cleanup
@@ -93,11 +93,11 @@ class PublicationTransport:
             if self.parent.cancelling(): raise asyncio.CancelledError
             previous = self.journal["phase"]
             self.journal["phase"] = "in_flight"
-            set_pub_journal(self.aid, self.journal)
+            await arun(set_pub_journal, self.aid, self.journal)
             try: message = await method(*args, **kwargs)
             except (BadRequest, RetryAfter, Forbidden):
                 self.journal["phase"] = previous
-                set_pub_journal(self.aid, self.journal)
+                await arun(set_pub_journal, self.aid, self.journal)
                 raise
             except NetworkError:
                 raise
@@ -107,7 +107,7 @@ class PublicationTransport:
                 self.journal.update(phase="partial", media_id=message.message_id)
             else:
                 self.journal.update(phase="ack", message_id=message.message_id)
-            set_pub_journal(self.aid, self.journal)
+            await arun(set_pub_journal, self.aid, self.journal)
             return message
         return send
 

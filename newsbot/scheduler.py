@@ -5,7 +5,7 @@
 import asyncio, html, os, time
 from datetime import timedelta
 from newsbot import config
-from newsbot.db import q, gget, gset
+from newsbot.db import q, gget, gset, arun
 from newsbot.logutils import log, log_event, metrics_text
 from newsbot.timeutils import now_utc, now_iso, parse_dt, fmt_date, ago_text, off_label
 from newsbot.notify import notify_user
@@ -25,15 +25,16 @@ _tick_lock = asyncio.Lock()
 async def _plan_notifications():
     config.SCHED_NOTIF_FAILURES.set(True)
     try:
-        for u, key, left in expiring_users():
+        for u, key, left in await arun(expiring_users):
             if u["next_plan_id"]: continue
-            lang = u["lang"] or "fa"; p = get_plan(u["plan_id"]); name = html.escape(plan_txt(p, "name", lang)) if p else "—"
+            lang = u["lang"] or "fa"; p = await arun(get_plan, u["plan_id"]); name = html.escape(plan_txt(p, "name", lang)) if p else "—"
             # کلید در DB رزرو شده؛ اگر ارسال واقعاً ناموفق باشد، claim آزاد می‌شود تا تیک بعدی دوباره تلاش کند
             try:
                 await notify_user(u["id"], (f"⏳ پلن «{name}» حدود <b>{int(left)} ساعت</b> دیگر تمام می‌شود." if lang == "fa" else f"⏳ Plan “{name}” ends in about <b>{int(left)}h</b>."), [[("🔄 تمدید / ارتقا" if lang == "fa" else "🔄 Renew / Upgrade", "u:plans")]])
             except Exception:
-                q("UPDATE users SET remind_key=NULL WHERE id=? AND remind_key=?", (u["id"], key), commit=True)
-        for u in q("SELECT * FROM users WHERE plan_id IS NOT NULL AND plan_expires <=? AND next_plan_id IS NULL AND (remind_key IS NULL OR remind_key!='expired') AND banned=0", (now_iso(),)):
+                await arun(q, "UPDATE users SET remind_key=NULL WHERE id=? AND remind_key=?", (u["id"], key), commit=True)
+        expired = await arun(q, "SELECT * FROM users WHERE plan_id IS NOT NULL AND plan_expires <=? AND next_plan_id IS NULL AND (remind_key IS NULL OR remind_key!='expired') AND banned=0", (now_iso(),))
+        for u in expired:
             lang = u["lang"] or "fa"
             # الگوی «فقط بعد از موفقیت ثبت شود» (مثل rate_free/rate_mark): به‌جای ثبت remind_key پیش از ارسال،
             # تا وقتی ارسال موفق نشده کلید مصرف نمی‌شود و تیک بعدی دوباره تلاش می‌کند.
@@ -41,7 +42,7 @@ async def _plan_notifications():
                 await notify_user(u["id"], ("🔴 <b>پلن شما تمام شد؛ انتشار خودکار متوقف است.</b>" if lang == "fa" else "🔴 <b>Your plan expired; automatic publishing is paused.</b>"), [[("🔄 تمدید / ارتقا" if lang == "fa" else "🔄 Renew / Upgrade", "u:plans")]])
             except Exception:
                 continue   # ارسال ناموفق → کلید «expired» ثبت نشد تا تیک بعدی دوباره هشدار بدهد
-            q("UPDATE users SET remind_key='expired' WHERE id=?", (u["id"],), commit=True)
+            await arun(q, "UPDATE users SET remind_key='expired' WHERE id=?", (u["id"],), commit=True)
     finally:
         config.SCHED_NOTIF_FAILURES.set(False)
 
@@ -67,36 +68,40 @@ async def _scheduled(bot, uid, ch, s):
         if res["published"]: await _report_published(uid, ch, s, res)
     except Exception as e: log_event("ERROR", f"چرخه {ch['title']}: {e}", uid)
 
+def _recover_state():
+    """بازیابی دوره‌ای (ژورنال انتشار + پرداخت گیرکرده + رول‌بک مزایای منقضی) — روی ترد دیتابیس، بیرون از حلقه."""
+    gset("last_recover", time.time()); recover_publications(); recover_stuck_payments()   # FIX v4: پرداخت گیرکرده هم بازیابی می‌شود
+    from newsbot.core_plans import rollback_expired_benefits
+    rollback_expired_benefits()   # BIZ-03: نقش ادمینِ پلنِ منقضی پایین می‌آید
+
 async def scheduler_tick(bot):
     if _tick_lock.locked(): return
     async with _tick_lock:
-        gset("heartbeat", now_iso()); _do_cleanup()
+        await arun(gset, "heartbeat", now_iso()); await arun(_do_cleanup)
         try:
             # اگر ژورنالی وسط کار گیر کند (تسک لغو شود، پروسه kill شود) تا restart بعدی بازیابی نمی‌شد.
             # با فاصله‌ی زمانی اجرا می‌شود، نه هر تیک؛ کوئری روی pub_journal با PK است ⇒ ارزان.
-            if (time.time() - float(gget("last_recover", 0))) >= config.RECOVER_EVERY_MIN * 60:
-                gset("last_recover", time.time()); recover_publications(); recover_stuck_payments()   # FIX v4: پرداخت گیرکرده هم بازیابی می‌شود
-                from newsbot.core_plans import rollback_expired_benefits
-                rollback_expired_benefits()   # BIZ-03: نقش ادمینِ پلنِ منقضی پایین می‌آید
+            if (time.time() - float(await arun(gget, "last_recover", 0))) >= config.RECOVER_EVERY_MIN * 60:
+                await arun(_recover_state)
         except Exception as e: log_event("ERROR", f"publication recovery: {e}")
         try: await probe_down_models()
         except Exception as e: log_event("WARN", f"probe_down_models failed: {type(e).__name__}: {e}")
         try: await _plan_notifications()
         except Exception as e: log_event("ERROR", f"plan notifications: {e}")
-        if not gget("automation_enabled", True): return
+        if not await arun(gget, "automation_enabled", True): return
         due = []
         skipped = []
-        for u in list_admins():
+        for u in await arun(list_admins):
             uid = u["id"]
-            if not admin_limits(uid)["active"]:
+            if not (await arun(admin_limits, uid))["active"]:
                 skipped.append((uid, "plan_expired")); continue
-            for ch in list_channels(uid):
-                s = get_settings(ch["id"])
+            for ch in await arun(list_channels, uid):
+                s = await arun(get_settings, ch["id"])
                 if not s["enabled"]:
                     skipped.append((uid, ch["id"], "disabled")); continue
                 try: await flush_ready(bot, uid, ch["id"])
                 except Exception as e: log_event("ERROR", f"flush {ch['title']}: {e}", uid)
-                rem = remaining(uid, "posts", ch["id"])
+                rem = await arun(remaining, uid, "posts", ch["id"])
                 if rem is not None and rem <= 0:
                     skipped.append((uid, ch["id"], "quota")); continue
                 if in_quiet(s) and s["mode"] == "auto":
@@ -106,16 +111,16 @@ async def scheduler_tick(bot):
                     due.append((lr.isoformat() if lr else "", uid, ch, s))
                 else:
                     skipped.append((uid, ch["id"], f"not_due (next in {int(s['interval_minutes']) - int((now_utc() - lr).total_seconds())//60}′)"))
-        gset("load_due", len(due))
+        await arun(gset, "load_due", len(due))
         if skipped:   # خلاصه‌ی هر تیک نویز INFO بود؛ جزئیات فقط در سطح debug
             log.debug("scheduler skip-summary: %s", "; ".join(f"{u}/{c}/{r}" for u, c, r in skipped[:10]))
         if not due:
             log.debug("scheduler: nothing due this tick")
             return
         # چرخه هرگز متوقف نمی‌شود: اگر مدلی در دسترس نباشد، خودِ چرخه مدل‌ها را به‌ترتیب امتحان می‌کند و در پایان دلیل واقعی را می‌گوید
-        if not any(any_model_available(uid) for _, uid, _, _ in due): log_event("WARN", f"{len(due)} کانال با مدل‌های در حالت backoff اجرا می‌شوند (امتحان ترتیبی)")
+        if not any([await arun(any_model_available, uid) for _, uid, _, _ in due]): log_event("WARN", f"{len(due)} کانال با مدل‌های در حالت backoff اجرا می‌شوند (امتحان ترتیبی)")
         due.sort(key=lambda x: x[0]); batch = due[:config.MAX_CYCLES_PER_TICK]
-        gset("last_cycle_start", now_iso()); await asyncio.gather(*[_scheduled(bot, uid, ch, s) for _, uid, ch, s in batch]); gset("last_cycle_end", now_iso())
+        await arun(gset, "last_cycle_start", now_iso()); await asyncio.gather(*[_scheduled(bot, uid, ch, s) for _, uid, ch, s in batch]); await arun(gset, "last_cycle_end", now_iso())
 
 def _do_cleanup():
     from newsbot.core_articles import cleanup

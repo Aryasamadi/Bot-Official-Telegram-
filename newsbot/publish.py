@@ -16,6 +16,7 @@ from newsbot.logutils import log, log_event, log_ctx, bump
 from newsbot.timeutils import now_iso
 from newsbot.net_http import http, public_url_strict, UA_BROWSER, UA_FEED, gen_deeplink_key, save_deeplink, retry_after_seconds
 from newsbot.concurrency import FETCH_SEM, ch_lock
+from newsbot.db import arun
 from newsbot.discover import _ext_kind
 from newsbot.core_channels import get_channel, get_settings, msg_link
 from newsbot.core_articles import (get_article, article_update, get_pub_journal, set_pub_journal, reserve_publication,
@@ -267,21 +268,26 @@ def channel_caption(s, ch, post_html, full_html, title, url):
     return cut, tail, "\n".join(parts)
 
 async def publish_article(bot, aid, count_usage=True, test_user=None):
-    a = get_article(aid)
+    a = await arun(get_article, aid)
     if not a: return False, "not_ready"
     async with ch_lock(a["channel_id"]):
         return await _publish_article_locked(bot, aid, count_usage, test_user)
 
+def _release_with_current_reason(aid, journal):
+    """آزادسازی ژورنال با دلیل *جاری* همان مقاله — یک تابع تا در مسیر لغو هم یک‌جا با arun اجرا شود."""
+    current = get_article(aid)
+    return release_publication(aid, journal, current["reason"] if current else "")
+
 async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
-    a = get_article(aid)
+    a = await arun(get_article, aid)
     if not a or a["status"] != "ready" or not a["post_html"]: return False, "not_ready"
-    ch = get_channel(a["channel_id"]); admin_id = a["admin_id"]
+    ch = await arun(get_channel, a["channel_id"]); admin_id = a["admin_id"]
     if not ch: return False, "no_channel"
     operation_checkpoint()
-    journal = get_pub_journal(aid)
+    journal = await arun(get_pub_journal, aid)
     if journal and (journal.get("link") or journal.get("phase") == "ack"):
         link = journal.get("link") or msg_link(ch, SimpleNamespace(message_id=journal["message_id"]))
-        settle_publication(aid, ch, journal)
+        await arun(settle_publication, aid, ch, journal)
         return True, link
     if journal:
         phase = journal.get("phase")
@@ -291,25 +297,25 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
         if phase == "in_flight" or (phase == "unsettled" and not journal.get("media_id")):
             if phase == "in_flight":
                 # فقط فاز را می‌بندد؛ reserved_day حفظ می‌شود (سهمیه در ابهام تحویل برنمی‌گردد — PUB-05)
-                release_publication(aid, journal, "delivery_unknown")
+                await arun(release_publication, aid, journal, "delivery_unknown")
             # تحویل نامعلوم است: دوباره منتشر نمی‌شود و در صف «آماده» هم نمی‌ماند،
             # چون ماندن در صف سرِ صف را برای همیشه می‌بست و بقیهٔ آماده‌ها هرگز منتشر نمی‌شدند.
-            article_update(aid, status="failed", reason="delivery_unknown")
+            await arun(article_update, aid, status="failed", reason="delivery_unknown")
             bump("posts_fail"); log_ctx(stage="delivery_unknown")
             return False, "delivery_unknown"
-        journal = release_publication(aid, journal, a["reason"] or "")
+        journal = await arun(release_publication, aid, journal, a["reason"] or "")
     if ch["admin_id"] != admin_id: return False, "no_channel"
-    if posted_before(ch["chat_id"], a["hash"]): article_update(aid, status="rejected", reason="duplicate"); return False, "duplicate"
-    journal = reserve_publication(aid, admin_id, count_usage, test_user, journal)
+    if await arun(posted_before, ch["chat_id"], a["hash"]): await arun(article_update, aid, status="rejected", reason="duplicate"); return False, "duplicate"
+    journal = await arun(reserve_publication, aid, admin_id, count_usage, test_user, journal)
     if journal is None: return False, "quota"
     media = None; published = False
     try:
-        s = get_settings(ch["id"])
+        s = await arun(get_settings, ch["id"])
         if not await bot_can_post(bot, ch["chat_id"]):
-            article_update(aid, reason="bot_not_admin"); return False, "bot_not_admin"
+            await arun(article_update, aid, reason="bot_not_admin"); return False, "bot_not_admin"
         operation_checkpoint()
-        if posted_before(ch["chat_id"], a["hash"]):
-            article_update(aid, status="rejected", reason="duplicate"); return False, "duplicate"
+        if await arun(posted_before, ch["chat_id"], a["hash"]):
+            await arun(article_update, aid, status="rejected", reason="duplicate"); return False, "duplicate"
         try: media = json.loads(a["media"]) if a["media"] and s["include_media"] else None
         except (ValueError, TypeError): media = None; log.warning("corrupt media payload article=%s", aid)
         cut, tail, full_for_bot = await asyncio.to_thread(channel_caption, s, ch, a["post_html"], a["full_html"], a["title"], a["url"])
@@ -325,7 +331,7 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
             media = {"_sent_id": journal["media_id"]}
         elif media and media.get("kind") != "photo": media["_file"] = await download_media(media)
         journal["text"] = text
-        set_pub_journal(aid, journal)
+        await arun(set_pub_journal, aid, journal)
         operation_checkpoint()
         parent = asyncio.current_task()
         async def commit_send():
@@ -338,15 +344,15 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
                     published = True
                     raise
                 if isinstance(e, RetryAfter):      # محدودیت نرخ تلگرام → به بالا گزارش می‌شود تا صف drain موقتاً بخوابد
-                    article_update(aid, reason="rate_limited")
+                    await arun(article_update, aid, reason="rate_limited")
                     return False, f"retry_after:{min(max(int(getattr(e, 'retry_after', 30) or 30), 5), 300)}"
                 if journal.get("phase") == "in_flight":
-                    article_update(aid, reason="delivery_unknown")
+                    await arun(article_update, aid, reason="delivery_unknown")
                 else:
                     n = (int(a["send_fails"]) if "send_fails" in a.keys() and a["send_fails"] is not None else 0) + 1
                     # شکست قطعیِ ارسال (پست بلند، Forbidden، خطای پارس): بعد از سه تلاش از صف بیرون می‌رود،
                     # وگرنه همیشه سرِ صف می‌ماند و هیچ‌کدام از آماده‌های بعدی هرگز منتشر نمی‌شوند.
-                    article_update(aid, reason=f"send: {str(e)[:110]}", send_fails=n, **({"status": "failed"} if n >= 3 else {}))
+                    await arun(article_update, aid, reason=f"send: {str(e)[:110]}", send_fails=n, **({"status": "failed"} if n >= 3 else {}))
                 log.exception("publication failed article=%s channel=%s", aid, ch["id"])
                 bump("posts_fail"); log_ctx(stage="send_failed")
                 return False, f"send_failed:{str(e)[:120]}"
@@ -355,8 +361,8 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
             if op: op.published_count += 1
             link = msg_link(ch, msg)
             journal.update(phase="ack", link=link)
-            set_pub_journal(aid, journal)
-            settle_publication(aid, ch, journal)
+            await arun(set_pub_journal, aid, journal)
+            await arun(settle_publication, aid, ch, journal)
             if dl_key and dl_payload:
                 # PUB-04: ردیف دیپ‌لینک فقط پس از موفقیت ارسال نوشته می‌شود تا شکست قطعی ردیف یتیم نسازد
                 try: await save_deeplink(dl_key, admin_id, dl_payload)
@@ -377,13 +383,12 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
                 except Exception: log.exception("publication settlement failed article=%s", aid)
             raise
     except asyncio.CancelledError:
-        if not published: article_update(aid, reason="delivery_unknown" if journal.get("phase") == "in_flight" else "cancelled")
+        if not published: await asyncio.shield(arun(article_update, aid, reason="delivery_unknown" if journal.get("phase") == "in_flight" else "cancelled"))
         raise
     finally:
         try:
             if not published and journal.get("phase") != "ack":
-                current = get_article(aid)
-                release_publication(aid, journal, current["reason"] if current else "")
+                await asyncio.shield(arun(_release_with_current_reason, aid, journal))
         finally:
             if media and media.get("_file"):
                 try: os.unlink(media["_file"][0])

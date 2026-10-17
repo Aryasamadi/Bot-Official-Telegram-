@@ -9,7 +9,7 @@ import asyncio, html, os, re
 from telegram import BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 from newsbot import config
-from newsbot.db import db, gget, gset
+from newsbot.db import db, gget, gset, arun, close_db_pool, readonly_check
 from newsbot.logutils import log, log_event
 from newsbot.ratelimit import _rate_load_persisted
 from newsbot.core_plans import seed_plans
@@ -27,6 +27,8 @@ from newsbot.ui_views_super import cmd_health
 
 APP: Application = None
 _db_lock = None      # قفل فایلِ دیتابیس: دو نسخه‌ی هم‌زمان ربات ⇒ دو چرخه روی یک کانال و پست تکراری
+_SHUTDOWN_CANCEL_TIMEOUT = 8.0   # مهلت settle پس از لغو اولِ تسک‌های در حال اجرا
+_SHUTDOWN_GRACE = 2.0            # فرصت دوم برای تسک‌هایی که لغو اول را قورت دادند
 
 
 def init_core():
@@ -47,7 +49,7 @@ async def post_init(app: Application):
     await app.bot.set_my_commands([BotCommand("start", "منوی اصلی"), BotCommand("create", "پنل مدیریت"), BotCommand("ref", "دعوت دوستان"), BotCommand("man", "پشتیبانی"), BotCommand("lang", "زبان"), BotCommand("about", "درباره"), BotCommand("help", "راهنما"), BotCommand("cancel", "لغو عملیات")], language_code="fa")
     await app.bot.set_my_commands([BotCommand("start", "Main menu"), BotCommand("create", "Admin panel"), BotCommand("ref", "Invite friends"), BotCommand("man", "Support"), BotCommand("lang", "Language"), BotCommand("about", "About"), BotCommand("help", "Help"), BotCommand("cancel", "Cancel")])
     app.job_queue.run_repeating(job_tick, interval=config.TICK_SECONDS, first=15, name="tick")
-    _dup = gget("db_dup_warn")
+    _dup = await arun(gget, "db_dup_warn")
     if _dup:
         await notify_supers("⚠️ <b>ایندکس یکتای دیتابیس ساخته نشد</b>\n"
                             f"ردیف تکراری در: <code>{html.escape(', '.join(str(x) for x in _dup))}</code>\n"
@@ -58,15 +60,20 @@ async def post_init(app: Application):
     extra = []
     if config.REFERRAL_ENABLED: extra.append(f"referral {config.REFERRAL_PERCENT:g}%")
     if config.MANDATORY_CHANNEL_ID or config.MANDATORY_CHANNEL_USERNAME: extra.append("mandatory-channel ON")
-    await notify_supers(f"🚀 @{me.username} راه‌اندازی شد · 🤖 مدل‌های فعال {len(list_models(True))} · backend {config.DB_BACKEND} · CF KV {'✅' if config.CF_ENABLED else '❌'} · تیک هر {config.TICK_SECONDS}s" + (f" · {' · '.join(extra)}" if extra else ""))
+    await notify_supers(f"🚀 @{me.username} راه‌اندازی شد · 🤖 مدل‌های فعال {len(await arun(list_models, True))} · backend {config.DB_BACKEND} · CF KV {'✅' if config.CF_ENABLED else '❌'} · تیک هر {config.TICK_SECONDS}s" + (f" · {' · '.join(extra)}" if extra else ""))
 
 
 async def post_shutdown(app: Application):
     _me = asyncio.current_task()
-    pend = [t for t in asyncio.all_tasks() if t is not _me and t.get_name().split(":")[0] in ("publication", "user")]
-    if pend:                                   # ارسال/عملیات در حال اجرا: لغو با مهلت تا وسط کار رها نشود
+    # ARCH-06: همه‌ی تسک‌های نام‌دارِ طولانی (ارسال، عملیات کاربر، تفکر/چرخه) تا وسط کار رها نشوند
+    pend = [t for t in asyncio.all_tasks() if t is not _me and t.get_name().split(":")[0] in ("publication", "user", "thinking")]
+    if pend:
         for t in pend: t.cancel()
-        await asyncio.wait(pend, timeout=8)
+        _done, left = await asyncio.wait(pend, timeout=_SHUTDOWN_CANCEL_TIMEOUT)
+        if left:   # تسک‌هایی که لغو را قورت دادند: فرصت دوم کوتاه؛ بعد رها می‌شوند (پروسه در حال خروج است)
+            for t in left: t.cancel()
+            _done2, left2 = await asyncio.wait(left, timeout=_SHUTDOWN_GRACE)
+            if left2: log.warning("خاموشی: %d تسک پس از مهلت دوم هنوز تمام نشده و رها می‌شود.", len(left2))
         log.info("خاموشی: %d تسک در حال اجرا جمع شد.", len(pend))
     sw = ui_widgets._temp_sweeper
     if sw is not None and not sw.done():       # تسک پاک‌کننده‌ی پیام‌های موقت را تمیز جمع می‌کنیم
@@ -74,6 +81,7 @@ async def post_shutdown(app: Application):
         try: await sw
         except BaseException: pass
     await close_http()
+    close_db_pool()   # استخر تردهای دیتابیس آخر از همه بسته می‌شود تا نوشتن‌های settle قطع نشوند
     try:
         log_event("INFO", "ربات خاموش شد"); log.info("خاموشی تمیز انجام شد.")
     except Exception: pass
@@ -85,8 +93,9 @@ async def on_error(update, context):
     except Exception: pass
 
 
-def preflight():
-    """اعتبارسنجی پیکربندی پیش از راه‌اندازی. همه‌ی ایرادها یک‌جا گزارش می‌شوند تا کارِ اپراتور یک‌بار باشد."""
+def preflight(check=False):
+    """اعتبارسنجی پیکربندی پیش از راه‌اندازی. همه‌ی ایرادها یک‌جا گزارش می‌شوند تا کارِ اپراتور یک‌بار باشد.
+    check=True (خودآزمایی `run.py --check`): فقط‌خواندنی — پوشه ساخته نمی‌شود و دیتابیس فقط بازرسی می‌شود (ARCH-04/C7، تصمیم ۱۳)."""
     bad, warn = [], []
     if not config.BOT_TOKEN:
         bad.append("BOT_TOKEN تنظیم نشده است → توکن BotFather را بگذارید (BOT_TOKEN=123456789:AA...)")
@@ -97,12 +106,17 @@ def preflight():
     folder = os.path.dirname(os.path.abspath(config.DB_FILE)) or "."
     if config.DB_BACKEND != "d1":
         if not os.path.isdir(folder):
-            try: os.makedirs(folder, exist_ok=True)
-            except Exception as e: bad.append(f"پوشه‌ی دیتابیس ساخته نشد: {folder} ({e})")
+            if check:
+                warn.append(f"پوشه‌ی دیتابیس وجود ندارد ({folder})؛ خودآزمایی فقط‌خواندنی چیزی نمی‌سازد — اولین اجرای ربات می‌سازد.")
+            else:
+                try: os.makedirs(folder, exist_ok=True)
+                except Exception as e: bad.append(f"پوشه‌ی دیتابیس ساخته نشد: {folder} ({e})")
         if os.path.isdir(folder) and not os.access(folder, os.W_OK):
             bad.append(f"پوشه‌ی دیتابیس قابل نوشتن نیست: {folder}")
         if os.path.exists(config.DB_FILE) and not os.access(config.DB_FILE, os.W_OK):
             bad.append(f"فایل دیتابیس قابل نوشتن نیست: {config.DB_FILE}")
+        if check:
+            bad.extend(readonly_check())
     else:
         # FIX v4: بک‌اند D1 بدون هر سه مقدار، در runtime با SystemExit دیرتر می‌ترکد؛ این‌جا زود و یک‌جا
         if not (config.CF_ACCOUNT_ID and config.CF_D1_DATABASE_ID and config.CF_D1_TOKEN):

@@ -192,10 +192,21 @@ def upgrade_quote(uid, p, cur, disc_percent=None):
     return out
 
 def _apply_plan_change_sql(conn, uid, pid, pc):
-    """نوشتن‌های کیف پول/سابقهٔ تغییر پلن روی conn داده‌شده (درون تراکنش یا standalone)."""
+    """نوشتن‌های کیف پول/سابقهٔ تغییر پلن روی conn داده‌شده (درون تراکنش یا standalone).
+
+    BIZ-09 (فاز ۱۳): هر حرکت کیف پول یک «رسید» در credit_log می‌گیرد (delta + موجودی پس از حرکت).
+    موجودی پس از حرکت از همان فرمول SQL در پایتون محاسبه می‌شود — روی D1 خواندنِ بعد از UPDATE
+    داخل batch وضعیت *قبل* را می‌دهد و قابل اتکا نیست. صفر خالص (used == surplus) رسید نمی‌سازد."""
     used = float(pc.get("used_balance") or 0); surplus = float(pc.get("surplus") or 0)
     if used or surplus:
+        row = conn.execute("SELECT COALESCE(credit,0) AS c FROM users WHERE id=?", (uid,)).fetchone()
+        old = float(row["c"] or 0) if row else 0.0
         conn.execute("UPDATE users SET credit=MAX(0, COALESCE(credit,0) - ? + ?) WHERE id=?", (used, surplus, uid))
+        new = round(max(0.0, old - used + surplus), 2)
+        delta = round(new - old, 2)
+        if delta:
+            conn.execute("INSERT INTO credit_log(user_id,delta,balance_after,reason,ref,ts) VALUES(?,?,?,?,?,?)",
+                         (uid, delta, new, "plan_change", str(pid), now_iso()))
         conn.execute("INSERT INTO plan_changes(user_id, plan_id, from_plan, kind, credit_used, surplus, paid, rem_days, ts) VALUES(?,?,?,?,?,?,?,?,?)",
                      (uid, pid, pc.get("from_plan"), pc.get("kind") or "fresh", used, surplus, pc.get("payable"), pc.get("rem_days"), now_iso()))
 

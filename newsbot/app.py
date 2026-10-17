@@ -49,6 +49,8 @@ async def post_init(app: Application):
     me = await app.bot.get_me(); runtime.BOT_USERNAME = me.username
     runtime.NOTIFY_SUPER = notify_supers; runtime.NOTIFY_USER = notify_user_fn
     set_bot(app.bot)   # FIX v4: لایه‌ی UI بدون APP سراسری، بطری را از این‌جا می‌گیرد
+    from newsbot.notify import ensure_super_worker   # ARCH-09 (فاز ۱۳): صف + ری‌ترای اعلان‌های سوپر
+    ensure_super_worker()
     await app.bot.set_my_commands([BotCommand("start", "منوی اصلی"), BotCommand("create", "پنل مدیریت"), BotCommand("ref", "دعوت دوستان"), BotCommand("man", "پشتیبانی"), BotCommand("lang", "زبان"), BotCommand("about", "درباره"), BotCommand("help", "راهنما"), BotCommand("cancel", "لغو عملیات")], language_code="fa")
     await app.bot.set_my_commands([BotCommand("start", "Main menu"), BotCommand("create", "Admin panel"), BotCommand("ref", "Invite friends"), BotCommand("man", "Support"), BotCommand("lang", "Language"), BotCommand("about", "About"), BotCommand("help", "Help"), BotCommand("cancel", "Cancel")])
     app.job_queue.run_repeating(job_tick, interval=config.TICK_SECONDS, first=15, name="tick")
@@ -85,6 +87,8 @@ async def post_shutdown(app: Application):
         sw.cancel()
         try: await sw
         except BaseException: pass
+    from newsbot.notify import stop_super_worker   # ARCH-09: صف اعلان‌های سوپر تمیز جمع می‌شود
+    await stop_super_worker()
     await close_http()
     close_db_pool()   # استخر تردهای دیتابیس آخر از همه بسته می‌شود تا نوشتن‌های settle قطع نشوند
     try:

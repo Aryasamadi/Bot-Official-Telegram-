@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS support_map(msg_id INTEGER PRIMARY KEY, user_id INTEG
 CREATE TABLE IF NOT EXISTS plan_changes(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, from_plan INTEGER, kind TEXT, credit_used REAL DEFAULT 0, surplus REAL DEFAULT 0, paid REAL, rem_days REAL, ts TEXT);
 CREATE TABLE IF NOT EXISTS pay_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, status TEXT DEFAULT 'pending', created_at TEXT, receipt_chat INTEGER, receipt_msg INTEGER, note TEXT, decided_at TEXT, discount TEXT, final_price TEXT);
 CREATE TABLE IF NOT EXISTS referrals(id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER, referred_id INTEGER UNIQUE, created_at TEXT, credited INTEGER DEFAULT 0, credit_amount REAL DEFAULT 0, note TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS credit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, delta REAL, balance_after REAL, reason TEXT, ref TEXT, ts TEXT);
 CREATE TABLE IF NOT EXISTS rate_limits(key TEXT PRIMARY KEY, ts REAL);
 CREATE INDEX IF NOT EXISTS idx_art_ch_status ON articles(channel_id, status);
 CREATE INDEX IF NOT EXISTS idx_art_created ON articles(created_at);
@@ -61,6 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_deeplinks_created ON deeplinks(created_at);
 CREATE INDEX IF NOT EXISTS idx_kvcache_cached ON kv_cache(cached_at);
 CREATE INDEX IF NOT EXISTS idx_ai_cache_created ON ai_cache(created_at);
 CREATE INDEX IF NOT EXISTS idx_ref_referrer ON referrals(referrer_id);
+CREATE INDEX IF NOT EXISTS idx_credit_log_user ON credit_log(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_rate_ts ON rate_limits(ts);
 """
 
@@ -74,8 +76,9 @@ UNIQUE_INDEXES = [
      "CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_channel_url ON sources(channel_id,url)"),
 ]
 
-# trigger اتمیک (v5 — فاز ۱۲/REF-3): شارژ کیف پول معرف در *یک* دستور SQL همراه با به‌روزرسانی ردیف
+# trigger اتمیک (v6 — فاز ۱۳/BIZ-09): شارژ کیف پول معرف در *یک* دستور SQL همراه با به‌روزرسانی ردیف
 # ارجاع؛ با «پاداش هر خرید» سازگار است (delta افزایش credit_amount، نه فقط گذار credited ۰→۱).
+# علاوه بر آن، هر شارژ یک «رسید» در credit_log ثبت می‌کند (اتمیک و در همان تراکنش؛ ts هم‌قالب now_iso).
 REFERRAL_CREDIT_TRIGGER = """
 CREATE TRIGGER IF NOT EXISTS trg_referral_credit_wallet
 AFTER UPDATE OF credit_amount ON referrals
@@ -83,6 +86,10 @@ FOR EACH ROW
 WHEN NEW.credit_amount > COALESCE(OLD.credit_amount, 0)
 BEGIN
     UPDATE users SET credit=COALESCE(credit,0)+(NEW.credit_amount-COALESCE(OLD.credit_amount,0)) WHERE id=NEW.referrer_id;
+    INSERT INTO credit_log(user_id,delta,balance_after,reason,ref,ts)
+    VALUES(NEW.referrer_id, NEW.credit_amount-COALESCE(OLD.credit_amount,0),
+           (SELECT COALESCE(credit,0) FROM users WHERE id=NEW.referrer_id), 'referral',
+           CAST(NEW.referred_id AS TEXT), strftime('%Y-%m-%dT%H:%M:%f000+00:00','now'));
 END
 """
 
@@ -328,7 +335,7 @@ def _ensure_schema(conn):
                     conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
                     have[tbl].add(col)
             normalize_iso_columns(conn)   # DB-14 — پیش از هر مقایسهٔ رشته‌ایِ زمان
-            # REF-3 v5: تعریف trigger عوض شده؛ نسخهٔ قدیمی (credited ۰→۱) باید جایگزین شود
+            # v6: تعریف trigger عوض شده (رسید credit_log)؛ نسخه‌های قدیمی (credited ۰→۱ و v5) جایگزین می‌شوند
             conn.execute("DROP TRIGGER IF EXISTS trg_referral_credit_wallet")
             conn.execute(REFERRAL_CREDIT_TRIGGER)
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))

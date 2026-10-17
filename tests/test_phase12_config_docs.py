@@ -211,11 +211,12 @@ def test_referral_max_per_user_deprecated_not_used_in_modules():
     assert "REFERRAL_MAX_PER_USER" in _src("newsbot/config.py")   # فقط برای سازگاری import نگه داشته شده
 
 
-def test_trigger_v5_delta_and_drop_before_create():
+def test_trigger_v6_delta_receipt_and_drop_before_create():
     from newsbot.db import REFERRAL_CREDIT_TRIGGER
     assert "AFTER UPDATE OF credit_amount ON referrals" in REFERRAL_CREDIT_TRIGGER
     assert "WHEN NEW.credit_amount > COALESCE(OLD.credit_amount, 0)" in REFERRAL_CREDIT_TRIGGER
     assert "(NEW.credit_amount-COALESCE(OLD.credit_amount,0))" in REFERRAL_CREDIT_TRIGGER
+    assert "INSERT INTO credit_log" in REFERRAL_CREDIT_TRIGGER   # v6: رسید اتمیک کیف پول (BIZ-09)
     assert "DROP TRIGGER IF EXISTS trg_referral_credit_wallet" in _src("newsbot/db.py")
 
 
@@ -265,6 +266,6 @@ def test_readme_reflects_phase12_claims():
     assert re.search(r"AI_MAX_MODEL_ATTEMPTS` \| `6`", readme), "ردیف AI_MAX_MODEL_ATTEMPTS باید ۶ باشد (D1)"
 
 
-def test_schema_version_bumped_to_v5():
+def test_schema_version_bumped_to_v6():
     import newsbot
-    assert newsbot.SCHEMA_VERSION == 5
+    assert newsbot.SCHEMA_VERSION == 6

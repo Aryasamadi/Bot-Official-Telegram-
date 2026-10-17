@@ -1,5 +1,11 @@
 # D1 Transaction Readiness Audit
 
+> **Phase 11 final status (decision 2-الف — stay on SQLite):** the D1 backend is an officially
+> **unsupported, non-production** path; nothing in this audit needs to be fixed to ship.
+> It is retained as the reopening checklist for a future migration decision — see
+> `docs/D1_DECISION.md`. On the supported SQLite path every operation below runs inside a
+> single `_trx` transaction (or a single CAS statement) and is covered by tests.
+
 **Status: D1 is not yet certified for production use. Do not switch `DB_BACKEND=d1` or run the migration against production until the items below are resolved and tested against a real D1 database.**
 
 > Adapted from the draft in PR #1 so every statement below matches the current `main`
@@ -75,7 +81,7 @@ Sites removed from this table (now atomic via `_trx` or deleted):
   freshness/version guard on the target, and `meta.last_migrate_at` recorded on success.
   See `docs/DEPLOY_RUNBOOK.md` for the operator checklist.
 
-## Required next step
+## Required next step (only if D1 is reopened)
 
 Audit each site in the table above: pull it inside `_trx` or prove it single-statement,
 then test against a real D1 database. Do not assume REST-batch atomicity transfers from

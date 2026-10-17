@@ -7,7 +7,7 @@ from newsbot import config
 from newsbot.db import q
 from newsbot.logutils import log, redact
 from newsbot.timeutils import now_iso, url_hash
-from newsbot.ai_models import ai_chat, budget_reset, parse_json, _validate_generation
+from newsbot.ai_models import ai_chat, budget_reset, parse_json, _validate_salvageable
 from newsbot.text_format import sanitize_html, strip_tags, salvage_post, clean_ai_text, finish_ok, strip_injection
 from newsbot.opctx import _current_operation
 from newsbot.core_users import ai_claim
@@ -78,9 +78,15 @@ async def _summarize_article(s, art, on_queue=None, owner_id=None):
     finally:
         if _op is not None: _op.prep = _had
 
+def chunk_cache_key(s, per_chunk, chunk):
+    """PLB-02 (فاز ۷): کلید کشِ خلاصهٔ تکه — نسخه + زبان + سقف کاراکتر + خودِ تکه (محتوامحور و پایدار)."""
+    return "sum:" + hashlib.sha1(f"v1|{s.get('language') or ''}|{per_chunk}|{chunk}".encode()).hexdigest()
+
 async def _summarize_chunks(s, full, on_queue=None, owner_id=None, _depth=0):
     """خلاصه‌سازی بدون‌حذف: همهٔ قطعات متن خلاصه می‌شوند و اگر خروجی هنوز بزرگ بود لایه‌به‌لایه
-    جمع می‌شود تا به اندازهٔ ورودی مدل برسد — هیچ بخشی از منبع دور ریخته نمی‌شود."""
+    جمع می‌شود تا به اندازهٔ ورودی مدل برسد — هیچ بخشی از منبع دور ریخته نمی‌شود.
+    PLB-02 (فاز ۷): خلاصهٔ هر تکه در ai_cache کش می‌شود (TTL مثل کش مقاله) تا اجرای دوبارهٔ همان
+    منبع، هزینهٔ AI تکرار نکند؛ کلید از خودِ محتوا مشتق می‌شود پس تغییر تکه = cache miss تمیز."""
     chunks = [full[i:i + config.AI_INPUT_TEXT_CHARS] for i in range(0, len(full), config.AI_INPUT_TEXT_CHARS)]
     # بودجهٔ هر قطعه از کل ظرفیت ورودی مدل تقسیم می‌شود تا مجموعِ خلاصه‌ها همیشه جا شود
     per_chunk = max(300, config.AI_INPUT_TEXT_CHARS // max(1, len(chunks)))
@@ -92,6 +98,14 @@ async def _summarize_chunks(s, full, on_queue=None, owner_id=None, _depth=0):
                 "Answer with at most {} characters.").format(s.get("language") or "فارسی", per_chunk)
         # PLB-04 (فاز ۳): قطعهٔ خام منبع نباید بدون لایهٔ دومِ ضدتزریق به مدل خلاصه‌ساز برود
         user_msg = f"Chunk {idx + 1}/{len(chunks)} — summarize:\n{strip_injection(chunk)}"
+        ck = chunk_cache_key(s, per_chunk, chunk)
+        if config.AI_CACHE_TTL_DAYS > 0:
+            _hit = q("SELECT value FROM ai_cache WHERE key=?", (ck,), one=True)
+            if _hit:
+                try:
+                    _t = json.loads(_hit["value"]).get("t")
+                    if _t: lines.append(_t); continue
+                except Exception: log.warning("corrupt chunk-cache row %s", ck[:12], exc_info=True)
         # قطعهٔ خالی بی‌صدا حذف نمی‌شود: یک‌بار دیگر تلاش، و اگر باز هم خالی بود خودِ متن منبع حفظ می‌شود
         for attempt in range(2):
             raw, _, err = await ai_chat(sysc, user_msg, on_queue=on_queue, owner_id=owner_id, validate=None)
@@ -99,6 +113,9 @@ async def _summarize_chunks(s, full, on_queue=None, owner_id=None, _depth=0):
             if (raw or "").strip(): break
             if attempt: raw = chunk[:per_chunk]
         lines.append(raw or "")
+        if config.AI_CACHE_TTL_DAYS > 0 and (raw or "").strip():
+            try: q("INSERT OR REPLACE INTO ai_cache(key,value,created_at) VALUES(?,?,?)", (ck, json.dumps({"t": raw}, ensure_ascii=False), now_iso()), commit=True)
+            except Exception: log.warning("chunk-cache write failed", exc_info=True)
     merged = "\n".join(x for x in lines if x and x.strip())
     if len(merged) <= config.AI_INPUT_TEXT_CHARS or _depth >= config.AI_MERGE_MAX_DEPTH: return merged, None
     # خروجی هنوز از ورودی مدل بزرگ‌تر است → یک لایه جمع‌کردن دیگر (بدون حذف هیچ بخشی)
@@ -133,20 +150,28 @@ async def generate(s, art, on_queue=None, owner_id=None):
     if prep_err: return None, None, prep_err
     art = dict(art); art["text"] = prep   # جایگزینی متن با خلاصه
     want_full = len(prep) > 1200; system, user = build_prompt(s, art, want_full)
-    raw, model, err = await ai_chat(system, user, on_queue=on_queue, owner_id=owner_id, validate=_validate_generation)
+    raw, model, err = await ai_chat(system, user, on_queue=on_queue, owner_id=owner_id, validate=_validate_salvageable)
     if not raw: return None, None, err
+    salvaged = False
     j = parse_json(raw)
     if not isinstance(j, dict) or (not str(j.get("post") or "").strip() and not j.get("is_ad")):
-        # پاکت JSON قابل تجزیه نبود → بازیابی متن واقعی از پاسخ خام (رفتار salvage قبلی حفظ می‌شود)
+        # PLB-01 (فاز ۷): قرارداد سخت اجازهٔ رسیدن به این مسیر را نمیداد و این شاخه هم همیشه به
+        # missing_scores میرسید. حالا متنِ واقعی از پاسخ خام بازیابی میشود و امتیاز خنثی میگیرد.
         post_only = await asyncio.to_thread(clean_ai_text, salvage_post(raw), s)
+        if not strip_tags(post_only or "").strip(): return None, None, "ai_invalid"
         j = {"is_ad": False, "category": s["categories"][0]["name"] if s["categories"] else "", "title": art["title"], "scores": {}, "post": post_only[:3000], "full": None}
+        salvaged = True
     # تبلیغِ صریحِ مدل (حتی بدون post) هرگز با محتوای ساختگی بازنویسی نمی‌شود
     if j.get("is_ad") is True:
         j["score"] = 0.0; return j, model, None
     scores = j.get("scores")
-    if not isinstance(scores, dict) or not scores: return None, None, "missing_scores"
-    j["score"] = weighted_score(s, scores)
-    if config.AI_CACHE_TTL_DAYS > 0:   # فقط خروجیِ کاملاً معتبر کش می‌شود (مسیر salvage و is_ad کش نمی‌شوند)
+    if not isinstance(scores, dict) or not scores:
+        # PLB-01: امتیاز نبود ⇒ امتیاز خنثی (۵/۱۰ برای هر معیار) تا متنِ سالمِ واقعی هدر نرود؛
+        # دروازهٔ min_score همانجای همیشگی (cycle) تصمیم میگیرد و خروجیِ بدونِ قرارداد کش نمیشود.
+        scores = {c["name"]: 5.0 for c in s["criteria"]}
+        salvaged = True
+    j["scores"] = scores; j["score"] = weighted_score(s, scores)
+    if config.AI_CACHE_TTL_DAYS > 0 and not salvaged:   # فقط خروجیِ کاملاً معتبر کش میشود (مسیر salvage و is_ad کش نمیشوند)
         try: q("INSERT OR REPLACE INTO ai_cache(key,value,created_at) VALUES(?,?,?)", (ckey, json.dumps({"j": j, "model": model}, ensure_ascii=False), now_iso()), commit=True)
         except Exception: log.warning("ai_cache write failed", exc_info=True)
     return j, model, None

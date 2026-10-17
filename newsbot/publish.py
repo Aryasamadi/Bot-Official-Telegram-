@@ -14,7 +14,7 @@ from telegram.error import BadRequest, RetryAfter, NetworkError, Forbidden
 from newsbot import config
 from newsbot.logutils import log, log_event, log_ctx, bump
 from newsbot.timeutils import now_iso
-from newsbot.net_http import http, public_url_strict, UA_BROWSER, UA_FEED, gen_deeplink_key, save_deeplink
+from newsbot.net_http import http, public_url_strict, UA_BROWSER, UA_FEED, gen_deeplink_key, save_deeplink, retry_after_seconds
 from newsbot.concurrency import FETCH_SEM, ch_lock
 from newsbot.discover import _ext_kind
 from newsbot.core_channels import get_channel, get_settings, msg_link
@@ -40,15 +40,18 @@ class _GuardedStream:
     """جریان GET برای مدیا با ریدایرکت دستی: هر جهش قبل از رفتن با public_url_strict اعتبارسنجی می‌شود.
     کلاینت به‌طور پیش‌فرض follow_redirects=True است و همین راه فرارِ SSRF بود؛ fetch این کار را می‌کرد ولی اینجا نمی‌شد.
     روی تغییر میزبان، هدرهای اعتبارسنجی حذف می‌شوند."""
-    def __init__(self, url, headers, hops=5, timeout=None):
+    def __init__(self, url, headers, hops=5, timeout=None, deadline=None):
         self.url = str(url); self.headers = dict(headers or {})
         self.hops = hops; self.timeout = timeout or httpx.Timeout(180, connect=15)
+        self.deadline = deadline   # ARCH-02 (فاز ۷): سقف مطلق (monotonic) برای کل زنجیرهٔ ریدایرکت؛ None یعنی فقط timeout هر درخواست
         self._stack = contextlib.AsyncExitStack(); self.response = None
     async def __aenter__(self):
         await self._stack.__aenter__()
         current = self.url; headers = dict(self.headers)
         try:
             for _ in range(self.hops):
+                if self.deadline is not None and time.monotonic() >= self.deadline:
+                    await self._stack.aclose(); return None
                 if not await asyncio.to_thread(public_url_strict, current):
                     await self._stack.aclose(); return None
                 r = await self._stack.enter_async_context(http().stream("GET", current, headers=headers, follow_redirects=False, timeout=self.timeout))
@@ -72,10 +75,8 @@ def urljoin_local(a, b):
     return _uj(a, b)
 
 def _retry_wait(r, attempt):
-    """FIX v4: صبر بر پایهٔ Retry-After سرور؛ در غیاب آن backoff نمایی + jitter."""
-    ra = (r.headers.get("retry-after") or "").strip()
-    try: wait = float(ra)
-    except (TypeError, ValueError): wait = None
+    """FIX v4 + فاز ۷: صبر بر پایهٔ Retry-After سرور (ثانیه یا HTTP-date با هلپر مشترک net_http)؛ در غیاب آن backoff نمایی + jitter."""
+    wait = retry_after_seconds(r.headers.get("retry-after"))
     if wait is None or wait <= 0: wait = min(2 ** attempt, 8)
     return min(wait, config.RETRY_AFTER_MAX) + random.uniform(0, 1)
 
@@ -84,13 +85,17 @@ async def download_media(media):
     اگر نوبت اول رد شد، یک‌بار با هدر دیگری دوباره تلاش می‌شود. فایل موقت در هیچ مسیری روی دیسک جا نمی‌ماند."""
     if not media or not media.get("url"): return None
     if not await asyncio.to_thread(public_url_strict, media["url"]): return None
+    # ARCH-02 (فاز ۷): سقف کلِ دانلود (همهٔ هدرها/تلاش‌ها) — بدنهٔ آهسته (slow-loris) نباید چرخه را بی‌نهایت نگه دارد
+    hard_deadline = time.monotonic() + config.MEDIA_TOTAL_SEC
     for hdr in (_media_headers(media), {"User-Agent": UA_FEED, "Accept": "*/*"}):
         attempt = 0
         while attempt < 3:
+            if time.monotonic() >= hard_deadline:
+                log.info("media deadline exceeded "); return None
             tmp = None; path = None; wait = None; retryable = False
             try:
                 async with FETCH_SEM:
-                    async with _GuardedStream(media["url"], hdr) as r:
+                    async with _GuardedStream(media["url"], hdr, deadline=hard_deadline) as r:
                         if r is None: break
                         if r.status_code in (429, 500, 502, 503, 504):
                             retryable = attempt < 2; wait = _retry_wait(r, attempt)
@@ -105,10 +110,12 @@ async def download_media(media):
                             ext = {"photo": ".jpg", "animation": ".gif", "video": ".mp4"}.get(kind, os.path.splitext(urlparse(media["url"]).path)[1] or ".bin")
                             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext); size = 0
                             try:
-                                async for chunk in r.aiter_bytes(262144):
-                                    size += len(chunk)
-                                    if size > config.MAX_MEDIA_BYTES: log.info(f"media skipped ( > {config.MAX_MEDIA_MB}MB upload ceiling) "); return None
-                                    tmp.write(chunk)
+                                # ARCH-02: خواندن بدنه هم داخل ددلاین کل است (read-timeout هرگز جای سقف کل را نمی‌گیرد)
+                                async with asyncio.timeout(max(1.0, hard_deadline - time.monotonic())):
+                                    async for chunk in r.aiter_bytes(262144):
+                                        size += len(chunk)
+                                        if size > config.MAX_MEDIA_BYTES: log.info(f"media skipped ( > {config.MAX_MEDIA_MB}MB upload ceiling) "); return None
+                                        tmp.write(chunk)
                             finally:
                                 tmp.close()
                             if size < 1024:

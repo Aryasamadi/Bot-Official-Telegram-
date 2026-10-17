@@ -10,7 +10,7 @@ from newsbot.db import q, gget
 from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc, parse_dt, fmt_date, ago_text
 from newsbot.core_users import list_users, get_user, admin_limits, admin_offset, usage_today, is_super, user_lang
-from newsbot.core_plans import get_plan, plan_txt, list_plans, _price_num, _fmt_price
+from newsbot.core_plans import get_plan, plan_txt, list_plans, plan_num, fmt_amt
 from newsbot.core_discounts import disc_list, disc_get, disc_valid
 from newsbot.core_channels import list_channels, mandatory_cfg
 from newsbot.core_sources import count_sources
@@ -125,7 +125,7 @@ def _code_version():
 async def view_s_ref(update, context):
     """REF-3/تصمیم ۸ (فاز ۱۲): تنظیم درصد پاداش و سقف مبلغی از پنل سوپرادمین."""
     lang = L(update); pct, cap = referral_cfg()
-    text = tr(lang, "s_ref_title") + tr(lang, "s_ref_line_p", p=f"{pct:g}") + tr(lang, "s_ref_line_c", c=(tr(lang, "s_ref_unlimited") if cap <= 0 else _fmt_price(cap)))
+    text = tr(lang, "s_ref_title") + tr(lang, "s_ref_help") + tr(lang, "s_ref_line_p", p=f"{pct:g}") + tr(lang, "s_ref_line_c", c=(tr(lang, "s_ref_unlimited") if cap <= 0 else fmt_amt(cap, lang)))
     if not config.REFERRAL_ENABLED: text += "\n" + tr(lang, "ref_off")
     kb = [[B(tr(lang, "s_ref_setp"), "s:ref_p"), B(tr(lang, "s_ref_setc"), "s:ref_c")], [B(tr(lang, "back"), "s:home")]]
     await render(update, context, text, kb)
@@ -165,8 +165,9 @@ async def view_s_plan(update, context, pid):
     lang = L(update); p = get_plan(pid)
     if not p: return await view_s_plans(update, context)
     n = q("SELECT COUNT(*) c FROM users WHERE plan_id=?", (pid,), one=True)["c"]
+    pn = f"{fmt_amt(plan_num(p, 'en'), 'en')} · {fmt_amt(plan_num(p, 'fa'), 'fa')}" if (plan_num(p, "en") or plan_num(p, "fa")) else "—"
     try:
-        text = tr(lang, "s_plan_view", name=esc(p["name"]), name_en=esc(p["name_en"] or "—"), free="🎁" if p["is_free"] else "", st="🟢" if p["active"] else "🔴", desc=esc(p["description"]), desc_en=esc(p["description_en"] or ""), days=p["days"], posts=p["daily_posts"], tests=p["daily_tests"], src=p["max_sources"], ch=p["max_channels"], price=esc(p["price"]), price_en=esc(p["price_en"] or "—"), price_num=f"${p['price_num']}" if p["price_num"] else "—", n=n)
+        text = tr(lang, "s_plan_view", name=esc(p["name"]), name_en=esc(p["name_en"] or "—"), free="🎁" if p["is_free"] else "", st="🟢" if p["active"] else "🔴", desc=esc(p["description"]), desc_en=esc(p["description_en"] or ""), days=p["days"], posts=p["daily_posts"], tests=p["daily_tests"], src=p["max_sources"], ch=p["max_channels"], price=esc(p["price"]), price_en=esc(p["price_en"] or "—"), price_num=pn, n=n)
     except Exception:
         text = tr(lang, "s_plans_title") + "\n" + esc(str(dict(p)))
     kb = pairs([B(f"✏️ {f[2] if lang == 'en' else f[1]}", f"s:plan_e:{pid}:{f[0]}") for f in PLAN_FIELDS]) + [[B(tr(lang, "toggle"), f"s:plan_t:{pid}"), B(tr(lang, "s_plan_free_set"), f"s:plan_free:{pid}")], [B(tr(lang, "s_plan_del"), f"s:plan_d:{pid}")], [B(tr(lang, "back"), "s:plans")]]
@@ -277,11 +278,12 @@ async def _decide_pay_locked(update, context, rid, approve, from_list, lang):
             paid_num = None
             try: paid_num = float(str(r["final_price"] or "").strip())
             except (TypeError, ValueError): paid_num = None
-            if paid_num is None: paid_num = _price_num(p)
+            if paid_num is None: paid_num = plan_num(p, ul)
             res = credit_referral_on_payment(r["user_id"], paid_num, ref_key=f"pay:{rid}")   # REF-3: پاداش هر خرید (idempotent per-payment)
-            if res:   # معرف مطلع می‌شود: مبلغ دقیق واریزشده به کیف پول
+            if res:   # معرف مطلع می‌شود: مبلغ دقیق واریزشده به کیف پول (با واحد زبان خودش)
                 ref_id, amt = res
-                await notify_user_fn(ref_id, tr(user_lang(ref_id) or "fa", "ref_reward", amount=_fmt_price(amt)))
+                rl = user_lang(ref_id) or "fa"
+                await notify_user_fn(ref_id, tr(rl, "ref_reward", amount=fmt_amt(amt, rl)))
         except Exception: log.exception("referral credit failed rid=%s", rid)
         await notify_user_fn(r["user_id"], tr(ul, "pay_approved", name=esc(plan_txt(p, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=fmt_date(exp, admin_offset(r["user_id"])))))
         await popup(update, context, tr(lang, "s_pay_done_ok"))

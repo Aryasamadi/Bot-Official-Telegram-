@@ -98,14 +98,23 @@ def test_referral_rules():
     assert referral_stats(88001)[0] == 1
     assert round(referral_stats(88001)[1], 2) == round(amt + amt2, 2)
 
-def test_upgrade_quote_proration():
+def test_upgrade_quote_renew_and_upgrade():
     pid = create_plan(name="P1", days=30, price_num=30)
     uid = 99001
     q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(?,?,?,?,?,?)", (uid, "u", "U", "admin", now_iso(), now_iso()), commit=True)
     assign_plan(uid, pid)
     assert proration_remaining_days(uid) > 29
+    # فاز ۱۴: همان پلنِ فعال = «تمدید» با مبلغ کامل دورهٔ جدید (نه ارتقای کسری)
     qt = upgrade_quote(uid, get_plan_safe(pid), get_plan_safe(pid))
-    assert qt["kind"] == "upgrade" and qt["payable"] >= 0
+    assert qt["kind"] == "renew" and qt["payable_num"] and qt["payable"] == 30
+    # پلن متفاوت و گران‌تر = ارتقای کسری برای روزهای باقی‌مانده با حفظ انقضا
+    pid2 = create_plan(name="P2", days=30, price_num=60)
+    qt2 = upgrade_quote(uid, get_plan_safe(pid2), get_plan_safe(pid))
+    assert qt2["kind"] == "upgrade" and qt2["keep_expiry"] and 29 <= qt2["payable"] <= 30
+    # نزول (پلن ارزان‌تر از نرخ روزانهٔ فعلی) ⇒ بلاک
+    pid3 = create_plan(name="P3", days=90, price_num=45)
+    qt3 = upgrade_quote(uid, get_plan_safe(pid3), get_plan_safe(pid))
+    assert qt3["kind"] == "blocked" and qt3["blocked"] and qt3["payable"] == 0
 
 def get_plan_safe(pid):
     from newsbot.core_plans import get_plan

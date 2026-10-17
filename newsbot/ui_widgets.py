@@ -193,14 +193,50 @@ SPHARSE = {
     ("no_sources", "fail", 0): "📭 هیچ منبع فعالی ندارم", ("no_sources", "fail", 1): "🚫 منبع فعالی پیدا نکردم", ("no_sources", "fail", 2): "📭 منبعی برای بررسی نیست",
 }
 
+# فاز ۱۴: نسخهٔ انگلیسی مراحل زنده — همان کلیدها؛ فقط وقتی lang=="en" استفاده می‌شود.
+SPHARSE_EN = {
+    ("model_start", "run", 0): "⏳ Running model {}…", ("model_start", "run", 1): "🧠 Writing with model {}…", ("model_start", "run", 2): "▶️ Starting model {}…",
+    ("model_start", "ok", 0): "✅ Model {} responded; reviewing its output", ("model_start", "ok", 1): "🎯 Model {} output looked good", ("model_start", "ok", 2): "✅ Model {} worked fine",
+    ("model_start", "fail", 0): "⚠️ Model {} didn't respond", ("model_start", "fail", 1): "❌ Model {} was down; trying the next one", ("model_start", "fail", 2): "🛑 Model {} failed; switching to the next",
+    ("prep", "run", 0): "🧾 Preparing and condensing the article for model {}…", ("prep", "run", 1): "📚 Reading the full text to feed model {}…", ("prep", "run", 2): "🗂 Getting the text ready for {}…",
+    ("post_gen", "run", 0): "⏳ Writing the content…", ("post_gen", "run", 1): "🧠 Writing in the channel's style…", ("post_gen", "run", 2): "✍️ Drafting the post…",
+    ("post_ready", "ok", 0): "✅ Content is ready", ("post_ready", "ok", 1): "🎉 Post generated", ("post_ready", "ok", 2): "📨 Sending to the channel…",
+    ("ai", "run", 0): "⏳ Generating with the model…", ("ai", "run", 1): "🧠 The model is thinking…", ("ai", "run", 2): "✍️ Writing…",
+    ("src_check", "run", 0): "🔎 Checking {}…", ("src_check", "run", 1): "⏳ Off to {}…", ("src_check", "run", 2): "📖 Reading {}…",
+    ("src_found", "ok", 0): "✅ Found something in {}", ("src_found", "ok", 1): "📝 {} had a usable item", ("src_found", "ok", 2): "🎯 Saw a good pick in {}",
+    ("src_empty", "fail", 0): "📭 {} had no news", ("src_empty", "fail", 1): "⚠️ {} output didn't match the channel criteria", ("src_empty", "fail", 2): "📭 {} had nothing new",
+    ("src_cooldown", "run", 0): "⏳ {} is cooling down; skipping for now", ("src_cooldown", "run", 1): "🔄 Checked {} recently; I'll come back later", ("src_cooldown", "run", 2): "💤 {} is recovering",
+    ("src_fail", "fail", 0): "⚠️ {} didn't respond", ("src_fail", "fail", 1): "❌ Couldn't reach {}", ("src_fail", "fail", 2): "🔌 {} was down; moving to the next source",
+    ("src_notmod", "run", 0): "ℹ️ {} hasn't changed since the last check", ("src_notmod", "run", 1): "⏳ {} had no new items", ("src_notmod", "run", 2): "📄 {} content is the same",
+    ("src_extract_fail", "fail", 0): "📄 Couldn't read the article text in {}; skipping", ("src_extract_fail", "fail", 1): "❌ {} had no readable content; skipped", ("src_extract_fail", "fail", 2): "⚠️ Empty article body in {}; skipped",
+    ("src_skip_old", "fail", 0): "🕰 In {}, this item was older than the window", ("src_skip_old", "fail", 1): "⏳ {} item was old", ("src_skip_old", "fail", 2): "📅 {} news was outside the time window",
+    ("src_ad", "fail", 0): "🚫 {} content was promotional; skipping", ("src_ad", "fail", 1): "⚠️ Marked {} as an ad; setting it aside", ("src_ad", "fail", 2): "🛑 Ad filter rejected the item from {}",
+    ("src_ai_fail", "fail", 0): "🧠 Model {} gave unusable output; trying the next", ("src_ai_fail", "fail", 1): "❌ Content generation with {} failed", ("src_ai_fail", "fail", 2): "⚠️ Model {} output was invalid",
+    ("src_dup", "fail", 0): "🔁 Already processed {} news; not regenerating", ("src_dup", "fail", 1): "📌 {} news was a duplicate; skipping", ("src_dup", "fail", 2): "♻️ {} had a duplicate; moving to the next item",
+    ("src_low_score", "fail", 0): "📏 {} item's score was below the channel minimum", ("src_low_score", "fail", 1): "🧪 {} scored too low; skipping", ("src_low_score", "fail", 2): "⚠️ {} news didn't match the channel criteria",
+    ("found", "ok", 0): "📥 One suitable item", ("found", "ok", 1): "✅ Found a good pick", ("found", "ok", 2): "🎯 Identified a suitable item",
+    ("extract", "run", 0): "🧾 Extracting the article text…", ("extract", "run", 1): "🔍 Reading the article body…", ("extract", "run", 2): "📄 Reading the full article…",
+    ("low", "run", 0): "⏳ Scoring…", ("low", "run", 1): "📏 Measuring against the criteria…", ("low", "run", 2): "🧪 Evaluating the content…",
+    ("ad", "run", 0): "🚫 Checking for promotional content…", ("ad", "run", 1): "🛡 Looking for ad signals…", ("ad", "run", 2): "⚠️ Filtering out ads…",
+    ("queue", "run", 0): "⏳ Adding to the publish queue…", ("queue", "run", 1): "📥 Preparing for publishing…", ("queue", "run", 2): "🕐 Holding for publishing…",
+    ("published", "ok", 0): "✅ Published", ("published", "ok", 1): "📣 Sent to the channel", ("published", "ok", 2): "🎉 It's live in the channel",
+    ("queued", "ok", 0): "📌 Queued", ("queued", "ok", 1): "📥 Saved for the next publish", ("queued", "ok", 2): "✅ Ready to publish",
+    ("busy", "run", 0): "⏳ The previous operation is still running", ("busy", "run", 1): "⏳ Finishing the previous cycle…", ("busy", "run", 2): "⏳ Waiting for the channel to free up…",
+    ("plan_inactive", "fail", 0): "⛔ Plan inactive", ("plan_inactive", "fail", 1): "🛑 Plan needs renewal", ("plan_inactive", "fail", 2): "⚠️ My publishing permission expired",
+    ("quota_posts", "fail", 0): "📉 Today's quota is used up", ("quota_posts", "fail", 1): "⛔ Daily cap reached", ("quota_posts", "fail", 2): "⚠️ No publishing capacity left today",
+    ("quota_tests", "fail", 0): "🧪 Today's test quota is used up", ("quota_tests", "fail", 1): "⛔ Test capacity used", ("quota_tests", "fail", 2): "🧪 I've hit the test limit",
+    ("no_sources", "fail", 0): "📭 No active sources", ("no_sources", "fail", 1): "🚫 Found no active source", ("no_sources", "fail", 2): "📭 No source to check",
+}
+
 def _step_text(st, lang):
     cat = st.get("category"); status = st.get("status", "run"); var = int(st.get("variant", 0))
     f = dict(st.get("fmt") or {})
-    key_tpl = SPHARSE.get((cat, status, var)) or SPHARSE.get((cat, status, 0))
+    table = SPHARSE_EN if lang == "en" else SPHARSE    # فاز ۱۴: مراحل زنده در UI انگلیسی هم انگلیسی‌اند (قبلاً همیشه فارسی)
+    key_tpl = table.get((cat, status, var)) or table.get((cat, status, 0))
     model = st.get("model") or st.get("key") or ""
     if not key_tpl:                                  # وضعیت دیگر مهم نیست: هر سه وارینت را امتحان می‌کنم
         for alt in ("run", "ok", "fail"):
-            key_tpl = SPHARSE.get((cat, alt, var)) or SPHARSE.get((cat, alt, 0))
+            key_tpl = table.get((cat, alt, var)) or table.get((cat, alt, 0))
             if key_tpl: break
     if not key_tpl:                                  # هر مرحله‌ای که متن اختصاصی ندارد، از جدول DIAG جمله می‌گیرد
         d = DIAG.get(cat)

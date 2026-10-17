@@ -59,7 +59,7 @@ async def main():
             con.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
             have[tbl].add(col)
     # بخیه‌های اسکیمای اپلیکیشن که داخل SCHEMA نیستند:
-    con.execute(REFERRAL_CREDIT_TRIGGER)        # اعتبار ارجاع اتمیک (v3)
+    con.execute(REFERRAL_CREDIT_TRIGGER)        # اعتبار ارجاع اتمیک + رسید credit_log (v6)
     bad = []
     async with httpx.AsyncClient() as client:
         for t in TABLES:

@@ -27,7 +27,7 @@ from newsbot.timeutils import now_iso, parse_dt
 TABLES = ["users", "plans", "discounts", "channels", "sources", "usage", "articles", "posted",
           "ch_tokens", "ai_models", "deeplinks", "kv_cache", "pub_journal", "ai_cache", "dedup",
           "settings", "support", "support_map", "plan_changes", "pay_requests", "referrals",
-          "rate_limits", "meta"]
+          "credit_log", "rate_limits", "meta"]
 SEM = asyncio.Semaphore(8)
 FORCE = "--force" in sys.argv[1:]
 LIVE_HEARTBEAT_SEC = 300

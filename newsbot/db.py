@@ -9,14 +9,13 @@ ARCH-01 (فاز ۸): مسیرهای async هیچ کوئری‌ای را روی �
 import asyncio, contextvars, functools, json, os, sqlite3, threading
 from concurrent.futures import ThreadPoolExecutor
 import httpx
-from newsbot import config
+from newsbot import config, SCHEMA_VERSION   # DB-25: تک‌منبعِ نسخه — newsbot/__init__.py
 from newsbot.logutils import log
-from newsbot.timeutils import now_iso
+from newsbot.timeutils import now_iso, iso_fixed, parse_dt
 
 _lock = threading.RLock()      # فقط نوشتن‌ها را بین تردها سریال می‌کند
 _tls = threading.local()       # هر ترد کانکشن مخصوص خودش را دارد
 _SCHEMA_READY = False          # اسکیما/مایگریشن فقط یک‌بار در هر پروسه اجرا می‌شود
-SCHEMA_VERSION = 3             # v3: جدول‌های referrals و rate_limits + ستون claimed_at + trigger اتمیک اعتبار ارجاع
 
 _DB_POOL_SIZE = 4              # ARCH-01: تعداد تردهای اختصاصی دیتابیس (WAL چند-خواننده/تک-نویسنده را تحمل می‌کند)
 _db_pool = None
@@ -64,6 +63,16 @@ CREATE INDEX IF NOT EXISTS idx_ai_cache_created ON ai_cache(created_at);
 CREATE INDEX IF NOT EXISTS idx_ref_referrer ON referrals(referrer_id);
 CREATE INDEX IF NOT EXISTS idx_rate_ts ON rate_limits(ts);
 """
+
+# DB-12: ایندکس‌های یکتا — تعریف یکتا، مشترک بین _ensure_schema و ابزارهای migrate/restore.
+# (label, کوئری تشخیص تکراری, CREATE). داخل اسکریپت SCHEMA نمی‌آیند چون دیتابیس‌های قدیمیِ دارای
+# ردیف تکراری نباید در استارت fail شوند؛ اعمال با محافظ + هشدار ماندگار انجام می‌شود.
+UNIQUE_INDEXES = [
+    ("channels(chat_id)", "SELECT 1 FROM channels GROUP BY chat_id HAVING COUNT(*)>1 LIMIT 1",
+     "CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_chat_id ON channels(chat_id)"),
+    ("sources(channel_id,url)", "SELECT 1 FROM sources GROUP BY channel_id,url HAVING COUNT(*)>1 LIMIT 1",
+     "CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_channel_url ON sources(channel_id,url)"),
+]
 
 # trigger اتمیک: claim شرطیِ اعتبار ارجاع و شارژ کیف پول در *یک* دستور SQL (sqlite و D1 هر دو اجرا می‌کنند)
 REFERRAL_CREDIT_TRIGGER = """
@@ -230,54 +239,110 @@ def _init_conn():
     return conn
 
 def _ensure_unique_indexes(conn):
-    """ایندکس‌های یکتا فقط اگر جدول ردیف تکراری نداشته باشد؛ وگرنه هشدار ماندگار بدون حذف داده."""
+    """ایندکس‌های یکتا فقط اگر جدول ردیف تکراری نداشته باشد؛ وگرنه هشدار ماندگار بدون حذف داده.
+    DB-12: این ایندکس‌ها *بخشی از اسکیما* محسوب می‌شوند و همان تعریفِ UNIQUE_INDEXES در ابزارهای
+    migrate/restore هم استفاده می‌شود (قبلاً فقط این‌جا و به‌صورت پراکنده ساخته می‌شدند)."""
     dups = []
-    try:
-        if conn.execute("SELECT 1 FROM channels GROUP BY chat_id HAVING COUNT(*) >1 LIMIT 1").fetchone():
-            log.warning("unique index channels(chat_id) skipped: existing duplicate rows"); dups.append("channels(chat_id)")
-        else:
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_chat_id ON channels(chat_id)")
-        if conn.execute("SELECT 1 FROM sources GROUP BY channel_id,url HAVING COUNT(*) >1 LIMIT 1").fetchone():
-            log.warning("unique index sources(channel_id,url) skipped: existing duplicate rows"); dups.append("sources(channel_id,url)")
-        else:
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_channel_url ON sources(channel_id,url)")
-    except sqlite3.Error as e:
-        log.warning("unique index creation skipped: %s", e); dups.append(f"sqlite error: {e}")
+    for label, check_sql, create_sql in UNIQUE_INDEXES:
+        try:
+            if conn.execute(check_sql).fetchone():
+                log.warning("unique index %s skipped: existing duplicate rows", label); dups.append(label)
+            else:
+                conn.execute(create_sql)
+        except sqlite3.Error as e:
+            log.warning("unique index %s creation skipped: %s", label, e); dups.append(f"{label}: {e}")
     if dups:
         conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('db_dup_warn',?)", (json.dumps(dups, ensure_ascii=False),))
 
+def _exec_schema(conn, script):
+    """اجرای اسکریپت DDL به‌صورت اتمیک (DB-24).
+    SQLite: دستورها داخل تراکنشِ فراخوان اجرا می‌شوند (BEGIN IMMEDIATE در _ensure_schema).
+    D1: کل اسکریپت در *یک* درخواست batch می‌رود — D1 هر batch را یک تراکنش می‌بیند؛ شکست هر دستور
+    کل batch را رول‌بک می‌کند (قبلاً دستورها یکی‌یکی ارسال می‌شدند و شکست وسط راه نیمه‌اسکیما می‌گذاشت)."""
+    stmts = [s.strip() for s in script.split(";") if s.strip()]
+    if config.DB_BACKEND == "d1":
+        _d1_batch([(s, ()) for s in stmts])
+    else:
+        for s in stmts: conn.execute(s)
+
+# DB-14: ستون‌های زمانی‌ای که به‌صورت رشته در SQL مقایسه می‌شوند (کانُنیکال‌سازی یک‌باره)
+_ISO_COLS = [("users", "created_at"), ("users", "last_seen"), ("users", "plan_expires"),
+             ("channels", "created_at"), ("articles", "created_at"), ("posted", "posted_at"),
+             ("ch_tokens", "issued_at"), ("ch_tokens", "expires_at"), ("deeplinks", "created_at"),
+             ("kv_cache", "cached_at"), ("ai_cache", "created_at"), ("dedup", "ts"),
+             ("support_map", "ts"), ("pay_requests", "created_at"), ("pay_requests", "decided_at"),
+             ("pay_requests", "claimed_at"), ("referrals", "created_at"), ("pub_journal", "updated_at")]
+
+def normalize_iso_columns(conn):
+    """DB-14: یکسان‌سازی یک‌بارهٔ قالب زمانی ستون‌های مقایسه‌ای (UTC + کسر ثانیهٔ ثابت).
+    ردیف‌های legacy با آفست غیر-UTC یا بدون کسر ثانیه، مقایسهٔ رشته‌ای را غلط می‌کردند؛
+    مثل channel_posts_today که پس از DB-13 مستقیماً با posted_at مقایسهٔ رشته‌ای می‌کند.
+    idempotent: با کلید meta.iso_norm_v1 فقط یک‌بار در عمر دیتابیس اجرا می‌شود."""
+    try:
+        if conn.execute("SELECT value FROM meta WHERE key='iso_norm_v1'").fetchone(): return 0
+    except sqlite3.Error:
+        return 0
+    changed = 0
+    for tbl, col in _ISO_COLS:
+        try:
+            rows = conn.execute(f"SELECT rowid AS _rid, {col} AS _v FROM {tbl} WHERE {col} IS NOT NULL").fetchall()
+        except sqlite3.Error:
+            continue
+        for r in rows:
+            try:
+                v = r["_v"]; d = parse_dt(v)
+                if not d: continue
+                nv = iso_fixed(d)
+                if nv != v:
+                    conn.execute(f"UPDATE {tbl} SET {col}=? WHERE rowid=?", (nv, r["_rid"])); changed += 1
+            except sqlite3.Error:
+                continue
+    conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('iso_norm_v1',?)", (str(changed),))
+    if changed: log.info("ISO canonicalization: %d value(s) rewritten", changed)
+    return changed
+
 def _ensure_schema(conn):
-    """اسکیمای پایه + مایگریشن idempotent + ثبت نسخهٔ اسکیما — یک‌بار در هر پروسه."""
+    """اسکیمای پایه + مایگریشن idempotent + ثبت نسخهٔ اسکیما — یک‌بار در هر پروسه.
+    DB-24: روی SQLite کل مراحل داخل یک تراکنش اجرا می‌شود؛ هر خطا ⇒ rollback کامل (بدون نیمه‌اسکیما)."""
     global _SCHEMA_READY
     with _lock:
         if _SCHEMA_READY: return
         if config.DB_BACKEND != "d1":
             try: os.chmod(config.DB_FILE, 0o600)   # کلیدهای API متن ساده در این فایل‌اند؛ دسترسی فقط برای مالک
             except Exception: pass
-        conn.executescript(SCHEMA + "\n" + DB_INDEXES)
-        conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
-        _sv = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-        _sv = str(_sv["value"]).strip() if _sv else ""
-        if _sv.isdigit() and int(_sv) > SCHEMA_VERSION:   # اجرای بیلد قدیمی روی دیتابیس جدیدتر ممنوع
-            log.error("DB schema_version=%s newer than code schema_version=%s — downgrade refused", _sv, SCHEMA_VERSION)
-            raise SystemExit(f"database schema_version {_sv} is newer than this build ({SCHEMA_VERSION}); run the newer build or restore a backup")
-        have = {}
-        for tbl, col, decl in MIGRATIONS:
-            if tbl not in have: have[tbl] = _table_cols(conn, tbl)
-            if col not in have[tbl]:
-                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
-                have[tbl].add(col)
-        # claim اعتبار ارجاع + شارژ کیف پول باید یک statement اتمیک باشد؛ trigger همان UPDATE را اجرا می‌کند
-        conn.execute(REFERRAL_CREDIT_TRIGGER)
-        conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
-        # ژورنال انتشار از جدول عمومی settings به جدول اختصاصی منتقل می‌شود (مایگریشن افزایشی و غیرمخرب)
-        conn.execute("INSERT OR REPLACE INTO pub_journal(article_id,journal,updated_at) SELECT CAST(substr(key,6) AS INTEGER), value, ? FROM settings WHERE key LIKE 'pubj:%'", (now_iso(),))
-        conn.execute("DELETE FROM settings WHERE key LIKE 'pubj:%'")
-        conn.execute("UPDATE channels SET original_admin_id=admin_id WHERE original_admin_id IS NULL")
-        _ensure_unique_indexes(conn)
-        try: conn.execute("DROP TABLE IF EXISTS logs")   # جدول لاگ حذف‌شده؛ در دیتابیس‌های قدیمی هم پاک می‌شود
-        except Exception: pass
-        conn.commit()
+        atomic = config.DB_BACKEND != "d1"
+        if atomic: conn.execute("BEGIN IMMEDIATE")
+        try:
+            _exec_schema(conn, SCHEMA + "\n" + DB_INDEXES)
+            conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+            _sv = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+            _sv = str(_sv["value"]).strip() if _sv else ""
+            if _sv.isdigit() and int(_sv) > SCHEMA_VERSION:   # اجرای بیلد قدیمی روی دیتابیس جدیدتر ممنوع
+                log.error("DB schema_version=%s newer than code schema_version=%s — downgrade refused", _sv, SCHEMA_VERSION)
+                raise SystemExit(f"database schema_version {_sv} is newer than this build ({SCHEMA_VERSION}); run the newer build or restore a backup")
+            have = {}
+            for tbl, col, decl in MIGRATIONS:
+                if tbl not in have: have[tbl] = _table_cols(conn, tbl)
+                if col not in have[tbl]:
+                    conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
+                    have[tbl].add(col)
+            normalize_iso_columns(conn)   # DB-14 — پیش از هر مقایسهٔ رشته‌ایِ زمان
+            # claim اعتبار ارجاع + شارژ کیف پول باید یک statement اتمیک باشد؛ trigger همان UPDATE را اجرا می‌کند
+            conn.execute(REFERRAL_CREDIT_TRIGGER)
+            conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
+            # ژورنال انتشار از جدول عمومی settings به جدول اختصاصی منتقل می‌شود (مایگریشن افزایشی و غیرمخرب)
+            conn.execute("INSERT OR REPLACE INTO pub_journal(article_id,journal,updated_at) SELECT CAST(substr(key,6) AS INTEGER), value, ? FROM settings WHERE key LIKE 'pubj:%'", (now_iso(),))
+            conn.execute("DELETE FROM settings WHERE key LIKE 'pubj:%'")
+            conn.execute("UPDATE channels SET original_admin_id=admin_id WHERE original_admin_id IS NULL")
+            _ensure_unique_indexes(conn)
+            try: conn.execute("DROP TABLE IF EXISTS logs")   # جدول لاگ حذف‌شده؛ در دیتابیس‌های قدیمی هم پاک می‌شود
+            except Exception: pass
+            if atomic: conn.commit()
+        except BaseException:
+            if atomic:
+                try: conn.rollback()
+                except Exception: pass
+            raise
         _SCHEMA_READY = True
 
 def db():

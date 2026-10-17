@@ -7,14 +7,27 @@ from datetime import timedelta
 from newsbot import config
 from newsbot.db import q, db, _lock, _safe_fields, _trx
 from newsbot.logutils import log_event
-from newsbot.timeutils import now_utc, now_iso, parse_dt
+from newsbot.timeutils import now_utc, now_iso, parse_dt, iso_fixed
 from newsbot.core_users import get_user, admin_limits_invalidate
 
 
+# پلن‌های پایهٔ سیستم (DB-19): هرکدام با INSERT شرطیِ تک‌دستوره seed می‌شود
+_BASE_PLANS = [
+    dict(name="رایگان", name_en="Free", days=7, daily_posts=1, max_sources=2, max_channels=1, daily_tests=1,
+         price="رایگان", price_en="Free", description="۱ پست در روز · ۷ روز", description_en="1 post/day · 7 days", is_free=1, sort=0),
+    dict(name="حرفه‌ای", name_en="Pro", days=30, daily_posts=20, max_sources=15, max_channels=3, daily_tests=5,
+         price="توافقی", price_en="Contact us", description="۲۰ پست روزانه · ۱۵ منبع · ۳ کانال", description_en="20 posts/day · 15 sources · 3 channels", is_free=0, sort=1),
+]
+
 def seed_plans():
-    if not q("SELECT 1 FROM plans LIMIT 1"):
-        create_plan(name="رایگان", name_en="Free", days=7, daily_posts=1, max_sources=2, max_channels=1, daily_tests=1, price="رایگان", price_en="Free", description="۱ پست در روز · ۷ روز", description_en="1 post/day · 7 days", is_free=1, sort=0)
-        create_plan(name="حرفه‌ای", name_en="Pro", days=30, daily_posts=20, max_sources=15, max_channels=3, daily_tests=5, price="توافقی", price_en="Contact us", description="۲۰ پست روزانه · ۱۵ منبع · ۳ کانال", description_en="20 posts/day · 15 sources · 3 channels", is_free=0, sort=1)
+    """DB-19: seed اتمیک و idempotent — برخلاف check-then-act قبلی، دو پروسهٔ هم‌زمان پلن تکراری
+    نمی‌سازند و دیتابیسِ نیمه‌seed (فقط یک پلن) هم ترمیم می‌شود."""
+    for p in _BASE_PLANS:
+        q("INSERT INTO plans(name,name_en,days,daily_posts,max_sources,max_channels,daily_tests,price,price_en,description,description_en,is_free,sort,price_num) "
+          "SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,0 WHERE NOT EXISTS(SELECT 1 FROM plans WHERE name=? AND name_en=?)",
+          (p["name"], p["name_en"], p["days"], p["daily_posts"], p["max_sources"], p["max_channels"], p["daily_tests"],
+           p["price"], p["price_en"], p["description"], p["description_en"], p["is_free"], p["sort"], p["name"], p["name_en"]),
+          commit=True)
 
 def list_plans(active_only=True): return q("SELECT * FROM plans " + (" WHERE active=1" if active_only else "") + " ORDER BY sort, id")
 def get_plan(pid): return q("SELECT * FROM plans WHERE id=?", (pid,), one=True) if pid else None
@@ -66,7 +79,7 @@ def _assign_writes(conn, uid, pid, st):
         return cur, False
     exp = (cur if active else now) + timedelta(days=d)
     conn.execute("UPDATE users SET plan_id=?, plan_expires=?, remind_key=NULL, role=CASE WHEN role='user' THEN 'admin' ELSE role END, free_used=CASE WHEN ?=1 THEN 1 ELSE free_used END WHERE id=?",
-                 (pid, exp.isoformat(), p["is_free"], uid))
+                 (pid, iso_fixed(exp), p["is_free"], uid))   # DB-14: قالب کانونیکال برای مقایسهٔ رشته‌ای
     return exp, False
 
 def assign_plan(uid, pid, days=None):

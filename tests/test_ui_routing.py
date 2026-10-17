@@ -90,6 +90,9 @@ def _mk_fixtures():
     cid = channel_by_chat(9501)["id"]
     add_source(1, cid, "https://example.com/feed.xml")
     aid = article_insert(1, cid, "h-ui-1", "https://example.com/a", "t", 0, None, status="ready")
+    if aid is None:   # درج تکراری (چند فراخوان در یک session) ⇒ همان رکورد موجود
+        row = q("SELECT id FROM articles WHERE channel_id=? AND hash=?", (cid, "h-ui-1"), one=True)
+        aid = row["id"] if row else None
     add_model("m1", "openai", "https://api.example.com/v1", "k", "gpt-x", owner_id=None)
     return cid, aid
 

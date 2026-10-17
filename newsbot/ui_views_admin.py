@@ -79,7 +79,7 @@ async def view_channel(update, context, cid):
     uid = update.effective_user.id; lang = L(update); ch = channel_owned(cid, uid)
     if not ch: await popup(update, context, tr(lang, "notfound")); return await view_admin_home(update, context)
     s = get_settings(cid); on = s["enabled"]
-    text = (tr(lang, "ch_panel", title=esc(ch["title"])) + (f" · @{ch['username']}" if ch["username"] else "") + "\n" + tr(lang, "ch_status", i="🟢" if on else "🔴", st=tr(lang, "on" if on else "off"), mode=tr(lang, "auto" if s["mode"] == "auto" else "review")) + "\n" +
+    text = (tr(lang, "ch_panel", title=esc(ch["title"])) + (f" · @{esc(ch['username'])}" if ch["username"] else "") + "\n" + tr(lang, "ch_status", i="🟢" if on else "🔴", st=tr(lang, "on" if on else "off"), mode=tr(lang, "auto" if s["mode"] == "auto" else "review")) + "\n" +
             tr(lang, "ch_stats", s=len(list_sources(cid, True)), q=ready_count(cid), p=count_articles(cid=cid, hours=24, status="published"), r=count_articles(cid=cid, hours=24, status="rejected"), a=ago_text(s["last_run"], lang)))
     # BIZ-06 (فاز ۷): نوار سقف کانال باید با «ساعت محلیِ خودِ کانال» شمرده شود، نه آفست ادمین (که فقط کانال نخست اوست)
     text += quota_bars_safe([("📝", channel_posts_today(cid, s.get("tz") or s["utc_offset"]), s.get("daily_posts_cap"))])
@@ -275,7 +275,7 @@ async def view_my_ai(update, context):
 async def view_my_ai_model(update, context, mid):
     uid = update.effective_user.id; lang = L(update); m = get_model(mid)
     if not m or m["owner_id"] != uid: await popup(update, context, tr(lang, "notfound")); return await view_my_ai(update, context)
-    text = tr(lang, "my_ai_view", name=esc(m["name"]), kind=m["kind"], model=esc(m["model"]), base=esc(m["base_url"]), st=tr(lang, "s_m_off" if not m["active"] else "s_m_ok" if m["status"] == "ok" else "s_m_down"), ok=m["ok_count"] or 0, fc=m["fail_count"] or 0, lo=ago_text(m["last_ok"], lang), lf=ago_text(m["last_fail"], lang))
+    text = tr(lang, "my_ai_view", name=esc(m["name"]), kind=esc(m["kind"]), model=esc(m["model"]), base=esc(m["base_url"]), st=tr(lang, "s_m_off" if not m["active"] else "s_m_ok" if m["status"] == "ok" else "s_m_down"), ok=m["ok_count"] or 0, fc=m["fail_count"] or 0, lo=ago_text(m["last_ok"], lang), lf=ago_text(m["last_fail"], lang))
     kb = [[B(tr(lang, "s_model_test"), f"a:myai_t:{mid}"), B(tr(lang, "toggle"), f"a:myai_o:{mid}")]] + pairs([B(f"✏️ {f[2] if lang == 'en' else f[1]}", f"a:myai_e:{mid}:{f[0]}") for f in MODEL_FIELDS]) + [[B(tr(lang, "delete"), f"a:myai_d:{mid}")], [B(tr(lang, "back"), "a:myai")]]
     await render(update, context, text, kb)
 

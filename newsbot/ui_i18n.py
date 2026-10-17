@@ -55,6 +55,7 @@ TXT = {
     "plan_notfound": ("❌ پلن یافت نشد", "❌ Plan not found"), "free_once": ("⚠️ پلن رایگان فقط یک بار", "⚠️ Free plan only once"), "free_done": ("✅ «{name}» فعال شد\n➕ کانال و منبع اضافه کنید", "✅ “{name}” activated\n➕ Add a channel and sources"),
     "req_pending": ("⏳ درخواست قبلی در بررسی است", "⏳ Previous request under review"), "receipt_hint": ("\n\n📎 <i>تصویر رسید را همین‌جا بفرستید</i>", "\n\n📎 <i>Send the receipt image here</i>"),
     "receipt_ok": ("✅ <b>رسید دریافت شد</b>\n🕐 بررسی تا ۱ ساعت · نتیجه همین‌جا اعلام می‌شود", "✅ <b>Receipt received</b>\n🕐 Reviewed within 1 hour · you'll be notified here"), "wait_btn": ("🚪 خروج", "🚪 Exit"), "receipt_empty": ("⚠️ رسید یا توضیح پرداخت را بفرستید", "⚠️ Send the receipt or a payment note"),
+    "receipt_too_big": ("⚠️ حجم رسید بیش از {n} مگابایت است؛ تصویر/فایل کوچک‌تری بفرستید", "⚠️ Receipt exceeds {n} MB; send a smaller image/file"),
     "pay_approved": ("🎉 پرداخت تأیید شد\n🧾 پلن <b>{name}</b> {when}\n/create", "🎉 Payment approved\n🧾 Plan <b>{name}</b> {when}\n/create"), "pay_when_now": ("🟢 فعال تا {d}", "🟢 active until {d}"), "pay_when_queued": ("⏭ شروع پس از پلن فعلی ({d})", "⏭ starts after the current plan ({d})"),
     "pay_rejected": ("❌ پرداخت تأیید نشد\n📩 پیگیری: /man", "❌ Payment not approved\n📩 Follow up: /man"),
     # ---- NEW v4: ارجاع (Referral)
@@ -170,6 +171,7 @@ TXT = {
     "rj_ai": ("سرویس هوش مصنوعی پاسخ نداد", "AI service did not respond"), "rj_send": ("ارسال به کانال ناموفق", "sending to channel failed"), "rj_dup": ("تکراری", "duplicate"),
     "rj_admin": ("ربات ادمین کانال نیست", "bot is not channel admin"), "rj_old": ("قدیمی‌تر از بازه", "older than window"), "rj_undated": ("بدون تاریخ", "undated"), "rj_other": ("نامشخص", "unspecified"),
     # ---- تست
+    "await_expired": ("⌛ مهلت این فرم تمام شد؛ دوباره از منو شروع کنید.", "⌛ This form session expired; please start again from the menu."),
     "preparing": ("آماده‌سازی…", "Preparing…"), "test_wait": ("⏳ تست بعدی تا {n} ثانیه دیگر", "⏳ Next test in {n}s"), "test_busy": ("⏳ چرخه‌ای روی این کانال در حال اجراست", "⏳ A cycle is already running on this channel"),
     "test_ok": ("✅ <b>منتشر شد</b>", "✅ <b>Published</b>"), "test_queued": ("📝 در <b>صف انتشار</b> منتظر تأیید (حالت بازبینی)", "📝 Waiting in <b>publish queue</b> (review mode)"), "test_fail": ("⚠️ <b>چیزی منتشر نشد</b>", "⚠️ <b>Nothing published</b>"),
     "test_summary_ok": ("{n} مقاله موفقانه منتشر شد", "{n} articles published successfully"), "test_summary_fail": ("تست ناموفق بود", "Test failed"),

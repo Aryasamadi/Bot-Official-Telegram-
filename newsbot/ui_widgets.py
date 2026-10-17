@@ -15,6 +15,7 @@ from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc
 from newsbot.text_format import strip_tags
 from newsbot.core_users import user_lang, is_super, can_admin
+from newsbot.ratelimit import rate_ok, rate_left
 from newsbot.ai_models import (ai_err_text, test_model, get_model, _model_label,
                                _ai_events, ai_chat, _validate_ready)
 from newsbot.opctx import (Operation, _current_operation, _operations,
@@ -69,6 +70,13 @@ def stale(update, kind="update"):
     if age > config.STALE_UPDATE_MAX_MIN * 60:
         log_event("INFO", f"stale {kind} ignored (age {int(age)}s)"); return True
     return False
+
+def await_expired(st):
+    """UISEC-06 (فاز ۶): مهلت state فرم ورودی؛ state بدون ts یا قدیمی‌تر از AWAIT_TTL_SEC منقضی است.
+    (پیش از این state تا پایان عمر پروسه باقی می‌ماند و پیامِ بعدیِ کاربر به فرمِ فراموش‌شده می‌خورد.)"""
+    ts = st.get("ts") if isinstance(st, dict) else None
+    if not isinstance(ts, (int, float)): return True
+    return (time.time() - ts) > config.AWAIT_TTL_SEC
 
 # ══════════════════════════════════════════════════════════════════════════
 # پیام‌های موقت (یک sweeper رویدادمحور برای همه)
@@ -452,6 +460,9 @@ async def run_model_test(update, context, mid, personal=False):
     op = _current_operation.get()
     if not m or (personal and m["owner_id"] != uid):
         return await popup(update, context, tr(lang, "notfound"))
+    # UISEC-04 (فاز ۶): تست مدل شخصی هم هزینهٔ AI دارد؛ سقف نرخ مثل تست کانال (super معاف)
+    if personal and not is_super(uid) and not rate_ok(f"mtest:{uid}", config.TEST_COOLDOWN_SEC):
+        return await popup(update, context, tr(lang, "test_wait", n=rate_left(f"mtest:{uid}", config.TEST_COOLDOWN_SEC)))
     started = time.monotonic(); label = _model_label(m, uid if personal else None)
     token = _ai_events.set(_ai_status_reporter(context, lang))
     try:
@@ -459,6 +470,7 @@ async def run_model_test(update, context, mid, personal=False):
             out, label, error = await ai_chat("You are a health-check. Reply with exactly one word.", "Say: READY",
                                               owner_id=uid, selected_id=mid, validate=_validate_ready)
             ok = out is not None
+            elapsed = round(time.monotonic() - started, 1)   # فاز ۶ (یافتهٔ تست): مسیر موفقیت تست مدل شخصی بدون این خط با UnboundLocalError می‌شکست
         else:
             ok, out, elapsed = await test_model(mid)
             error = None if ok else out
@@ -518,11 +530,11 @@ async def render(update, context, text, kb=None, force_new=False):
     context.user_data["panel"] = m.message_id
 
 async def ask(update, context, prompt, kind, back, **extra):
-    lang = L(update); context.user_data["await"] = {"kind": kind, "back": back, **extra}
+    lang = L(update); context.user_data["await"] = {"kind": kind, "back": back, "ts": time.time(), **extra}
     await render(update, context, f"✏️ {prompt}\n\n<i>{tr(lang, 'send_value')}</i>", [[B(tr(lang, "cancel"), "c:cancel")]])
 
 async def wiz_start(update, context, wiz, back, **data):
-    context.user_data["await"] = {"kind": "wiz", "wiz": wiz, "step": 0, "data": data, "back": back}; await wiz_prompt(update, context)
+    context.user_data["await"] = {"kind": "wiz", "wiz": wiz, "step": 0, "data": data, "back": back, "ts": time.time()}; await wiz_prompt(update, context)
 
 async def wiz_prompt(update, context):
     lang = L(update); st = context.user_data.get("await")

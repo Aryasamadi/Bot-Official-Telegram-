@@ -15,5 +15,5 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 @pytest.fixture(scope="session", autouse=True)
 def _core():
     from newsbot.app import init_core
-    init_core()          # ساخت اسکیمای v2 + seed پلن‌ها + بازیابی ژورنال (همه آفلاین)
+    init_core()          # ساخت اسکیمای v4 + seed پلن‌ها + بازیابی ژورنال (همه آفلاین)
     yield

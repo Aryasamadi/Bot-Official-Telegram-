@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 """لایه‌ی دیتابیس با دو بک‌اند: sqlite (پیش‌فرض، سریع و اتمیک) و Cloudflare D1 (Source of Truth).
-اینترفیس یکتا برای کل کد: q() / _trx() / gset() / gget() / _safe_fields().
-هیچ модуول دیگری مستقیم sqlite3 یا httpx صدا نمی‌زند.
+اینترفیس یکتا برای کل کد: q() / _trx() / gset() / gget() / _safe_fields() / arun().
+هیچ ماژول دیگری مستقیم sqlite3 یا httpx صدا نمی‌زند.
+
+ARCH-01 (فاز ۸): مسیرهای async هیچ کوئری‌ای را روی حلقهٔ رویداد اجرا نمی‌کنند؛
+تابع همزمان با arun() به استخر تردهای اختصاصی دیتابیس سپرده می‌شود.
 """
-import json, os, sqlite3, threading
+import asyncio, contextvars, functools, json, os, sqlite3, threading
+from concurrent.futures import ThreadPoolExecutor
 import httpx
 from newsbot import config
 from newsbot.logutils import log
@@ -13,6 +17,10 @@ _lock = threading.RLock()      # فقط نوشتن‌ها را بین تردها
 _tls = threading.local()       # هر ترد کانکشن مخصوص خودش را دارد
 _SCHEMA_READY = False          # اسکیما/مایگریشن فقط یک‌بار در هر پروسه اجرا می‌شود
 SCHEMA_VERSION = 3             # v3: جدول‌های referrals و rate_limits + ستون claimed_at + trigger اتمیک اعتبار ارجاع
+
+_DB_POOL_SIZE = 4              # ARCH-01: تعداد تردهای اختصاصی دیتابیس (WAL چند-خواننده/تک-نویسنده را تحمل می‌کند)
+_db_pool = None
+_db_pool_lock = threading.Lock()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT, name TEXT, role TEXT DEFAULT 'user', plan_id INTEGER, plan_expires TEXT, next_plan_id INTEGER, next_plan_days INTEGER, free_used INTEGER DEFAULT 0, banned INTEGER DEFAULT 0, lang TEXT, remind_key TEXT, premium INTEGER DEFAULT 0, created_at TEXT, last_seen TEXT);
@@ -281,6 +289,33 @@ def db():
         _ensure_schema(conn)
     return conn
 
+def _db_executor():
+    """استخر تردهای اختصاصی دیتابیس — جدا از استخر پیش‌فرض asyncio (که کارهای CPU سنگین روی آن است)."""
+    global _db_pool
+    if _db_pool is None:
+        with _db_pool_lock:
+            if _db_pool is None:
+                _db_pool = ThreadPoolExecutor(max_workers=_DB_POOL_SIZE, thread_name_prefix="newsbot-db")
+    return _db_pool
+
+async def arun(fn, *args, **kwargs):
+    """ARCH-01: اجرای یک تابع همزمانِ دیتابیس روی استخر تردهای اختصاصی تا حلقهٔ رویداد بلاک نشود.
+
+    ContextVarها (زمینهٔ لاگ/عملیات/AI) مثل asyncio.to_thread منتقل می‌شوند تا لاگ‌ها و
+    ردیابیِ عملیات داخل تابع هم درست بماند. هر ترد استخر کانکشن SQLite مخصوص خود را دارد (db()).
+    """
+    ctx = contextvars.copy_context()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_db_executor(), ctx.run, functools.partial(fn, *args, **kwargs))
+
+def close_db_pool():
+    """خاموشی: استخر تردهای دیتابیس بسته می‌شود (کارهای در صف لغو، در حال اجرا تمام می‌شوند).
+    بعد از این اگر فراخوانی arun برسد، استخر دوباره و به‌صورت lazy ساخته می‌شود."""
+    global _db_pool
+    if _db_pool is not None:
+        _db_pool.shutdown(wait=False, cancel_futures=True)
+        _db_pool = None
+
 class _NullLock:
     def __enter__(self): return self
     def __exit__(self, *a): return False
@@ -349,3 +384,48 @@ def _trx(fn):
             return result
         except BaseException:
             conn.rollback(); raise
+
+def readonly_check():
+    """ARCH-04/C7 (تصمیم ۱۳): بازرسی فقط‌خواندنیِ دیتابیس برای `run.py --check`.
+
+    هیچ فایل/پوشه‌ای نمی‌سازد و هیچ نوشتنی روی دیتابیس انجام نمی‌دهد: اگر دیتابیس نباشد فقط
+    یادداشت می‌دهد (اولین اجرای عادی ربات آن را می‌سازد)؛ اگر باشد با URI فقط‌خواندنی باز می‌شود
+    و نسخهٔ اسکیما + وجود جداول پایه بررسی می‌شود. خروجی: فهرست ایرادها (خالی = سالم)."""
+    problems = []
+    if config.DB_BACKEND == "d1":
+        log.info("خودآزمایی: بک‌اند D1 — بازرسی محلی فقط‌خواندنی لازم نیست (اتصال در زمان اجرا اعتبارسنجی می‌شود).")
+        return problems
+    path = config.DB_FILE
+    if not os.path.exists(path):
+        log.info("خودآزمایی: دیتابیس موجود نیست (%s) — اولین اجرای ربات آن را می‌سازد؛ بازرسی فقط‌خواندنی چیزی برای بررسی نداشت.", path)
+        return problems
+    try:
+        from pathlib import Path
+        base = Path(os.path.abspath(path)).as_uri()
+        # OPS/ARCH-04 نکته (Windows+WAL): اتصال mode=ro روی دیتابیس WALِ ساکن، فایل‌های -shm/-wal می‌سازد؛
+        # برای «هیچ فایلی ساخته نشود» دیتابیسِ بدون -shm/-wal با immutable=1 باز می‌شود (فقط‌خواندنی قطعی،
+        # بدون قفل و بدون فایل کمکی). اگر ربات همین حالا در حال اجرا باشد (-shm/-wal موجود است) اتصال ro
+        # عادی می‌شود تا محتوای WAL هم دیده شود.
+        suffix = "?mode=ro" if (os.path.exists(path + "-wal") or os.path.exists(path + "-shm")) else "?mode=ro&immutable=1"
+        conn = sqlite3.connect(base + suffix, uri=True, timeout=10)
+    except (sqlite3.Error, ValueError) as e:
+        return [f"دیتابیس قابل بازکردن فقط‌خواندنی نیست: {path} ({e})"]
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")   # فقط تنظیم کانکشن — نوشتنی روی فایل نیست
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "users" not in tables:
+            problems.append("دیتابیس اسکیمای ربات را ندارد (جدول users یافت نشد).")
+        else:
+            try:
+                meta = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+            except sqlite3.OperationalError:
+                meta = None   # دیتابیس قدیمی بدون جدول meta — اجرای عادی آن را مهاجرت می‌دهد
+            ver = str(meta[0]).strip() if meta else ""
+            if ver.isdigit() and int(ver) > SCHEMA_VERSION:
+                problems.append(f"schema_version دیتابیس ({ver}) از بیلد فعلی ({SCHEMA_VERSION}) جدیدتر است؛ بیلد جدید لازم است.")
+            log.info("خودآزمایی: دیتابیس فقط‌خواندنی بررسی شد (schema_version=%s، %d جدول).", ver or "نامعلوم", len(tables))
+    except sqlite3.Error as e:
+        problems.append(f"خواندن اسکیما با کانکشن فقط‌خواندنی شکست خورد: {e}")
+    finally:
+        conn.close()
+    return problems

@@ -9,14 +9,24 @@ from newsbot.logutils import log
 
 _rl = {}
 _win = {}      # SEC-03: شمارندهٔ پنجره‌ای (کلید → لیست زمان‌ها)؛ در حافظه، بدون ماندگاری DB
+_PERSIST_MIN_GAP = 10.0   # OPS-21: حداقل فاصلهٔ نوشتن دوبارهٔ یک کلید در دیتابیس (کاهش فشار I/O)
+_last_persist = {}        # کلید ← آخرین ts نوشته‌شده در DB (throttle جدای از منطق سقف‌ها)
 
 def _rate_persistable(key): return any(key.startswith(p) for p in RATE_PERSIST_PREFIXES)
 
 def _rate_persist(key, ts):
     if not _rate_persistable(key): return
+    # OPS-21: کاربر پرتعامل نباید به ازای هر پیام/دستور یک INSERT بزند؛ حداکثر هر ۱۰ ثانیه یک نوشتن per-key.
+    # Trade-off (مستند در SECURITY/ROADMAP): با crash، حداکثر ~۱۰ ثانیه از آخرین ts یک کلید از دست می‌رود
+    # و سقف پس از ری‌استارت کمی بخشنده‌تر می‌شود — در برابر فشار نوشتن، معاوضه‌ی پذیرفته‌شده است.
+    last = _last_persist.get(key)
+    if last is not None and ts - last < _PERSIST_MIN_GAP: return
     try:
         from newsbot.db import q
         q("INSERT OR REPLACE INTO rate_limits(key, ts) VALUES(?,?)", (key, ts), commit=True)
+        _last_persist[key] = ts
+        if len(_last_persist) > 20000:
+            for k in sorted(_last_persist, key=_last_persist.get)[:10000]: _last_persist.pop(k, None)
     except Exception:
         log.debug("rate persist failed key=%s", key, exc_info=True)
 
@@ -49,7 +59,7 @@ def rate_mark(key):
     _rl[key] = time.time(); _rate_persist(key, _rl[key]); _evict()
 
 def rate_clear(key):
-    _rl.pop(key, None)
+    _rl.pop(key, None); _last_persist.pop(key, None)   # OPS-21: پاک‌شدن کلید، throttle آن را هم پاک می‌کند
     if _rate_persistable(key):
         try:
             from newsbot.db import q

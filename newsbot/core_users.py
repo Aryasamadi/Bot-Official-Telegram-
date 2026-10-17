@@ -18,9 +18,12 @@ def get_user(uid): return q("SELECT * FROM users WHERE id=?", (uid,), one=True)
 def ensure_user(uid, username="", name="", premium=None):
     u = get_user(uid)
     if not u:
-        q("INSERT INTO users(id,username,name,role,premium,created_at,last_seen) VALUES(?,?,?,?,?,?,?)",
+        # DB-10/BIZ-07 (فاز ۸): درجِ کاربر با INSERT OR IGNORE — دو عملیات همزمانِ یک کاربر جدید
+        # نباید IntegrityError بدهند؛ اگر رقیب زودتر درج کرده باشد، همان ردیف دوباره خوانده و استفاده می‌شود.
+        q("INSERT OR IGNORE INTO users(id,username,name,role,premium,created_at,last_seen) VALUES(?,?,?,?,?,?,?)",
           (uid, username or "", name or "", "super" if is_super(uid) else "user", 1 if premium else 0, now_iso(), now_iso()), commit=True)
-    else:
+        u = get_user(uid)
+    if u:
         # last_seen حداکثر هر ۵ دقیقه نوشته می‌شود تا فشار نوشتن پایین بماند
         ls = parse_dt(u["last_seen"])
         if not ls or (now_utc() - ls).total_seconds() > 300 or (premium is not None and int(bool(premium)) != (u["premium"] or 0)) or (username and username != u["username"]):

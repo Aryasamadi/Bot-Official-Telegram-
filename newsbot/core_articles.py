@@ -3,8 +3,8 @@
 ماشین حالت انتشار: prepared → in_flight → partial → ack → settle (حذف ژورنال).
 هیچ مقاله‌ای پس از ارسال موفق تلگرام، دوباره منتشر نمی‌شود (ژورنال + جدول posted).
 """
-import asyncio, json, time
-from datetime import timedelta
+import asyncio, json, os, sqlite3, time
+from datetime import datetime, timedelta
 from telegram.error import BadRequest, RetryAfter, NetworkError, Forbidden
 from newsbot import config
 from newsbot.db import q, db, _lock, _safe_fields, _trx, gget, gset, arun
@@ -197,11 +197,57 @@ def count_articles(uid=None, hours=24, status=None, cid=None):
     if status: sql += " AND status=?"; p.append(status)
     return q(sql, tuple(p), one=True)["c"]
 
+def _backup_dir():
+    d = os.path.join(os.path.dirname(os.path.abspath(config.DB_FILE)) or ".", "backups")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def archive_backup(tag="articles"):
+    """DB-23 / تصمیم ۱۴: بکاپ اتمیک SQLite پیش از حذف آرشیوی (فقط بک‌اند sqlite؛ D1 خودش Time Travel دارد).
+    خروجی: مسیر فایل بکاپ یا None. حداکثر ARCHIVE_BACKUP_KEEP فایل نگه داشته می‌شود."""
+    if config.DB_BACKEND == "d1": return None
+    d = _backup_dir()
+    dest = os.path.join(d, f"newsbot-archive-{tag}-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.db")
+    src = db()
+    dst = sqlite3.connect(dest)
+    try:
+        src.backup(dst)   # پروتکل رسمی backup — سازگار با WAL و اجرای هم‌زمان ربات
+    finally:
+        dst.close()
+    keep = max(1, int(getattr(config, "ARCHIVE_BACKUP_KEEP", 2)))
+    files = sorted(f for f in os.listdir(d) if f.startswith("newsbot-archive-"))
+    for f in files[:-keep]:
+        try: os.remove(os.path.join(d, f))
+        except OSError: pass
+    log.info("archive backup written: %s", os.path.basename(dest))
+    return dest
+
+VACUUM_FREELIST_MIN = 2000      # آستانهٔ صفحات آزاد برای VACUUM ماهانه (DB-23/بهداشت DB)
+
+def _maybe_vacuum(conn):
+    """بهداشت DB: VACUUM حداکثر ماهی یک‌بار و فقط اگر فضای آزاد قابل‌توجهی انباشته شده باشد.
+    VACUUM روی SQLite crash-safe است، ولی کامل بازنویسی می‌کند؛ پس پشت آستانه + throttle است."""
+    try:
+        if (time.time() - float(gget("last_vacuum", 0))) < 30 * 86400: return False
+        if config.DB_BACKEND == "d1": return False
+        free = conn.execute("PRAGMA freelist_count").fetchone()
+        free = int(free[0]) if free else 0
+        if free < VACUUM_FREELIST_MIN: return False
+        conn.execute("VACUUM")
+        gset("last_vacuum", time.time())
+        log.info("VACUUM done (freelist was %d pages)", free)
+        return True
+    except Exception:
+        log.debug("vacuum skipped", exc_info=True)
+        return False
+
 def cleanup():
-    """پاک‌سازی دوره‌ای در یک تراکنش واحد (قبلاً ۸ commit جدا داشت و crash وسط آن، دیتابیس را نیمه‌پاک می‌گذاشت)."""
+    """پاک‌سازی دوره‌ای در یک تراکنش واحد (قبلاً ۸ commit جدا داشت و crash وسط آن، دیتابیس را نیمه‌پاک می‌گذاشت).
+    DB-23: مقالات قدیمی‌تر از ARCHIVE_DAYS (تصمیم ۱۴: ۳۶۵ روز) آرشیو می‌شوند — *قبل از* حذف، بکاپ اتمیک گرفته می‌شود."""
     if (time.time() - float(gget("last_cleanup", 0))) < 3600: return
     ttl = (now_utc() - timedelta(hours=config.DATA_TTL_HOURS)).isoformat()
     dtx = (now_utc() - timedelta(days=config.DEEPLINK_TTL_DAYS)).isoformat() if config.DEEPLINK_TTL_DAYS > 0 else None
+    arc = (now_utc() - timedelta(days=config.ARCHIVE_DAYS)).isoformat()
     # ── سقف + تخلیهٔ زمانی کش‌های درون‌حافظه ──
     rate_cleanup()
     import newsbot.core_users as _cu
@@ -211,11 +257,20 @@ def cleanup():
     for hook in list(CLEANUP_HOOKS):
         try: hook()
         except Exception: log.debug("cleanup hook failed", exc_info=True)
+    # بکاپ پیش از حذف آرشیوی: فقط وقتی واقعاً ردیفی برای حذف هست (تراکنش جدا — بکاپ در تراکنش معنا ندارد)
+    try:
+        due = q("SELECT COUNT(*) c FROM articles WHERE created_at <?", (arc,), one=True)["c"]
+    except Exception:
+        due = 0
+    if due:
+        try: archive_backup()
+        except Exception: log.exception("archive backup failed — archival skipped this round")
+        else: log.info("archiving %d article(s) older than %d days", due, config.ARCHIVE_DAYS)
     def _go(conn):
         conn.execute("DELETE FROM articles WHERE created_at <? AND status NOT IN ('ready','published')", (ttl,))
-        # ردیف‌های status='published' هرگز حذف نمی‌شوند.
-        # (قبلاً این‌جا DELETE ... status='published' AND created_at<72h بود که با بخش ۴ مأموریت
-        #  «حفظ دقیق محتوای تولیدشده توسط ایجنت» در تضاد مستقیم بود — تصمیم C4: حذف کامل آن.)
+        # C4 (فاز ۱): حذف زودهنگام محتوای منتشرشده/آماده باطل شد؛ در فاز ۱۰ (DB-23/تصمیم ۱۴) تنها
+        # مسیر مجازِ حذف این‌ها «آرشیو پس از ARCHIVE_DAYS با بکاپ اتمیک» است:
+        conn.execute("DELETE FROM articles WHERE created_at <?", (arc,))
         conn.execute("DELETE FROM posted WHERE posted_at <?", ((now_utc() - timedelta(days=90)).isoformat(),))
         conn.execute("DELETE FROM dedup WHERE ts <?", ((now_utc() - timedelta(hours=config.DEDUP_TTL_HOURS)).isoformat(),))
         conn.execute("DELETE FROM pub_journal WHERE article_id NOT IN (SELECT id FROM articles)")
@@ -232,4 +287,7 @@ def cleanup():
     _trx(_go)
     try: q("PRAGMA wal_checkpoint(TRUNCATE)")   # خارج از تراکنش (checkpoint داخل تراکنش معنا ندارد)
     except Exception: pass
+    try: q("PRAGMA optimize")                   # آمار planner — سبک و بی‌خطر
+    except Exception: pass
+    _maybe_vacuum(db())
     gset("last_cleanup", time.time())

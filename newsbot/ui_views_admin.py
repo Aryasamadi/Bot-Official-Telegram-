@@ -113,7 +113,7 @@ async def channel_claim(update, context, existing, uid, lang, back, ud):
     await notify_user_fn(owner, tr(user_lang(owner) or "fa", "ch_token_dm", title=esc(existing["title"]), who=who_me, token=tok, min=TRANSFER_TTL_MIN))
     await notify_supers(f"«{esc(existing['title'])}» transfer token issued for {who_me}")
     log_event("WARN", f"توکن انتقال «{existing['title']}» صادر شد (متقاضی {uid})", uid)
-    ud["await"] = {"kind": "chtoken", "cid": cid, "back": back, "tries": 0, "title": existing["title"]}
+    ud["await"] = {"kind": "chtoken", "cid": cid, "back": back, "tries": 0, "title": existing["title"], "ts": time.time()}
     text = tr(lang, "ch_taken", who=owho) + "\n\n" + tr(lang, "ch_token_sent", who=esc(uname(ow)), min=TRANSFER_TTL_MIN)
     await render(update, context, text, [[B(tr(lang, "cancel"), "c:cancel")]])
 

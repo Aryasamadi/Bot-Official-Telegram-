@@ -36,7 +36,7 @@ from newsbot.publish import bot_can_post
 from newsbot.text_format import sanitize_html, strip_tags
 from newsbot.ui_i18n import tr, WIZ, FIELD_LABEL, INT_FIELDS, gtext_set, TEXT_KEYS
 from newsbot.ui_widgets import (B, esc, render, popup, wiz_prompt, operation_status, uname, L,
-                                notify_supers, notify_user_fn)
+                                notify_supers, notify_user_fn, await_expired)
 from newsbot.ui_views_user import view_receipt_ok
 from newsbot.ui_views_admin import mand_gate, PLAN_FIELDS, MODEL_FIELDS
 
@@ -201,6 +201,11 @@ async def handle_input(update, context, st):
         if notice and (current is st or current is None): ud["notice"] = notice
     denied = _input_access(st, uid, lang)
     if denied: return await popup(update, context, denied)
+    # UISEC-06 (فاز ۶): state منقضی ⇒ پاک‌سازی + اعلام؛ ورودیِ تازه به فرمِ فراموش‌شده نمی‌خورد
+    if await_expired(st):
+        done()
+        await popup(update, context, tr(lang, "await_expired"))
+        return await dispatch(update, context, back)
     # ---- ویزاردها
     if kind == "wiz":
         steps = WIZ.get(st.get("wiz"), ()); step = st.get("step")
@@ -293,7 +298,7 @@ async def handle_input(update, context, st):
         if text in ("-", "—", "‑"): set_source_api(sid, "", "", ""); done(tr(lang, "src_api_del")); return await dispatch(update, context, back)
         try: api = _input_value("api_url", raw_text, lang)
         except (ValueError, TypeError) as e: return await popup(update, context, str(e))
-        ud["await"] = {"kind": "src_api_key", "sid": sid, "api": api, "back": back}
+        ud["await"] = {"kind": "src_api_key", "sid": sid, "api": api, "back": back, "ts": st.get("ts")}
         return await render(update, context, f"✏️ {tr(lang, 'src_api_key')}\n\n<i>{tr(lang, 'send_value')}</i>", [[B(tr(lang, "cancel"), "c:cancel")]])
     if kind == "src_api_key":
         sid = st["sid"]
@@ -403,6 +408,9 @@ async def handle_input(update, context, st):
         return await dispatch(update, context, back)
     # ---- کد تخفیف
     if kind == "disc":
+        # UISEC-04 (فاز ۶): کد تخفیف مخفی نیست؟ brute-force روی کدها — سقف نرخ مثل بقیهٔ فرم‌های حساس
+        if not is_super(uid) and not rate_ok(f"disc:{uid}", config.ABUSE_RATE_SEC * 2):
+            return await popup(update, context, tr(lang, "test_wait", n=rate_left(f"disc:{uid}", config.ABUSE_RATE_SEC * 2)))
         d, why = disc_valid(text); pid = str(st["pid"])
         if not d: return await popup(update, context, tr(lang, {"expired": "disc_expired", "exhausted": "disc_exhausted"}.get(why, "disc_bad")))
         ud.setdefault("disc", {})[pid] = d["code"]; done(tr(lang, "disc_ok", p=d["percent"]))
@@ -416,6 +424,11 @@ async def handle_input(update, context, st):
             pid = st["pid"]; p = get_plan(pid); u = get_user(uid)
             if not p or not p["active"]: return await popup(update, context, tr(lang, "notfound"))
             if not (msg.photo or msg.document or text): await popup(update, context, tr(lang, "receipt_empty")); return
+            # UISEC-09 (فاز ۶): سقف اندازهٔ فایلِ رسید (عکس/سند) — state حفظ می‌شود تا فایل کوچک‌تر بیاید
+            attached = msg.photo[-1] if msg.photo else msg.document
+            fsize = int(getattr(attached, "file_size", 0) or 0)
+            if fsize > config.MAX_MEDIA_BYTES:
+                return await popup(update, context, tr(lang, "receipt_too_big", n=config.MAX_MEDIA_MB))
             if pay_pending_for(uid, pid): done(tr(lang, "req_pending")); return await dispatch(update, context, back)
             # st["final"] is the single source of truth (prorated amount for upgrades, full price text otherwise)
             rid = pay_create(uid, pid, msg.chat_id, msg.message_id, text, st.get("disc"), st.get("final"), st.get("pc"))

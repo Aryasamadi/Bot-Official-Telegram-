@@ -9,7 +9,7 @@ from newsbot.core_payments import support_is_open, support_map_get, support_map_
 from newsbot.ratelimit import rate_ok, global_rate_ok
 from newsbot.text_format import split_html
 from newsbot.ui_i18n import tr
-from newsbot.ui_widgets import B, esc, popup, stale, L, run_user_operation, go_home
+from newsbot.ui_widgets import B, esc, popup, stale, L, run_user_operation, go_home, await_expired
 from newsbot.ui_views_user import view_lang
 
 
@@ -55,7 +55,12 @@ async def on_message(update, context):
     if not global_rate_ok(uid): return   # SEC-03: محدودیت سراسری per-user (سیل پیام)
     lang = L(update); st = context.user_data.get("await")
     if st:
-        return await run_user_operation(update, context, f"input:{st.get('kind')}", st.get("cid") or st.get("data", {}).get("cid"), lambda: handle_input(update, context, st))
+        # UISEC-06 (فاز ۶): state منقضی ⇒ پاک‌سازی + اعلام؛ پیام به‌عنوان پیام تازه ادامه می‌یابد (pop + fall-through)
+        if await_expired(st):
+            if context.user_data.get("await") is st: context.user_data.pop("await", None)
+            await popup(update, context, tr(lang, "await_expired"))
+        else:
+            return await run_user_operation(update, context, f"input:{st.get('kind')}", st.get("cid") or st.get("data", {}).get("cid"), lambda: handle_input(update, context, st))
     from newsbot.opctx import _operations
     if uid in _operations:
         from newsbot.ui_widgets import operation_text

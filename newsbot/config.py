@@ -108,7 +108,10 @@ MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "500"))     # backpressure صف
 PAY_STUCK_MIN = int(os.getenv("PAY_STUCK_MIN", "10"))        # بازیابی پرداخت گیرکرده در processing
 
 # ── ماندگاری محدودیت نرخ حساس ──
-RATE_PERSIST_PREFIXES = ("test:", "req:", "rcpt:", "tok:", "cmd:", "sup:", "srcadd:", "srcr:", "dl:")
+RATE_PERSIST_PREFIXES = ("test:", "req:", "rcpt:", "tok:", "cmd:", "sup:", "srcadd:", "srcr:", "dl:", "disc:", "mtest:")
+
+# UISEC-06 (فاز ۶): مهلت state فرم‌های ورودی — پس از این مدت state منقضی و ورودی بعدی رد می‌شود
+AWAIT_TTL_SEC = int(os.getenv("AWAIT_TTL_SEC", "1800"))
 
 # ── ابزارهای مشترک ──
 _FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")

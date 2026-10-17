@@ -3,6 +3,7 @@
 و صفحه‌ی دعوت/ارجاع (NEW v4). منطق پول (proration/کیف پول) در core_plans است؛ این‌جا فقط نمایش است.
 """
 from newsbot import config
+import time
 from newsbot.logutils import log_event, log
 from newsbot.timeutils import fmt_date
 from newsbot.ui_widgets import notify_supers
@@ -148,7 +149,7 @@ async def do_request(update, context, pid):
         final_amount = new_price
         display = new_price
     context.user_data["await"] = {"kind": "receipt", "pid": pid, "back": f"u:plan:{pid}", "disc": d["code"] if d else None,
-                                  "final": final_amount, "display": display, "upgrade_amt": amt, "pc": qt}
+                                  "final": final_amount, "display": display, "upgrade_amt": amt, "pc": qt, "ts": time.time()}
     await render(update, context, gtext("pay", lang, plan=esc(plan_txt(p, "name", lang)), price=esc(display)) + tr(lang, "receipt_hint"), [[B(tr(lang, "cancel"), "c:cancel")]])
 
 async def view_receipt_ok(update, context): lang = L(update); await render(update, context, tr(lang, "receipt_ok"), [[B(tr(lang, "wait_btn"), "home")]], force_new=True)

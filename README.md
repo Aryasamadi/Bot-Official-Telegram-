@@ -9,7 +9,7 @@
 [![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-21.6%2B-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://python-telegram-bot.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-default-003B57?style=flat-square&logo=sqlite&logoColor=white)](#-پیکربندی)
 [![Cloudflare D1](https://img.shields.io/badge/Cloudflare-D1%20optional-F38020?style=flat-square&logo=cloudflare&logoColor=white)](#-پیکربندی)
-[![Tests](https://img.shields.io/badge/tests-161%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
+[![Tests](https://img.shields.io/badge/tests-415%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
 [![i18n](https://img.shields.io/badge/i18n-fa%20%7C%20en-8B5CF6?style=flat-square)](#)
 
 **ربات تک‌پروسه‌ای مدیریت خودکار کانال تلگرام** — منابع خبری را می‌خواند، با چند مدل هوش مصنوعی بازنویسی و امتیازدهی می‌کند، و به‌صورت **crash-safe** منتشر می‌کند.
@@ -78,7 +78,8 @@
 همهٔ عملیات پول **اتمیک** و **بازگشت‌پذیر** است.
 
 ### 🤝 سیستم ارجاع ضدسوءاستفاده
-خودارجاعی رد می‌شود، معرف ناموجود رد می‌شود، سقف هر معرف اعمال می‌شود — **fail-closed**.
+خودارجاعی رد می‌شود، معرف ناموجود رد می‌شود — **fail-closed**. پاداش **با هر خرید** فرد دعوت‌شده به معرف
+می‌رسد (idempotent per-payment)؛ درصد و سقف مبلغی از **پنل سوپرادمین** قابل تنظیم است.
 
 ### ☁️ دو بک‌اند دیتابیس
 **SQLite** (پیش‌فرض، سریع، اتمیک) یا **Cloudflare D1** به‌عنوان Source of Truth.
@@ -118,8 +119,9 @@ flowchart LR
     style F fill:#1E293B,stroke:#94A3B8,color:#E2E8F0
 ```
 
-**نقطهٔ کلیدی معماری:** لایهٔ دیتابیس (`db.py`) تنها جایی است که `sqlite3` یا `httpx` را می‌بیند.
-هیچ ماژول دیگری مستقیم به دیتابیس دست نمی‌زند — اینترفیس یکتا: `q()` / `_trx()` / `gset()` / `gget()`.
+**نقطهٔ کلیدی معماری:** لایهٔ دیتابیس (`db.py`) تنها جایی است که `sqlite3` را می‌بیند و `net_http.py`
+تنها جایی است که `httpx` را — هیچ ماژول دیگری مستقیم به دیتابیس یا HTTP دست نمی‌زند.
+اینترفیس دیتابیس یکتا: `q()` / `_trx()` / `gset()` / `gget()`.
 
 ---
 
@@ -224,7 +226,7 @@ INFO | در حال اجرا…
 | `AI_INPUT_TEXT_CHARS` | `8000` | متن ورودی به مدل |
 | `AI_MAX_CALLS_PER_ARTICLE` | `12` | سقف فراخوانی برای هر مقاله |
 | `AI_ARTICLE_TIME_BUDGET` | `240` | بودجهٔ زمانی هر مقاله (ثانیه) |
-| `AI_MAX_MODEL_ATTEMPTS` | `3` | سقف تلاش روی مدل‌ها |
+| `AI_MAX_MODEL_ATTEMPTS` | `6` | سقف تلاش روی مدل‌ها |
 | `AI_CACHE_TTL_DAYS` | `14` | عمر کش پاسخ |
 
 </details>
@@ -249,8 +251,9 @@ INFO | در حال اجرا…
 | متغیر | پیش‌فرض | توضیح |
 |---|---|---|
 | `REFERRAL_ENABLED` | `1` | فعال‌بودن سیستم ارجاع |
-| `REFERRAL_PERCENT` | `10` | درصد پاداش (۰..۵۰) |
-| `REFERRAL_MAX_PER_USER` | `50` | سقف اعتبار هر معرف |
+| `REFERRAL_PERCENT` | `10` | درصد پیش‌فرض پاداش هر خرید (۰..۵۰) — از پنل سوپرادمین هم قابل تغییر |
+| `REFERRAL_MAX_PER_USER` | منسوخ | سقف «تعداد» حذف شد؛ سقف مبلغی اکنون در پنل → «🤝 ارجاع» |
+| `SECRETS_KEY` | — | رمزنگاری کلیدهای AI در حالت سکون (Fernet) |
 | `MANDATORY_CHANNEL_ID` | — | کانال اجباری ادمین‌ها |
 | `MANDATORY_CHANNEL_USERNAME` | — | جایگزین یوزرنیم |
 | `MAX_DAILY_POSTS_CAP` | `500` | سقف پست روزانه |
@@ -264,8 +267,10 @@ INFO | در حال اجرا…
 
 | متغیر | توضیح |
 |---|---|
+| `CF_ACCOUNT_ID` | آی‌دی حساب Cloudflare (برای KV **و** D1) |
 | `CF_KV_NAMESPACE_ID` | آینهٔ «بیشتر» روی KV (هر سه مقدار CF لازم است) |
-| `TELEGRAM_API_BASE` | سرور Bot API محلی → آپلود تا ۲GB (پیش‌فرض ۵۰MB) |
+| `CF_API_TOKEN` | توکن API کلادفلر (برای KV) |
+| `TELEGRAM_API_BASE` | سرور Bot API محلی → آپلود تا ۲۰۰۰MB (≈۲GB؛ پیش‌فرض ۵۰MB) |
 | `ALLOW_PRIVATE_MODEL_HOSTS` | فقط برای مدل‌های محلی مثل Ollama |
 
 </details>
@@ -333,7 +338,8 @@ stateDiagram-v2
 توکن ربات، `Bearer`، کلیدهای API، `sk-…`، `AIza…`، و **همهٔ** جفت‌های حساس در query-string.
 
 ### محافظت از رازها
-`.gitignore` فایل `.env` و `*.db` را مسدود می‌کند (دیتابیس کلیدهای مدل را متن ساده دارد و `chmod 600` می‌گیرد).
+`.gitignore` فایل `.env` و `*.db` را مسدود می‌کند. با تنظیم `SECRETS_KEY` کلیدهای AI **رمزنگاری‌شده**
+(Fernet) در دیتابیس ذخیره می‌شوند؛ فایل دیتابیس SQLite هنگام ساخت `chmod 600` می‌گیرد (`db.py`).
 
 </td>
 </tr>
@@ -344,7 +350,7 @@ stateDiagram-v2
 ## 🧪 تست‌ها
 
 ```bash
-pytest -q                              # ۱۶۱ تست
+pytest -q                              # ۴۱۵ تست
 python -m pyflakes newsbot tools run.py tests   # نگهبان ایستا
 python tools/final_verification.py     # راستی‌آزمایی مستقل (۱۷ بررسی)
 ```
@@ -372,14 +378,19 @@ python tools/final_verification.py     # راستی‌آزمایی مستقل (�
 newsbot/
 ├── app.py              # راه‌اندازی · preflight · ثبت handlerها
 ├── config.py           # همهٔ متغیرهای محیطی (بدون وابستگی داخلی)
+├── runtime.py          # state زندهٔ زمان‌اجرا (BOT_USERNAME · notify hooks)
+├── secret_store.py     # رمزنگاری کلیدهای AI در حالت سکون (Fernet)
 ├── db.py               # لایهٔ دیتابیس + _trx اتمیک (SQLite / D1)
 ├── discover.py         # کشف چندلایهٔ منبع
 ├── extract.py          # استخراج متن مقاله
 ├── adfilter.py         # فیلتر تبلیغات
 ├── generate.py         # ساخت پرامپت · هماهنگی AI
 ├── ai_models.py        # مدل‌ها · fallback · circuit breaker · کش
+├── notify.py           # اعلان مدیر کلان/کاربر (بدون وابستگی تلگرام)
 ├── text_format.py      # نرمال‌سازی · ضدتزریق · HTML تلگرام
+├── timeutils.py        # زمان UTC/محلی · منطقه‌های IANA
 ├── net_http.py         # HTTP + دفاع SSRF
+├── opctx.py            # زمینهٔ عملیات · checkpoint چرخه
 ├── publish.py          # انتشار · ژورنال · تقسیم پیام
 ├── core_articles.py    # چرخهٔ عمر مقاله + بازیابی انتشار
 ├── core_channels.py    # کانال‌ها و تنظیمات
@@ -395,7 +406,9 @@ newsbot/
 ├── ratelimit.py        # محدودیت نرخ
 ├── ui_commands.py      # دستورها
 ├── ui_dispatch.py      # مسیریابی callback
+├── ui_inputs.py        # پردازش فرم‌ها/ورودی‌ها (کال‌بک و متن)
 ├── ui_i18n.py          # متن‌ها (منبع یکتا) · TEXT_KEYS
+├── ui_support.py       # هندلر پیام آزاد (survey/receipt)
 ├── ui_views_*.py       # پنل کاربر · ادمین · سوپرادمین
 ├── ui_widgets.py       # ویجت‌ها · پیام موقت
 └── logutils.py         # لاگ + ماسک رازها

@@ -108,6 +108,17 @@ TXT = {
     "queue": ("📝 صف انتشار ({n})", "📝 Publish queue ({n})"), "rejected": ("♻️ ردشده‌ها", "♻️ Rejected"), "automation": ("{i} اتوماسیون", "{i} Automation"), "ch_del": ("🗑 حذف کانال", "🗑 Remove channel"),
     "refresh": ("🔄 بروزرسانی", "🔄 Refresh"), "ch_del_q": ("❓ «{title}» حذف شود؟\n🌐 منابع · ️ تنظیمات ·  صف", "❓ Remove “{title}”?\n🌐 Sources · ⚙️ Settings · 📝 Queue"), "ch_deleted": ("🗑 کانال حذف شد", "🗑 Channel removed"),
     "tog_enabled": ("🟢 اتوماسیون روشن شد", "🟢 Automation on"), "tog_disabled": ("🔴 اتوماسیون خاموش شد", "🔴 Automation off"),
+    # ---- تأیید دوسطحی اقدامات مخرب (فاز ۹ — UX-05/UISEC-05)
+    "confirm_q": ("⚠️ <b>مطمئنی؟</b>\n\n{what}", "⚠️ <b>Are you sure?</b>\n\n{what}"),
+    "confirm_del_q": ("🗑 «{name}» برای همیشه حذف شود؟", "🗑 Delete «{name}» permanently?"),
+    "confirm_api_del_q": ("🔑 کلید API منبع «{name}» پاک شود؟", "🔑 Remove API key of «{name}»?"),
+    "confirm_txtr_q": ("↩️ متن این پیام به پیش‌فرض برگردد؟ (ویرایش‌های شما پاک می‌شود)", "↩️ Reset this text to default? (your edits will be lost)"),
+    "confirm_ban_q": ("⛔ این کاربر مسدود شود؟", "⛔ Ban this user?"),
+    "confirm_unban_q": ("✅ مسدودیت این کاربر برداشته شود؟", "✅ Unban this user?"),
+    "confirm_revoke_q": ("🎫 پلن فعال این کاربر لغو شود؟", "🎫 Revoke this user's active plan?"),
+    "confirm_reset_q": ("♻️ {what} صفر شود؟", "♻️ Reset {what}?"),
+    "confirm_pay_no_q": ("❌ این رسید رد شود؟", "❌ Reject this receipt?"),
+    "s_what_free": ("سهمیهٔ رایگان", "free quota"), "s_what_tests": ("شمارندهٔ تست", "test counter"), "s_what_posts": ("شمارندهٔ پست", "post counter"),
     # ---- منابع
     "src_title": ("🌐 <b>منابع {title}</b> · {n}/{cap}\n💡 فید <b>RSS</b> بهترین نتیجه را می‌دهد\n🟢 وضعیت کانال · 🤖 وضعیت ربات", "🌐 <b>Sources {title}</b> · {n}/{cap}\n💡 An <b>RSS</b> feed gives the best results\n🟢 Channel status · 🤖 Bot status"),
     "src_line": ("\n{i}{b} {host} · 🆕 {n}{err}", "\n{i}{b} {host} · 🆕 {n}{err}"), "src_err": (" · ⚠️×{n}", " · ⚠️×{n}"), "src_add": ("➕ افزودن منبع", "➕ Add source"),

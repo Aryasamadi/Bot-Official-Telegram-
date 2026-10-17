@@ -91,26 +91,28 @@ async def dispatch(update, context, data):
             ud["myai_back"] = f"a:ch:{cid}" if cid and channel_owned(cid, uid) else "a:home"
             return await view_my_ai(update, context)
         if b == "myai_add": return await wiz_start(update, context, "my_ai_add", "a:myai")
-        if b in ("myai_v", "myai_t", "myai_o", "myai_d", "myai_e"):
+        if b in ("myai_v", "myai_t", "myai_o", "myai_d", "myai_d2", "myai_e"):
             mid = int(c); m = get_model(mid)
             if not m or (m["owner_id"] != uid and not is_super(uid)): await popup(update, context, tr(lang, "notfound")); return await view_my_ai(update, context)
             if b == "myai_v": return await view_my_ai_model(update, context, mid)
             if b == "myai_o": update_model(mid, active=0 if m["active"] else 1, status="ok", fail_count=0); await popup(update, context, tr(lang, "s_model_off" if m["active"] else "s_model_on")); return await view_my_ai_model(update, context, mid)
-            if b == "myai_d": delete_model(mid); await popup(update, context, tr(lang, "deleted")); return await view_my_ai(update, context)
+            if b == "myai_d": return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(m["name"])), f"a:myai_d2:{mid}", f"a:myai_v:{mid}")
+            if b == "myai_d2": delete_model(mid); await popup(update, context, tr(lang, "deleted")); return await view_my_ai(update, context)
             if b == "myai_e": return await ask(update, context, tr(lang, "s_field_prompt", f=fl(MODEL_FIELDS, d, lang)), "model_field", f"a:myai_v:{mid}", mid=mid, field=d, own=1)
             await run_model_test(update, context, mid, personal=True)
             return await view_my_ai_model(update, context, mid)
         if b == "chadd":
             if lim["max_channels"] is not None and len(list_channels(uid)) >= lim["max_channels"]: await popup(update, context, tr(lang, "limit_channels", n=lim["max_channels"])); return await view_admin_home(update, context)
             return await ask(update, context, tr(lang, "ch_add_prompt"), "ch_add", "a:home")
-        if b in ("srcv", "srct", "srctb", "srcd", "srcr", "srcapi", "srcapix"):
+        if b in ("srcv", "srct", "srctb", "srcd", "srcd2", "srcr", "srcapi", "srcapix", "srcapix2"):
             sid = int(c); s = get_source(sid)
             if not s or (s["admin_id"] != uid and not is_super(uid)): await popup(update, context, tr(lang, "notfound")); return await view_admin_home(update, context)
             if b == "srcv": return await view_source(update, context, sid)
             if b == "srct": on = toggle_source(sid, s["admin_id"], "active"); await popup(update, context, tr(lang, "src_ch_on" if on else "src_ch_off")); return await view_source(update, context, sid)
             if b == "srctb": on = toggle_source(sid, s["admin_id"], "bot_active"); await popup(update, context, tr(lang, "src_bot_on" if on else "src_bot_off")); return await view_source(update, context, sid)
             if b == "srcapi": return await ask(update, context, tr(lang, "src_api_url"), "src_api_url", f"a:srcv:{sid}", sid=sid)
-            if b == "srcapix": set_source_api(sid, "", "", ""); await popup(update, context, tr(lang, "src_api_del")); return await view_source(update, context, sid)
+            if b == "srcapix": return await _confirm(update, context, lang, tr(lang, "confirm_api_del_q", name=esc(s["title"] or s["url"])[:60]), f"a:srcapix2:{sid}", f"a:srcv:{sid}")
+            if b == "srcapix2": set_source_api(sid, "", "", ""); await popup(update, context, tr(lang, "src_api_del")); return await view_source(update, context, sid)
             if b == "srcr":
                 if not is_super(uid) and not rate_free(f"srcr:{sid}", 60): await popup(update, context, tr(lang, "test_wait", n=rate_left(f"srcr:{sid}", 60))); return await view_source(update, context, sid)
                 await render(update, context, tr(lang, "src_checking"))
@@ -118,8 +120,9 @@ async def dispatch(update, context, data):
                 if ok: rate_mark(f"srcr:{sid}")
                 else: rate_clear(f"srcr:{sid}")
                 await popup(update, context, msg); return await view_source(update, context, sid)
+            if b == "srcd": return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(s["title"] or s["url"])[:60]), f"a:srcd2:{sid}", f"a:srcv:{sid}")
             del_source(sid, s["admin_id"]); await popup(update, context, tr(lang, "src_deleted")); return await view_sources(update, context, s["channel_id"])
-        if b in ("art", "arte", "artd", "artr", "artf", "pub"):
+        if b in ("art", "arte", "artd", "artd2", "artr", "artf", "pub"):
             aid = int(c); art = get_article(aid)
             if not art or (art["admin_id"] != uid and not is_super(uid)): await popup(update, context, tr(lang, "notfound")); return await view_admin_home(update, context)
             cid = art["channel_id"]
@@ -129,7 +132,8 @@ async def dispatch(update, context, data):
                 return await popup(update, context, tr(lang, "notfound"))
             if b == "art": return await view_article(update, context, aid)
             if b == "arte": return await ask(update, context, tr(lang, "art_edit_prompt"), "art_edit", f"a:art:{aid}", aid=aid)
-            if b == "artd": delete_article(aid, art["admin_id"]); await popup(update, context, tr(lang, "deleted")); return await view_queue(update, context, cid, "ready" if art["status"] in ("ready", "published") else "rejected")
+            if b == "artd": return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(strip_tags(art["title"] or "")[:60] or f"#{aid}")), f"a:artd2:{aid}", f"a:art:{aid}")
+            if b == "artd2": delete_article(aid, art["admin_id"]); await popup(update, context, tr(lang, "deleted")); return await view_queue(update, context, cid, "ready" if art["status"] in ("ready", "published") else "rejected")
             if b == "artr": article_update(aid, status="ready", reason=""); await popup(update, context, tr(lang, "art_moved")); return await view_article(update, context, aid)
             if b == "artf":
                 if art["full_html"]:
@@ -206,6 +210,12 @@ async def dispatch(update, context, data):
         if b == "cats": return await ask(update, context, tr(lang, "cat_style_prompt"), "cat_style", f"a:cat:{cid}", cid=cid, idx=int(d))
         if b == "catd":
             cats = s["categories"]; i = int(d)
+            if 0 <= i < len(cats) and len(cats) > 1:
+                c0 = cats[i]; nm = (f"{c0['emoji']} {c0['name']}" if isinstance(c0, dict) else str(c0))
+                return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(nm)[:70]), f"a:catd2:{cid}:{d}", f"a:cat:{cid}")
+            await popup(update, context, tr(lang, "cat_min")); return await view_cats(update, context, cid)
+        if b == "catd2":
+            cats = s["categories"]; i = int(d)
             if 0 <= i < len(cats) and len(cats) > 1: cats.pop(i); update_settings(cid, categories=cats); await popup(update, context, tr(lang, "deleted"))
             else: await popup(update, context, tr(lang, "cat_min"))
             return await view_cats(update, context, cid)
@@ -214,6 +224,12 @@ async def dispatch(update, context, data):
         if b == "criv": return await view_crit(update, context, cid, int(d))
         if b == "criw": return await ask(update, context, tr(lang, "crit_w_prompt"), "crit_weight", f"a:cri:{cid}", cid=cid, idx=int(d))
         if b == "crid":
+            cr = s["criteria"]; i = int(d)
+            if 0 <= i < len(cr) and len(cr) > 1:
+                c0 = cr[i]; nm = c0.get("name", "") if isinstance(c0, dict) else str(c0)
+                return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(nm)[:70]), f"a:crid2:{cid}:{d}", f"a:cri:{cid}")
+            await popup(update, context, tr(lang, "crit_min")); return await view_crits(update, context, cid)
+        if b == "crid2":
             cr = s["criteria"]; i = int(d)
             if 0 <= i < len(cr) and len(cr) > 1: cr.pop(i); update_settings(cid, criteria=cr); await popup(update, context, tr(lang, "deleted"))
             else: await popup(update, context, tr(lang, "crit_min"))
@@ -240,7 +256,8 @@ async def dispatch(update, context, data):
             if c not in config.LANGS or d not in ("id", "user"): return
             return await ask(update, context, tr(lang, "s_field_prompt", f=tr(lang, "s_mand_id" if d == "id" else "s_mand_user")), "mand_field", "s:mand", lg=c, field=d)
         if b == "txt": return await ask(update, context, tr(lang, "s_text_prompt", k=c, lg=d), "gtext", "s:texts", key=c, lg=d)
-        if b == "txtr": gtext_set_wrap(c, d); await popup(update, context, tr(lang, "s_text_reset_done")); return await view_s_texts(update, context)
+        if b == "txtr": return await _confirm(update, context, lang, tr(lang, "confirm_txtr_q"), f"s:txtr2:{c}:{d}", "s:texts")
+        if b == "txtr2": gtext_set_wrap(c, d); await popup(update, context, tr(lang, "s_text_reset_done")); return await view_s_texts(update, context)
         if b == "bc": return await ask(update, context, tr(lang, "s_bc_prompt"), "bc", "s:home")
         if b == "bc_go":
             src = ud.pop("bc_src", None)
@@ -262,6 +279,10 @@ async def dispatch(update, context, data):
             update_plan(int(c), active=0 if pl["active"] else 1); await popup(update, context, tr(lang, "saved")); return await view_s_plan(update, context, int(c))
         if b == "plan_free": q("UPDATE plans SET is_free=0", commit=True); update_plan(int(c), is_free=1); await popup(update, context, tr(lang, "s_plan_free_done")); return await view_s_plan(update, context, int(c))
         if b == "plan_d":
+            pl = get_plan(int(c))
+            if not pl: await popup(update, context, tr(lang, "notfound")); return await view_s_plans(update, context)
+            return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(plan_txt(pl, "name", lang))), f"s:plan_d2:{c}", f"s:plan:{c}")
+        if b == "plan_d2":
             ok = delete_plan(int(c))
             await popup(update, context, tr(lang, "s_plan_deleted" if ok else "s_plan_in_use"))
             return await view_s_plans(update, context)
@@ -270,7 +291,11 @@ async def dispatch(update, context, data):
         if b == "disc": return await view_s_disc(update, context, c)
         if b == "disc_e": return await ask(update, context, tr(lang, "s_field_prompt", f=d), "disc_field", f"s:disc:{c}", code=c, field=d)
         if b == "disc_t": dd = disc_get(c); disc_update(c, active=0 if dd and dd["active"] else 1); await popup(update, context, tr(lang, "saved")); return await view_s_disc(update, context, c)
-        if b == "disc_d": disc_delete(c); await popup(update, context, tr(lang, "deleted")); return await view_s_discs(update, context)
+        if b == "disc_d":
+            dd = disc_get(c)
+            if not dd: await popup(update, context, tr(lang, "notfound")); return await view_s_discs(update, context)
+            return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(dd["code"])), f"s:disc_d2:{c}", f"s:disc:{c}")
+        if b == "disc_d2": disc_delete(c); await popup(update, context, tr(lang, "deleted")); return await view_s_discs(update, context)
         if b == "users": return await view_s_users(update, context, int(c or 0))
         if b == "admins": return await view_s_users(update, context, int(c or 0), role="admin")
         if b == "user": return await view_s_user(update, context, int(c))
@@ -280,11 +305,19 @@ async def dispatch(update, context, data):
             exp, queued = assign_plan(tid, int(d)); pl = get_plan(int(d)); ul = user_lang(tid) or "fa"; ds = fmt_date_safe(exp, admin_offset(tid))
             await notify_user_wrap(tid, tr(ul, "pay_approved", name=esc(plan_txt(pl, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=ds)))
             await popup(update, context, tr(lang, "s_assigned_q" if queued else "s_assigned", d=ds)); return await view_s_user(update, context, tid)
-        if b == "urevoke": revoke_plan(tid); await popup(update, context, tr(lang, "s_revoked")); return await view_s_user(update, context, tid)
-        if b == "uban": q("UPDATE users SET banned=1-banned WHERE id=?", (tid,), commit=True); await popup(update, context, tr(lang, "s_banned" if get_user(tid)["banned"] else "s_unbanned")); return await view_s_user(update, context, tid)
-        if b == "ufree": q("UPDATE users SET free_used=0 WHERE id=?", (tid,), commit=True); await popup(update, context, tr(lang, "s_free_reset")); return await view_s_user(update, context, tid)
-        if b == "utests": usage_reset(tid, "tests"); await popup(update, context, tr(lang, "s_tests_reset")); return await view_s_user(update, context, tid)
-        if b == "uposts": usage_reset(tid, "posts"); await popup(update, context, tr(lang, "s_posts_reset")); return await view_s_user(update, context, tid)
+        if b == "urevoke": return await _confirm(update, context, lang, tr(lang, "confirm_revoke_q"), f"s:urevoke2:{tid}", f"s:user:{tid}")
+        if b == "urevoke2": revoke_plan(tid); await popup(update, context, tr(lang, "s_revoked")); return await view_s_user(update, context, tid)
+        if b == "uban":
+            u2 = get_user(tid)
+            if not u2: await popup(update, context, tr(lang, "notfound")); return await view_s_users(update, context, 0)
+            return await _confirm(update, context, lang, tr(lang, "confirm_unban_q" if u2["banned"] else "confirm_ban_q"), f"s:uban2:{tid}", f"s:user:{tid}")
+        if b == "uban2": q("UPDATE users SET banned=1-banned WHERE id=?", (tid,), commit=True); await popup(update, context, tr(lang, "s_banned" if get_user(tid)["banned"] else "s_unbanned")); return await view_s_user(update, context, tid)
+        if b in ("ufree", "utests", "uposts"):
+            what = tr(lang, "s_what_free" if b == "ufree" else ("s_what_tests" if b == "utests" else "s_what_posts"))
+            return await _confirm(update, context, lang, tr(lang, "confirm_reset_q", what=what), f"s:{b}2:{tid}", f"s:user:{tid}")
+        if b == "ufree2": q("UPDATE users SET free_used=0 WHERE id=?", (tid,), commit=True); await popup(update, context, tr(lang, "s_free_reset")); return await view_s_user(update, context, tid)
+        if b == "utests2": usage_reset(tid, "tests"); await popup(update, context, tr(lang, "s_tests_reset")); return await view_s_user(update, context, tid)
+        if b == "uposts2": usage_reset(tid, "posts"); await popup(update, context, tr(lang, "s_posts_reset")); return await view_s_user(update, context, tid)
         if b == "umsg": return await ask(update, context, tr(lang, "s_umsg_prompt"), "umsg", f"s:user:{tid}", target=tid)
         if b == "ureport":
             chs = list_channels_wrap(tid)
@@ -302,6 +335,10 @@ async def dispatch(update, context, data):
             if turning_off and gget("test_model_id") == m["id"]: gset("test_model_id", None)
             await popup(update, context, tr(lang, "s_model_off" if m["active"] else "s_model_on")); return await view_s_model(update, context, int(c))
         if b == "model_d":
+            m = get_model(int(c))
+            if not m: await popup(update, context, tr(lang, "notfound")); return await view_s_models(update, context)
+            return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(m["name"])), f"s:model_d2:{c}", f"s:model:{c}")
+        if b == "model_d2":
             mid = int(c)
             if gget("test_model_id") == mid: gset("test_model_id", None)
             delete_model(mid); await popup(update, context, tr(lang, "deleted")); return await view_s_models(update, context)
@@ -329,12 +366,17 @@ async def dispatch(update, context, data):
                 try: await context.bot.copy_message(uid, r["receipt_chat"], r["receipt_msg"])
                 except Exception as e: await popup(update, context, str(e)[:100])
             return await view_s_pays(update, context)
-        if b in ("pay_ok", "pay_no"): return await decide_pay(update, context, int(c), b == "pay_ok", d == "l")
+        if b == "pay_no": return await _confirm(update, context, lang, tr(lang, "confirm_pay_no_q"), f"s:pay_no2:{c}" + (f":{d}" if d else ""), "s:pays")
+        if b in ("pay_ok", "pay_no2"): return await decide_pay(update, context, int(c), b == "pay_ok", d == "l")
         return await view_super_home(update, context)
     return await go_home_safe(update, context)
 
 
 # ── کمک‌های کوچک (import دیرهنگام برای شکستن چرخه‌ها) ──
+async def _confirm(update, context, lang, what, yes, no):
+    """تأیید دوسطحی اقدامات مخرب (UX-05/UISEC-05): دکمه‌ی «بله» به اکشن «...2» و «خیر» به نمای قبلی می‌رود."""
+    return await render(update, context, tr(lang, "confirm_q", what=what), [[B(tr(lang, "yes"), yes), B(tr(lang, "no"), no)]])
+
 async def go_home_safe(update, context):
     from newsbot.ui_widgets import go_home
     await go_home(update, context)

@@ -257,7 +257,8 @@ def finish_ok(t):
     """اگر متن ناگهان وسط جمله قطع شده باشد، نشانه‌ی ادامه (« …») می‌گذارد — جمله‌ی تمام‌شده دست نمی‌خورد."""
     if not t: return t
     e = re.sub(r"(</[a-zA-Z]+>|\s)+$", "", t)
-    if e and re.search(r"[\w؀-ۿ،,؛:]$", e): return t.rstrip() + " …"
+    if not e or re.search(r"[.!?؟۔…»”\"')]$", e): return t
+    if re.search(r"[\w؀-ۿ،,؛:\u200c\u200d]$", e): return t.rstrip() + " …"
     return t
 
 def split_html(text, limit=None):

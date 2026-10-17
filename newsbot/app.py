@@ -152,16 +152,33 @@ def preflight(check=False):
     log.info("پیکربندی سالم | backend=%s | دیتابیس=%s | منطقه=UTC+%s | ادمین کلان=%d", config.DB_BACKEND, config.DB_FILE, config.DEFAULT_UTC_OFFSET, len(config.SUPER_ADMIN_IDS))
 
 
-def main():
-    global APP, _db_lock
-    preflight()
-    if config.DB_BACKEND != "d1":
+def _acquire_single_instance_lock():
+    """قفل تک‌نسخهٔ پروسه روی فایل دیتابیس — این ربات تک‌پروسه اجرا می‌شود.
+    DB-20: قبلاً فقط fcntl (لینوکس) بود و روی ویندوز import fcntl خطای ImportError
+    می‌داد که با except OSError گرفته نمی‌شد ⇒ run.py روی ویندوز در استارت crash می‌کرد.
+    حالا: لینوکس flock، ویندوز msvcrt.locking؛ هر شکست قفل ⇒ پیام روشن و خروج."""
+    global _db_lock
+    if config.DB_BACKEND == "d1": return None
+    f = open(config.DB_FILE + ".lock", "a+")
+    try:
         try:
             import fcntl
-            _db_lock = open(config.DB_FILE + ".lock", "a+")
-            fcntl.flock(_db_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)   # این ربات تک‌پروسه اجرا می‌شود
-        except OSError:
-            raise SystemExit(f"⛔ نسخه‌ی دیگری از ربات روی همین دیتابیس در حال اجراست ({config.DB_FILE}) — ابتدا آن را ببندید.")
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except ImportError:              # ویندوز
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        f.close()
+        raise SystemExit(f"⛔ نسخه‌ی دیگری از ربات روی همین دیتابیس در حال اجراست ({config.DB_FILE}) — ابتدا آن را ببندید.")
+    _db_lock = f
+    return f
+
+
+def main():
+    global APP
+    preflight()
+    _acquire_single_instance_lock()
     init_core(); _bld = Application.builder().token(config.BOT_TOKEN)
     if config.API_BASE: _bld = _bld.base_url(config.API_BASE)          # سرور محلی Bot API (اختیاری) → پشتیبانی از فایل‌های تا ۲ گیگ
     APP = _bld.post_init(post_init).post_shutdown(post_shutdown).concurrent_updates(True).build()

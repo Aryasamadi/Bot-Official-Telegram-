@@ -29,7 +29,9 @@ def support_open(uid): q("INSERT OR REPLACE INTO support(user_id,open,opened_at)
 def support_close(uid): q("UPDATE support SET open=0 WHERE user_id=?", (uid,), commit=True)
 def support_is_open(uid):
     r = q("SELECT open FROM support WHERE user_id=?", (uid,), one=True); return bool(r and r["open"])
-def support_map_set(msg_key, uid): q("INSERT OR REPLACE INTO support_map VALUES(?,?,?)", (msg_key, uid, now_iso()), commit=True)
+def support_map_set(msg_key, uid):
+    # DB-17: ستون‌ها صریح‌اند تا افزودن ستون به جدول، درج موقعیتی را بی‌صدا جابه‌جا نکند
+    q("INSERT OR REPLACE INTO support_map(msg_id,user_id,ts) VALUES(?,?,?)", (msg_key, uid, now_iso()), commit=True)
 def support_map_get(msg_key):
     r = q("SELECT user_id FROM support_map WHERE msg_id=?", (msg_key,), one=True); return r["user_id"] if r else None
 

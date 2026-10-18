@@ -9,7 +9,7 @@
 [![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-21.6%2B-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://python-telegram-bot.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-default-003B57?style=flat-square&logo=sqlite&logoColor=white)](#-پیکربندی)
 [![Cloudflare D1](https://img.shields.io/badge/Cloudflare-D1%20optional-F38020?style=flat-square&logo=cloudflare&logoColor=white)](#-پیکربندی)
-[![Tests](https://img.shields.io/badge/tests-432%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
+[![Tests](https://img.shields.io/badge/tests-454%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
 [![i18n](https://img.shields.io/badge/i18n-fa%20%7C%20en-8B5CF6?style=flat-square)](#)
 
 **ربات تک‌پروسه‌ای مدیریت خودکار کانال تلگرام** — منابع خبری را می‌خواند، با چند مدل هوش مصنوعی بازنویسی و امتیازدهی می‌کند، و به‌صورت **crash-safe** منتشر می‌کند.
@@ -350,7 +350,7 @@ stateDiagram-v2
 ## 🧪 تست‌ها
 
 ```bash
-pytest -q                              # ۴۳۲ تست
+pytest -q                              # ۴۵۴ تست
 python -m pyflakes newsbot tools run.py tests   # نگهبان ایستا
 python tools/final_verification.py     # راستی‌آزمایی مستقل (۱۷ بررسی)
 python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08 · docs/PERFORMANCE.md)
@@ -371,6 +371,7 @@ python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08
 | `test_phase13_tech_debt.py` | رسید کیف پول (v6) · صف/ری‌ترای اعلان سوپر · بنچمارک · مرزهای اعتبارسنجی |
 | `test_phase13_business_isolation.py` | ایزولهٔ سهمیه/کیف پول/تنظیمات بین مستأجرها |
 | `test_phase14_payment_ui.py` | پرداخت دوواحدی fa/en (تومان/$) · تمدید/ارتقای کسری/نزول‌بلاک · دوزبانهٔ کامل UI |
+| `test_phase15_watchdog.py` | `Restart=always` · حذف start-limit · sd_notify/READY/STOPPING · watchdog loop |
 
 > **«تست‌نشده = رد‌شده».** هیچ تستی برای سبز شدن تغییر نکرده و هیچ `except` خالی‌ای خطا را پنهان نمی‌کند.
 
@@ -383,6 +384,7 @@ newsbot/
 ├── app.py              # راه‌اندازی · preflight · ثبت handlerها
 ├── config.py           # همهٔ متغیرهای محیطی (بدون وابستگی داخلی)
 ├── runtime.py          # state زندهٔ زمان‌اجرا (BOT_USERNAME · notify hooks)
+├── watchdog.py         # اعلام READY/STOPPING و پینگ watchdog systemd
 ├── secret_store.py     # رمزنگاری کلیدهای AI در حالت سکون (Fernet)
 ├── db.py               # لایهٔ دیتابیس + _trx اتمیک (SQLite / D1)
 ├── discover.py         # کشف چندلایهٔ منبع
@@ -429,6 +431,9 @@ newsbot/
 `push` به `main` → ورک‌فلوی `deploy-vps.yml` خودش بکاپ می‌گیرد، کد را می‌کشد،
 `run.py --check` را اجرا می‌کند و اگر سالم بود سرویس را restart می‌کند.
 
+> اگر sshd فقط روی IPv6 باشد یا VPS پشت NAT باشد، رانرهای IPv4-only به آن نمی‌رسند؛
+> از مسیر دستی/کنسول و راهنمای `docs/DEPLOY_RUNBOOK.md` استفاده کنید.
+
 </div>
 
 Secretهای لازم در **Settings → Secrets and variables → Actions**:
@@ -452,6 +457,9 @@ git fetch origin main && git reset --hard origin/main
 systemctl restart bot-ai-automatic
 systemctl is-active bot-ai-automatic
 ```
+
+پس از استقرار، drop-inهای پایداری را طبق **`docs/DEPLOY_RUNBOOK.md` §۹** نصب کنید:
+اول `10-restart-always.conf` (سازگار با هر کد) و بعد از کد فاز ۱۵، `20-watchdog.conf`.
 
 راهنمای کامل (شامل dry-run و rollback): **[`DEPLOY-VPS-UPDATE.md`](DEPLOY-VPS-UPDATE.md)**
 

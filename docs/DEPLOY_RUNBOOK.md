@@ -160,28 +160,97 @@ add_header Content-Security-Policy "default-src 'self'" always;
 
 هر سرور HTTP اضافه‌شده در آینده این هدرها را از همان روز اول باید داشته باشد.
 
-## ۹. سخت‌کردن واحد systemd (کمترین دسترسی)
+## ۹. سخت‌کردن واحد systemd (کمترین دسترسی + تضمین روشن‌ماندن)
 
-روی VPS، فایل `/etc/systemd/system/bot-ai-automatic.service` باید حداقل این‌ها را
-داشته باشد (پس از تغییر: `daemon-reload` و restart در پنجرهٔ استقرار):
+> **OPS-22/OPS-23 (فاز ۱۵):** دو لایهٔ مستقل اضافه شد. لایهٔ یک (`Restart=always` و حذف
+> سقف start-limit) با کد فعلی هم سازگار است و باید **همین حالا** اعمال شود؛ لایهٔ دو
+> (`Type=notify` + watchdog) فقط **بعد از استقرار کد فاز ۱۵** معنا دارد. ترتیب را جابه‌جا نکنید.
+
+### ۹.۱ نصب تازه — واحد کامل
+
+روی VPS، فایل `/etc/systemd/system/bot-ai-automatic.service`:
 
 ```ini
+[Unit]
+Description=NewsBot Telegram bot
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
 [Service]
-User=botapp            # نه root — کاربر اختصاصیِ غیرمدیر
+Type=notify
+User=botapp
+WorkingDirectory=/opt/bot-ai-automatic
+EnvironmentFile=-/opt/bot-ai-automatic/.env
+ExecStart=/opt/bot-ai-automatic/.venv/bin/python run.py
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/bot-ai-automatic
-# لاگ‌ها به ژورنال systemd بروند:
 StandardOutput=journal
 StandardError=journal
-Restart=on-failure
+Restart=always
 RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=60
+WatchdogSec=300
+NotifyAccess=main
+ExecStopPost=/bin/sh -c 'logger -t bot-ai-automatic "stop result=$SERVICE_RESULT exit=$EXIT_CODE status=$EXIT_STATUS"'
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-اعمال این‌ها بدون دسترسی VPS ممکن نیست؛ تا قبل از آن سرویس با دسترسیِ فعلی اجرا
-می‌شود (ثبت‌شده به‌عنوان انحراف در گزارش فاز ۲).
+- `User=botapp` کاربر اختصاصیِ غیرمدیر است؛ اگر روی نصب موجود کاربر دیگری دارید،
+  unit اصلی را عوض نکنید و از drop-inهای بخش ۹.۲ استفاده کنید.
+- `READY=1` را کد فاز ۱۵ در پایان `post_init` می‌فرستد؛ کد قدیمی آن را نمی‌فرستد.
+
+### ۹.۲ نصب موجود — مرحلهٔ ۱ (همین حالا، با کد فعلی)
+
+```bash
+cd /opt/bot-ai-automatic
+install -D -m 0644 deploy/systemd/10-restart-always.conf \
+  /etc/systemd/system/bot-ai-automatic.service.d/10-restart-always.conf
+systemctl daemon-reload
+systemctl enable bot-ai-automatic
+systemctl reset-failed bot-ai-automatic 2>/dev/null || true
+systemctl restart bot-ai-automatic
+systemctl show bot-ai-automatic -p Restart -p StartLimitIntervalUSec -p ActiveState -p NRestarts
+```
+
+انتظار: `Restart=always` · `StartLimitIntervalUSec=0` · `ActiveState=active`.
+`ExecStopPost` دلیل هر توقف را با تگ `bot-ai-automatic` در ژورنال ثبت می‌کند.
+دلیل حادثهٔ واقعی: `Restart=on-failure` + رسیدن به سقف start-limit باعث شد سرویس پس از
+۳۱٬۱۲۰ restart با `Failed with result 'resources'` رها شود.
+
+### ۹.۳ نصب موجود — مرحلهٔ ۲ (فقط بعد از استقرار کد فاز ۱۵)
+
+```bash
+cd /opt/bot-ai-automatic
+./deploy/deploy.sh deploy <MAIN_SHA>
+install -D -m 0644 deploy/systemd/20-watchdog.conf \
+  /etc/systemd/system/bot-ai-automatic.service.d/20-watchdog.conf
+systemctl daemon-reload
+systemctl restart bot-ai-automatic
+systemctl show bot-ai-automatic -p Type -p NotifyAccess -p WatchdogUSec -p ActiveState
+journalctl -u bot-ai-automatic -n 80 --no-pager
+```
+
+انتظار: `Type=notify` · `NotifyAccess=main` · `WatchdogUSec=5min` · `ActiveState=active` و
+در ژورنال پیام فعال‌شدن watchdog. اگر مرحلهٔ ۲ را قبل از کد فاز ۱۵ نصب کنید، سرویس در
+استارت منتظر `READY=1` می‌ماند و بالا نمی‌آید.
+
+**رول‌بک:** اگر به کد قبل از فاز ۱۵ برگشتید، `20-watchdog.conf` را حذف و
+`daemon-reload`/`restart` کنید؛ `10-restart-always.conf` می‌تواند بماند.
+
+### ۹.۴ محدودهٔ تضمین
+
+`Restart=always` خروج تمیز و خطا را پوشش می‌دهد؛ `StartLimitIntervalSec=0` از تسلیم‌شدن
+systemd جلوگیری می‌کند؛ watchdog پروسهٔ قفل‌شده/گیرکرده را با kill و restart نجات می‌دهد.
+خاموشی کل کانتینر/هاست یا OOM و disk-full پیوسته باید در پنل provider و پایش منابع جدا
+پوشش داده شود. این تغییرات در کانتینر فعلی از طریق **کنسول** اعمال می‌شود؛ Actions به
+sshd کانتینر (فقط IPv6) دسترسی ندارد.
 
 ## ۱۰. بنچمارک بار و اسکیمای v7 (فاز ۱۳ و ۱۴)
 

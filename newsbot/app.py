@@ -10,6 +10,7 @@ from telegram import BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 from newsbot import config
 from newsbot import runtime
+from newsbot import watchdog
 from newsbot.db import db, gget, gset, arun, close_db_pool, readonly_check
 from newsbot.logutils import log, log_event
 from newsbot.ratelimit import _rate_load_persisted
@@ -68,9 +69,17 @@ async def post_init(app: Application):
         extra.append(f"referral {referral_cfg()[0]:g}%")
     if config.MANDATORY_CHANNEL_ID or config.MANDATORY_CHANNEL_USERNAME: extra.append("mandatory-channel ON")
     await notify_supers(f"🚀 @{me.username} راه‌اندازی شد · 🤖 مدل‌های فعال {len(await arun(list_models, True))} · backend {config.DB_BACKEND} · CF KV {'✅' if config.CF_ENABLED else '❌'} · تیک هر {config.TICK_SECONDS}s" + (f" · {' · '.join(extra)}" if extra else ""))
+    app.bot_data["_watchdog_task"] = watchdog.start()
+    watchdog.notify_ready()
 
 
 async def post_shutdown(app: Application):
+    watchdog.notify_stopping()
+    _wd = app.bot_data.pop("_watchdog_task", None) if app is not None else None
+    if _wd is not None:
+        _wd.cancel()
+        try: await _wd
+        except BaseException: pass
     _me = asyncio.current_task()
     # ARCH-06: همه‌ی تسک‌های نام‌دارِ طولانی (ارسال، عملیات کاربر، تفکر/چرخه) تا وسط کار رها نشوند
     pend = [t for t in asyncio.all_tasks() if t is not _me and t.get_name().split(":")[0] in ("publication", "user", "thinking")]

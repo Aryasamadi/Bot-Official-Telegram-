@@ -210,12 +210,13 @@ def test_user_op_lock_serializes_same_user():
     asyncio.run(main())
     assert order.index("a:out") < order.index("b:in")   # هرگز هم‌پوشانی نداشتند
 
-def test_referral_cap_line_present_in_source():
+def test_referral_view_uses_live_config_without_hidden_stats():
     from pathlib import Path
     src = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_views_user.py").read_text(encoding="utf-8")
-    i18n = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_i18n.py").read_text(encoding="utf-8")
-    assert "ref_cap_line" in src and "referral_cfg" in src
-    assert '"ref_cap_line"' in i18n
+    assert "referral_cfg" in src and "referral_link" in src
+    assert "_referral_message" in src
+    # آمار و سقف در متن دعوت جدید نمایش داده نمی‌شوند؛ خرابی آمار نباید صفحه را بشکند.
+    assert "referral_stats" not in src
 
 
 # ── PAY-2: تطبیق اجباری مبلغ — منبع واحد، بدون بازنگری در تصمیم ──

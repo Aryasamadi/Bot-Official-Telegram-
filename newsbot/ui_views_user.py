@@ -67,7 +67,7 @@ async def view_referral(update, context):
         link = referral_link(uid)
         try:
             await context.bot.send_message(
-                uid, f"🔗 <b>{'لینک دعوت شما' if lang != 'en' else 'Your invite link'}</b>\n<code>{link}</code>",
+                uid, f"🤝 <b>{'با دعوت دوستانت، اعتبار کسب کن!' if lang != 'en' else 'Invite friends. Earn credit!'}</b>\n\n🔗 <b>{'لینک اختصاصی دعوت تو:' if lang != 'en' else 'Your personal invite link:'}</b>\n<code>{link}</code>",
                 parse_mode="HTML", disable_web_page_preview=True)
         except Exception:
             log.warning("referral fallback send failed uid=%s", uid, exc_info=True)

@@ -9,13 +9,14 @@ from newsbot.ai_models import ai_err_text
 # متن‌های سراسری دوزبانه (قابل ویرایش توسط مدیر کلان)
 # ══════════════════════════════════════════════════════════════════════════
 DEFAULT_TEXTS = {
-    "welcome": {"fa": "سلام {name}\n\nمنابع را می‌خوانم، با هوش مصنوعی بازنویسی می‌کنم و در کانال منتشر می‌کنم.",
-                "en": "Hi {name}\n\nI read your sources, rewrite them with AI and publish to your channel."},
-    "help": {"fa": "<b>راهنما</b>\n\n/create · پنل مدیریت\n/ref · دعوت دوستان\n/man · پشتیبانی\n/lang · تغییر زبان\n/about · درباره\n/cancel · لغو عملیات",
-             "en": "<b>Help</b>\n\n/create · admin panel\n/ref · invite friends\n/man · support\n/lang · language\n/about · about\n/cancel · cancel"},
-    "about": {"fa": "<b>درباره</b>\n\nمدیریت خودکار محتوای کانال تلگرام", "en": "<b>About</b>\n\nAutomated content manager for Telegram channels"},
-    "pay": {"fa": "<b>پرداخت پلن «{plan}»</b>\n\nمبلغ: <b>{price}</b>\n\nبه شماره کارت زیر واریز کنید:\n<code>0000-0000-0000-0000</code>\nبه نام: ...\n\nسپس <b>تصویر رسید</b> را همین‌جا بفرستید.",
-            "en": "<b>Payment for “{plan}”</b>\n\nAmount: <b>{price}</b>\n\nTransfer to:\n<code>0000-0000-0000-0000</code>\nName: ...\n\nThen send the <b>receipt image</b> right here."},
+    "welcome": {"fa": "سلام {name} 👋\\n\\nمنابع را وصل کن؛ بازنویسی و انتشار را به من بسپار.",
+                "en": "Hi {name} 👋\\n\\nConnect your sources. Leave the rewriting and publishing to me."},
+    "help": {"fa": "<b>راهنمای سریع</b>\\n/create · ساخت و مدیریت\\n/ref · دعوت و پاداش\\n/man · پشتیبانی\\n/lang · زبان\\n/about · درباره\\n/cancel · لغو",
+             "en": "<b>Quick guide</b>\\n/create · setup & manage\\n/ref · invites & rewards\\n/man · support\\n/lang · language\\n/about · about\\n/cancel · cancel"},
+    "about": {"fa": "<b>از منبع تا انتشار.</b>\\nهوش مصنوعی، کارهای تکراری کانالت را انجام می‌دهد.",
+              "en": "<b>From source to post.</b>\\nAI takes care of your channel’s repetitive work."},
+    "pay": {"fa": "<b>پلن «{plan}»</b>\\nمبلغ: <b>{price}</b>\\n\\nبرای دریافت اطلاعات پرداخت، /man را بزنید.\\nپس از پرداخت، تصویر رسید را همین‌جا بفرستید.",
+            "en": "<b>Plan: “{plan}”</b>\\nAmount: <b>{price}</b>\\n\\nSend /man for payment details.\\nAfter paying, send your receipt image here."},
 }
 
 # کلیدهای متن‌های قابل‌ویرایش توسط سوپرادمین (منبع یکتا: لایهٔ i18n).

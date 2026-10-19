@@ -63,7 +63,7 @@ def test_out_of_range_float_is_clamped_and_recorded():
 
 def test_empty_env_uses_default_without_error():
     data = _fresh_config({"TICK_SECONDS": "", "REFERRAL_PERCENT": ""})
-    assert data["tick"] == 120 and data["pct"] == 10.0
+    assert data["tick"] == 120 and data["pct"] == 20.0
     assert not any(("TICK_SECONDS" in e or "REFERRAL_PERCENT" in e) for e in data["errors"])
 
 

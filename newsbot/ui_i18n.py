@@ -9,13 +9,14 @@ from newsbot.ai_models import ai_err_text
 # متن‌های سراسری دوزبانه (قابل ویرایش توسط مدیر کلان)
 # ══════════════════════════════════════════════════════════════════════════
 DEFAULT_TEXTS = {
-    "welcome": {"fa": "سلام {name}\n\nمنابع را می‌خوانم، با هوش مصنوعی بازنویسی می‌کنم و در کانال منتشر می‌کنم.",
-                "en": "Hi {name}\n\nI read your sources, rewrite them with AI and publish to your channel."},
-    "help": {"fa": "<b>راهنما</b>\n\n/create · پنل مدیریت\n/ref · دعوت دوستان\n/man · پشتیبانی\n/lang · تغییر زبان\n/about · درباره\n/cancel · لغو عملیات",
-             "en": "<b>Help</b>\n\n/create · admin panel\n/ref · invite friends\n/man · support\n/lang · language\n/about · about\n/cancel · cancel"},
-    "about": {"fa": "<b>درباره</b>\n\nمدیریت خودکار محتوای کانال تلگرام", "en": "<b>About</b>\n\nAutomated content manager for Telegram channels"},
-    "pay": {"fa": "<b>پرداخت پلن «{plan}»</b>\n\nمبلغ: <b>{price}</b>\n\nبه شماره کارت زیر واریز کنید:\n<code>0000-0000-0000-0000</code>\nبه نام: ...\n\nسپس <b>تصویر رسید</b> را همین‌جا بفرستید.",
-            "en": "<b>Payment for “{plan}”</b>\n\nAmount: <b>{price}</b>\n\nTransfer to:\n<code>0000-0000-0000-0000</code>\nName: ...\n\nThen send the <b>receipt image</b> right here."},
+    "welcome": {"fa": "سلام {name} 👋\\n\\nمنابع را وصل کن؛ بازنویسی و انتشار را به من بسپار.",
+                "en": "Hi {name} 👋\\n\\nConnect your sources. Leave the rewriting and publishing to me."},
+    "help": {"fa": "<b>راهنمای سریع</b>\\n/create · ساخت و مدیریت\\n/ref · دعوت و پاداش\\n/man · پشتیبانی\\n/lang · زبان\\n/about · درباره\\n/cancel · لغو",
+             "en": "<b>Quick guide</b>\\n/create · setup & manage\\n/ref · invites & rewards\\n/man · support\\n/lang · language\\n/about · about\\n/cancel · cancel"},
+    "about": {"fa": "<b>از منبع تا انتشار.</b>\\nهوش مصنوعی، کارهای تکراری کانالت را انجام می‌دهد.",
+              "en": "<b>From source to post.</b>\\nAI takes care of your channel’s repetitive work."},
+    "pay": {"fa": "<b>پلن «{plan}»</b>\\nمبلغ: <b>{price}</b>\\n\\nبرای دریافت اطلاعات پرداخت، /man را بزنید.\\nپس از پرداخت، تصویر رسید را همین‌جا بفرستید.",
+            "en": "<b>Plan: “{plan}”</b>\\nAmount: <b>{price}</b>\\n\\nSend /man for payment details.\\nAfter paying, send your receipt image here."},
 }
 
 # کلیدهای متن‌های قابل‌ویرایش توسط سوپرادمین (منبع یکتا: لایهٔ i18n).
@@ -68,11 +69,11 @@ TXT = {
     "pay_rejected": ("❌ پرداخت تأیید نشد\n📩 پیگیری: /man", "❌ Payment not approved\n📩 Follow up: /man"),
     # ---- NEW v4: ارجاع (Referral)
     "ref_btn": ("🤝 دعوت دوستان", "🤝 Invite friends"),
-    "ref_title": ("🤝 <b>دعوت دوستان</b>", "🤝 <b>Invite friends</b>"),
-    "ref_how": ("\n\n📌 هرکسی با لینک تو ربات را استارت کند، برای همیشه به تو نسبت داده می‌شود.\n💰 با هر خرید موفقِ او، {p}٪ از مبلغ پرداختی خودکار و همان لحظه به کیف پول تو اضافه می‌شود.\n🧾 موجودی کیف پولت در خرید بعدی خودت از مبلغ کسر می‌شود.", "\n\n📌 Anyone who starts the bot via your link is permanently linked to you.\n💰 For each successful purchase they make, {p}% of the amount is added to your wallet automatically and instantly.\n🧾 Your wallet balance is deducted from your own next purchase."),
+    "ref_title": ("🤝 <b>با دعوت دوستانت، اعتبار کسب کن!</b> 🎁", "🤝 <b>Invite friends. Earn credit!</b> 🎁"),
+    "ref_how": ("\n\n💎 دوستاتو با لینک اختصاصی‌ات دعوت کن.\n💰 از هر خرید موفقی که انجام بدن، <b>{p}٪</b> از مبلغ پرداختی به اعتبار کیف پولت اضافه می‌شه.\n🛍️ از این اعتبار برای خریدهای خودت استفاده کن و در هزینه‌هات صرفه‌جویی کن!\n🚀 لینک رو بفرست و اعتبار بیشتری جمع کن.", "\n\n💎 Invite friends using your personal link.\n💰 Earn <b>{p}%</b> of the amount from every successful purchase they make.\n🛍️ Use your wallet credit for your own purchases and save money!\n🚀 Share your link and build up more credit."),
     "ref_line": ("\n👥 دعوت‌شده: {n} · 💰 اعتبار کسب‌شده: {c}", "\n👥 Invited: {n} · 💰 Earned credit: {c}"),
     "ref_cap_line": ("\n🎯 سقف کل پاداش شما: {cap}", "\n🎯 Your total reward cap: {cap}"),
-    "ref_link": ("\n🔗 لینک دعوت شما:\n<code>{link}</code>", "\n🔗 Your invite link:\n<code>{link}</code>"),
+    "ref_link": ("\n\n🔗 <b>لینک اختصاصی دعوت تو:</b>\n<code>{link}</code>", "\n\n🔗 <b>Your personal invite link:</b>\n<code>{link}</code>"),
     "ref_off": ("🤝 سیستم دعوت فعال نیست", "🤝 Referral system is disabled"),
     "ref_reward": ("🎉 پاداش دعوت: {amount} به کیف پول شما اضافه شد", "🎉 Referral reward: {amount} added to your wallet"),
     "ref_joined": ("👤 یک نفر با لینک شما عضو شد", "👤 Someone joined via your link"),

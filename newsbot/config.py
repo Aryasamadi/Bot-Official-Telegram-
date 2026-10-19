@@ -141,7 +141,7 @@ CF_ENABLED = bool(CF_ACCOUNT_ID and CF_KV_NAMESPACE_ID and CF_API_TOKEN)
 # ── ارجاع (Referral) ──
 REFERRAL_ENABLED = os.getenv("REFERRAL_ENABLED", "1").strip() == "1"
 # CFG-03 (فاز ۱۲): اعتبارسنجی زنده — مقدار خارج از بازه همین‌جا کلمپ و در CONFIG_ERRORS ثبت می‌شود
-REFERRAL_PERCENT = _env_float("REFERRAL_PERCENT", 10.0, 0.0, 50.0)
+REFERRAL_PERCENT = _env_float("REFERRAL_PERCENT", 20.0, 0.0, 50.0)
 # REF-3/تصمیم ۸ (فاز ۱۲): سقف «تعداد» منسوخ شد — پاداش با هر خرید تعلق می‌گیرد و سقف اختیاریِ
 # مبلغی از پنل سوپرادمین (تنظیم ref_cap_amount؛ ۰ = نامحدود) اعمال می‌شود. این متغیر فقط برای
 # سازگاری importهای قدیمی نگه داشته شده و هیچ مسیری از مقدار آن استفاده نمی‌کند.

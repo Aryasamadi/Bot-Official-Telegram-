@@ -55,12 +55,17 @@ async def view_referral(update, context):
     try:
         invited, earned = referral_stats(uid)
         pct, cap = referral_cfg()   # REF-3/تصمیم ۸ (فاز ۱۲): مقدار زندهٔ پنل (درصد + سقف مبلغی)
-        text = (tr(lang, "ref_title")
-                + tr(lang, "ref_how", p=f"{pct:g}")
-                + tr(lang, "ref_line", n=invited, c=fmt_amt(earned, lang)))
-        if cap > 0:
-            text += tr(lang, "ref_cap_line", cap=fmt_amt(cap, lang))
-        text += tr(lang, "ref_link", link=referral_link(uid))
+        referral_link_url = referral_link(uid)
+        text = f"""🤝 <b>با دعوت دوستانت، اعتبار کسب کن!</b> 🎁
+
+دوستاتو به ربات دعوت کن و از <b>تمام خریدهای واجد شرایط اون‌ها، {pct:g}% اعتبار پاداش بگیر!</b> 💎
+
+💰 هر خرید دوستات می‌تونه اعتبار بیشتری برات بسازه؛ اعتباری که می‌تونی برای خریدهای خودت در ربات استفاده کنی و در هزینه‌هات صرفه‌جویی کنی.
+
+🔗 <b>لینک اختصاصی دعوت تو:</b>
+{referral_link_url}
+
+🚀 همین حالا لینکت رو برای دوستات بفرست؛ هرچه دوستان بیشتری دعوت کنی و خرید کنند، فرصت بیشتری برای جمع‌آوری اعتبار خواهی داشت!"""
         await render(update, context, text, [[B(tr(lang, "back"), "home")]])
     except Exception as e:
         log.warning("referral render failed uid=%s: %s", uid, e, exc_info=True)

@@ -70,10 +70,10 @@ TXT = {
     # ---- NEW v4: ارجاع (Referral)
     "ref_btn": ("🤝 دعوت دوستان", "🤝 Invite friends"),
     "ref_title": ("🤝 <b>با دعوت دوستانت، اعتبار کسب کن!</b> 🎁", "🤝 <b>Invite friends. Earn credit!</b> 🎁"),
-    "ref_how": ("\\n\\n💎 دوستاتو با لینک اختصاصی‌ات دعوت کن.\\n💰 از هر خرید موفقی که انجام بدن، <b>{p}٪</b> از مبلغ پرداختی به اعتبار کیف پولت اضافه می‌شه.\\n🛍️ از این اعتبار برای خریدهای خودت استفاده کن و در هزینه‌هات صرفه‌جویی کن!\\n🚀 لینک رو بفرست و اعتبار بیشتری جمع کن.", "\\n\\n💎 Invite friends using your personal link.\\n💰 Earn <b>{p}%</b> of the amount from every successful purchase they make.\\n🛍️ Use your wallet credit for your own purchases and save money!\\n🚀 Share your link and build up more credit."),
+    "ref_how": ("\n\n💎 دوستاتو با لینک اختصاصی‌ات دعوت کن.\n💰 از هر خرید موفقی که انجام بدن، <b>{p}٪</b> از مبلغ پرداختی به اعتبار کیف پولت اضافه می‌شه.\n🛍️ از این اعتبار برای خریدهای خودت استفاده کن و در هزینه‌هات صرفه‌جویی کن!\n🚀 لینک رو بفرست و اعتبار بیشتری جمع کن.", "\n\n💎 Invite friends using your personal link.\n💰 Earn <b>{p}%</b> of the amount from every successful purchase they make.\n🛍️ Use your wallet credit for your own purchases and save money!\n🚀 Share your link and build up more credit."),
     "ref_line": ("\n👥 دعوت‌شده: {n} · 💰 اعتبار کسب‌شده: {c}", "\n👥 Invited: {n} · 💰 Earned credit: {c}"),
     "ref_cap_line": ("\n🎯 سقف کل پاداش شما: {cap}", "\n🎯 Your total reward cap: {cap}"),
-    "ref_link": ("\\n\\n🔗 <b>لینک اختصاصی دعوت تو:</b>\\n<code>{link}</code>", "\\n\\n🔗 <b>Your personal invite link:</b>\\n<code>{link}</code>"),
+    "ref_link": ("\n\n🔗 <b>لینک اختصاصی دعوت تو:</b>\n<code>{link}</code>", "\n\n🔗 <b>Your personal invite link:</b>\n<code>{link}</code>"),
     "ref_off": ("🤝 سیستم دعوت فعال نیست", "🤝 Referral system is disabled"),
     "ref_reward": ("🎉 پاداش دعوت: {amount} به کیف پول شما اضافه شد", "🎉 Referral reward: {amount} added to your wallet"),
     "ref_joined": ("👤 یک نفر با لینک شما عضو شد", "👤 Someone joined via your link"),

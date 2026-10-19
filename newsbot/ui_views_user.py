@@ -13,7 +13,7 @@ from newsbot.core_channels import relocalize_all, mandatory_configured, mandator
 from newsbot.core_plans import get_plan, plan_txt, list_plans, assign_plan, upgrade_quote, plan_num, fmt_amt
 from newsbot.core_discounts import disc_valid, discount_price
 from newsbot.core_payments import pay_pending_for
-from newsbot.core_referrals import referral_stats, referral_link, referral_cfg
+from newsbot.core_referrals import referral_link, referral_cfg
 from newsbot.ui_i18n import tr, gtext
 from newsbot.ui_widgets import B, U, esc, render, popup, pairs, L, uname
 from newsbot.ui_views_admin import view_admin_home
@@ -43,37 +43,65 @@ async def view_user_home(update, context):
             text += "\n\n" + tr(lang, "mand_user_notice")
     await render(update, context, text, kb)
 
-async def view_referral(update, context):
-    """صفحه‌ی دعوت — لینک یکتا، شمار دعوت‌شده‌ها و اعتبار کسب‌شده.
+def _referral_message(link, lang, percent):
+    """یک متن واحد برای مسیر عادی و fallback؛ درصد همیشه از تنظیمات زنده می‌آید."""
+    if lang == "en":
+        reward_line = (
+            f"Invite your friends and earn <b>{percent:g}% credit on all their eligible purchases!</b> 💎"
+            if percent is not None else
+            "Invite your friends; the reward rate follows the administrator's current settings. 💎"
+        )
+        return f"""🤝 <b>Invite friends and earn credit!</b> 🎁
 
-    هیچ خطایی نباید از اینجا بالا برود: لینک دعوت مهم‌تر از هر تزئینی است و
-    اگر رندر کامل شکست خورد، دست‌کم لینک ساده برای کاربر فرستاده می‌شود.
-    """
-    lang = L(update); uid = update.effective_user.id
-    if not config.REFERRAL_ENABLED:
-        await popup(update, context, tr(lang, "ref_off")); return await view_user_home(update, context)
-    try:
-        invited, earned = referral_stats(uid)
-        pct, cap = referral_cfg()   # REF-3/تصمیم ۸ (فاز ۱۲): مقدار زندهٔ پنل (درصد + سقف مبلغی)
-        referral_link_url = referral_link(uid)
-        text = f"""🤝 <b>با دعوت دوستانت، اعتبار کسب کن!</b> 🎁
+{reward_line}
 
-دوستاتو به ربات دعوت کن و از <b>تمام خریدهای واجد شرایط اون‌ها، {pct:g}% اعتبار پاداش بگیر!</b> 💎
+💰 Every purchase they make can add more credit for your own purchases in the bot, helping you save money.
+
+🔗 <b>Your personal invite link:</b>
+{link}
+
+🚀 Share your link now; the more friends you invite who make purchases, the more opportunities you have to earn credit!"""
+    reward_line = (
+        f"دوستاتو به ربات دعوت کن و از <b>تمام خریدهای واجد شرایط اون‌ها، {percent:g}% اعتبار پاداش بگیر!</b> 💎"
+        if percent is not None else
+        "دوستاتو به ربات دعوت کن؛ <b>میزان پاداش بر اساس درصد تنظیم‌شده در پنل مدیر</b> محاسبه می‌شود. 💎"
+    )
+    return f"""🤝 <b>با دعوت دوستانت، اعتبار کسب کن!</b> 🎁
+
+{reward_line}
 
 💰 هر خرید دوستات می‌تونه اعتبار بیشتری برات بسازه؛ اعتباری که می‌تونی برای خریدهای خودت در ربات استفاده کنی و در هزینه‌هات صرفه‌جویی کنی.
 
 🔗 <b>لینک اختصاصی دعوت تو:</b>
-{referral_link_url}
+{link}
 
 🚀 همین حالا لینکت رو برای دوستات بفرست؛ هرچه دوستان بیشتری دعوت کنی و خرید کنند، فرصت بیشتری برای جمع‌آوری اعتبار خواهی داشت!"""
+
+
+async def view_referral(update, context):
+    """صفحهٔ دعوت؛ متن کامل حتی در مسیر fallback و بدون وابستگی غیرضروری به آمار دیتابیس."""
+    lang = L(update); uid = update.effective_user.id
+    if not config.REFERRAL_ENABLED:
+        await popup(update, context, tr(lang, "ref_off")); return await view_user_home(update, context)
+
+    # آمار دعوت‌شده‌ها و اعتبار در متن جدید نمایش داده نمی‌شوند؛ خواندنشان نباید
+    # مانع نمایش لینک و متن دعوت شود.
+    link = referral_link(uid)
+    try:
+        pct, _ = referral_cfg()
+    except Exception:
+        log.warning("referral config unavailable uid=%s; displaying configured-rate notice", uid, exc_info=True)
+        pct = None
+
+    text = _referral_message(link, lang, pct)
+    try:
         await render(update, context, text, [[B(tr(lang, "back"), "home")]])
     except Exception as e:
         log.warning("referral render failed uid=%s: %s", uid, e, exc_info=True)
-        link = referral_link(uid)
         try:
+            # مسیر جایگزین باید دقیقاً همان متن کامل را بفرستد، نه نسخهٔ قدیمی کوتاه.
             await context.bot.send_message(
-                uid, f"🤝 <b>{'با دعوت دوستانت، اعتبار کسب کن!' if lang != 'en' else 'Invite friends. Earn credit!'}</b>\n\n🔗 <b>{'لینک اختصاصی دعوت تو:' if lang != 'en' else 'Your personal invite link:'}</b>\n<code>{link}</code>",
-                parse_mode="HTML", disable_web_page_preview=True)
+                uid, text, parse_mode="HTML", disable_web_page_preview=True)
         except Exception:
             log.warning("referral fallback send failed uid=%s", uid, exc_info=True)
 

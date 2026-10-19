@@ -125,35 +125,12 @@ def test_render_does_not_crash_on_bad_request_not_modified():
 # ══════════════════════════════════════════════════════════════════════════
 # /ref باید همیشه لینک دعوت را برساند
 # ══════════════════════════════════════════════════════════════════════════
-def test_ref_still_delivers_link_when_render_fails():
-    """اگر رندر کامل شکست خورد، دست‌کم لینک ساده برود؛ کاربر هیچ نکند."""
-    from newsbot.ui_views_user import view_referral
+def test_ref_displays_full_copy_and_live_admin_percent():
+    """متن نهایی باید کامل باشد و درصد را از تنظیمات جاری بگیرد."""
+    import newsbot.ui_views_user as V
     from newsbot.core_users import ensure_user
     uid = 7800
     ensure_user(uid, "u", "U")
-
-    bot = _Bot(html_error=True)
-    ctx = _mkctx(bot)
-
-    class _Uu(_U):
-        id = uid
-    class _Cu(_C):
-        id = uid
-    up = _Upd(); up.effective_user = _Uu(); up.effective_chat = _Cu()
-
-    asyncio.run(view_referral(up, ctx))
-    assert bot.sent, "باید پیامی برود"
-    assert any("ref_" in s or "ت.me" in s for s in bot.sent), \
-        f"لینک دعوت باید در پیام باشد: {bot.sent}"
-
-
-def test_ref_does_not_raise_on_db_error():
-    """خطای دیتابیس در آمار نباید کل دستور را بشکند."""
-    from newsbot.ui_views_user import view_referral
-    from newsbot.core_users import ensure_user
-    uid = 7801
-    ensure_user(uid, "u", "U")
-
     bot = _Bot()
     ctx = _mkctx(bot)
 
@@ -163,15 +140,83 @@ def test_ref_does_not_raise_on_db_error():
         id = uid
     up = _Upd(); up.effective_user = _Uu(); up.effective_chat = _Cu()
 
-    # referral_stats را میشکنیم تا مسیر fallback اجرا شود
-    import newsbot.ui_views_user as V
-    orig = V.referral_stats
-    V.referral_stats = lambda u: (_ for _ in ()).throw(RuntimeError("db down"))
+    old_cfg = V.referral_cfg
+    V.referral_cfg = lambda: (17.5, 0)
     try:
-        asyncio.run(view_referral(up, ctx))
+        asyncio.run(V.view_referral(up, ctx))
     finally:
-        V.referral_stats = orig
-    assert bot.sent, "حتی با خطای دیتابیس باید لینک برود"
+        V.referral_cfg = old_cfg
+
+    assert bot.sent, "متن دعوت باید ارسال شود"
+    sent = "\n".join(bot.sent)
+    assert "با دعوت دوستانت، اعتبار کسب کن!" in sent
+    assert "تمام خریدهای واجد شرایط اون‌ها، 17.5% اعتبار پاداش بگیر!" in sent
+    assert "هر خرید دوستات می‌تونه اعتبار بیشتری برات بسازه" in sent
+    assert "لینک اختصاصی دعوت تو:" in sent
+    assert "ref_7800" in sent
+    assert "فرصت بیشتری برای جمع‌آوری اعتبار خواهی داشت" in sent
+
+
+def test_ref_fallback_keeps_the_full_message_when_render_raises():
+    """در صورت شکست render، fallback هم باید متن کامل و درصد پویا را حفظ کند."""
+    import newsbot.ui_views_user as V
+    from newsbot.core_users import ensure_user
+    uid = 7801
+    ensure_user(uid, "u", "U")
+    bot = _Bot()
+    ctx = _mkctx(bot)
+
+    class _Uu(_U):
+        id = uid
+    class _Cu(_C):
+        id = uid
+    up = _Upd(); up.effective_user = _Uu(); up.effective_chat = _Cu()
+
+    old_cfg, old_render = V.referral_cfg, V.render
+    V.referral_cfg = lambda: (12.5, 0)
+    async def _raise_render(*args, **kwargs):
+        raise RuntimeError("simulated render failure")
+    V.render = _raise_render
+    try:
+        asyncio.run(V.view_referral(up, ctx))
+    finally:
+        V.referral_cfg, V.render = old_cfg, old_render
+
+    assert bot.sent, "fallback باید پیام بفرستد"
+    sent = "\n".join(bot.sent)
+    assert "با دعوت دوستانت، اعتبار کسب کن!" in sent
+    assert "تمام خریدهای واجد شرایط اون‌ها، 12.5% اعتبار پاداش بگیر!" in sent
+    assert "لینک اختصاصی دعوت تو:" in sent and "ref_7801" in sent
+    assert "فرصت بیشتری برای جمع‌آوری اعتبار خواهی داشت" in sent
+
+
+def test_ref_cfg_failure_still_delivers_link_and_full_copy():
+    """خرابی موقت تنظیمات درصد نباید لینک دعوت را پنهان کند یا درصد جعلی بسازد."""
+    import newsbot.ui_views_user as V
+    from newsbot.core_users import ensure_user
+    uid = 7802
+    ensure_user(uid, "u", "U")
+    bot = _Bot()
+    ctx = _mkctx(bot)
+
+    class _Uu(_U):
+        id = uid
+    class _Cu(_C):
+        id = uid
+    up = _Upd(); up.effective_user = _Uu(); up.effective_chat = _Cu()
+
+    old_cfg = V.referral_cfg
+    V.referral_cfg = lambda: (_ for _ in ()).throw(RuntimeError("settings temporarily unavailable"))
+    try:
+        asyncio.run(V.view_referral(up, ctx))
+    finally:
+        V.referral_cfg = old_cfg
+
+    assert bot.sent, "حتی با خطای تنظیمات باید پیام برود"
+    sent = "\n".join(bot.sent)
+    assert "با دعوت دوستانت، اعتبار کسب کن!" in sent
+    assert "درصد تنظیم‌شده در پنل مدیر" in sent
+    assert "لینک اختصاصی دعوت تو:" in sent and "ref_7802" in sent
 
 
 # ══════════════════════════════════════════════════════════════════════════

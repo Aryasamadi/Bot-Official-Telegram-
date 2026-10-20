@@ -40,28 +40,29 @@ recommendation, not an action.
 - **Audit position:** **KEEP.** The currency-mixing defect is therefore confined to the wallet (FIN-001), which
   makes the fix tractable.
 
-### D-05 — Proposed (audit recommendation, needs owner approval): the wallet must carry a currency
-- **Proposal:** add a currency discriminator to `users.credit` (and to `credit_log`/`referrals.credit_amount`),
-  or maintain per-currency balances; only credit whose unit matches the tariff unit may be spent.
+### D-05 — **DECIDED 2026-10-20 by the owner: option (c)** — the wallet must carry a currency
+- **Owner decision:** *per-currency balances, no conversion*. Existing balances are frozen in a `legacy`
+  bucket and are not auto-converted.
+- **Proposal:** a currency-tagged wallet (`wallet(user_id, cur, amount)`), a tariff-currency companion to
+  `plan_num()`, a `cur` column on `credit_log` and on `referrals`, and a per-currency cap.
 - **Alternatives considered and rejected:**
   - *Convert at an FX rate* — rejected: the repository has no FX table, no rate source and no rate timestamp;
-    inventing one would introduce a second source of truth and a daily-rate dependency.
+    inventing one would introduce a second source of truth and a daily-rate dependency. The owner chose (c).
   - *Restrict referrals to same-language pairs* — rejected as a product decision, not a technical one; it
-    would silently disable the referral programme for a legitimate mixed-language audience.
-  - *Store the reward in the referrer's unit at credit time* — **the preferred interim fix**: it requires only
-    a conversion at the moment of crediting, which can be an explicit, visible, rate-free 1:1 declaration of
-    "the reward is denominated in the referrer's tariff unit". The owner must decide the rate policy; this
-    audit will not invent one.
+    would silently disable the referral programme for a legitimate mixed-language audience. The owner chose (c).
+  - *Single `credit_cur` column on `users`* — **not** equivalent to (c): one column allows only one currency
+    per user at a time, which is not "per-currency balances". A separate `wallet` table is therefore the
+    implementation of the decision.
 - **Consequence:** a `SCHEMA_VERSION` bump, an additive migration, and a **manual decision on the existing
-  balances**, whose currency is currently unknown. Freezing (not converting) existing balances is the safe
-  default.
-- **Status:** **OPEN — owner decision required before PH-01.**
+  balances**, whose currency is currently unknown — handled by freezing them under `cur='legacy'`.
+- **Status:** **DECIDED (2026-10-20)** — implemented in PH-01; see §2b.1 for the concrete design.
 
-### D-06 — Proposed (audit recommendation, needs owner approval): re-derive the quote at approval, freeze only the cash price
-- **Proposal:** split the frozen quote into two contracts — the **cash price** is frozen at request time (so
-  the customer is charged what they were quoted), while the **wallet share** is re-derived at approval from
-  the live balance. If the derived amount differs from `final_price`, the approval is refused and the
-  transaction is re-quoted.
+### D-06 — **DECIDED 2026-10-20 by the owner: option (a)** — re-derive the wallet share, refuse on a material difference
+- **Owner decision:** *refuse the approval and re-quote, keeping the displayed cash amount*.
+- **Proposal:** split the frozen quote into two contracts — the **cash price** is frozen at request time (the
+  customer is charged what they were shown) and the **wallet share** is re-derived at approval from the live
+  balance. If the resulting cash differs from the frozen cash by more than a material threshold, the approval
+  is **refused** and the transaction is re-quoted.
 - **Why:** FIN-002 (frozen wallet share against a changed wallet) and FIN-003 (two pending requests) both
   stem from freezing too much.
 - **Alternative considered and rejected:** *re-quote everything* — rejected because the customer must be
@@ -69,7 +70,7 @@ recommendation, not an action.
 - **Consequence:** the existing test `tests/test_payment_atomicity.py::test_approve_uses_persisted_final_price_not_requote`
   (which pins the current contract) must be updated **deliberately**, and the "frozen" wording in the
   documentation must change.
-- **Status:** **OPEN — owner decision required before PH-01.**
+- **Status:** **DECIDED (2026-10-20)** — implemented in PH-01; see §2b.2 for the concrete design.
 
 ### D-07 — `run.py --check` is read-only, and the pre-restart deploy gate depends on it
 - **Where:** `newsbot/app.py:126-139`, `newsbot/db.py:463-506`.
@@ -127,20 +128,99 @@ recommendation, not an action.
 
 ---
 
-## 2. Owner decisions required before PH-01 can start
+## 2. Owner decisions — **ANSWERED 2026-10-20**
 
-| # | Question | Why it blocks | Default if the owner does not answer |
-|---|---|---|---|
-| **Q-1** | How should a reward earned in one currency be denominated in the referrer's wallet? (a) explicit conversion at a stated rate; (b) restrict the reward to same-language pairs; (c) per-currency balances with no conversion | D-05 | (c) per-currency balances, existing balances **frozen** in a "legacy / unknown" bucket — the only option that cannot lose money |
-| **Q-2** | At approval, if the wallet changed since the request, should the approval be **refused** (re-quote) or **proceed with the re-derived amount**? | D-06 | Refuse and re-quote — it never charges a number the customer was not shown |
-| **Q-3** | Should the 20 % referral reward remain **per purchase** (current behaviour) or become **once per referred user**? | FIN-023, the super-admin panel wording | Keep the current behaviour and fix the documentation (no code change) |
-| **Q-4** | Is the seeded paid plan's free-text price ("توافقی / Contact us") intentional, or should a numeric tariff with a currency unit be mandatory? | UI-017 | Keep the free text but require a unit when a numeric tariff is set; do not change the seeded offer without an explicit instruction |
-| **Q-5** | Is `ALLOW_PRIVATE_MODEL_HOSTS` used in this installation (local Ollama / LM Studio)? | SEC-007, the allowlist migration | Assume it may be used; keep an `=all` escape hatch and document it |
-| **Q-6** | Should the deployment identity be renamed to `newsbot.service` / `/opt/bot-official-telegram`, or should the existing `bot-ai-automatic` identity be kept and the *intent* corrected? | OPS-001 | **Read the host first (PH-00)**, then rename only if the host confirms the intended identity; support both via `SERVICE=` during the transition |
+All six questions were put to the owner on 2026-10-20 and answered. **PH-01 may now be scoped** (its design
+consequences are spelled out in §2c). The decisions are now binding, not defaults.
+
+| # | Question | **Owner decision (2026-10-20)** | Phase it shapes | Consequence |
+|---|---|---|---|---|
+| **Q-1** | How should a reward earned in one currency be denominated in the referrer's wallet? | **(c) — per-currency balances, no conversion** | PH-01 | `users.credit` is replaced by a **currency-tagged wallet**; a reward is credited in the currency actually paid and can only be spent against a tariff of that same currency. Existing balances are **frozen** in a `legacy` bucket, never converted. |
+| **Q-2** | At approval, if the wallet changed since the request, refuse (re-quote) or proceed with the re-derived amount? | **(a) — refuse, keeping the displayed cash amount; stop the approval on a material difference** | PH-01 | The **cash price stays frozen** (the customer is charged the number they were shown); only the **wallet share** is re-derived at approval. If the resulting cash differs materially, the approval is **refused** and the transaction is re-quoted. |
+| **Q-3** | Should the 20 % referral reward stay per-purchase or become once per referred user? | **(a) — keep the current per-purchase behaviour** | PH-01 | **No behavioural change.** The reward stays per purchase; the fixes are documentation and correctness of the cap (atomic + per-currency). |
+| **Q-4** | Is the seeded paid plan's free-text price ("توافقی / Contact us") intentional? | **(c) — keep the free text, but mark such plans as not online-purchasable and give a clear message** | PH-01 | A plan with no numeric tariff for the user's language is **not purchasable online**; the plan page states the price is negotiable and points to support, and the receipt prompt can never appear without a numeric amount. |
+| **Q-5** | Is `ALLOW_PRIVATE_MODEL_HOSTS` used in this installation? | **(c) — convert it to an allowlist, empty by default, with a documented `=all` escape hatch** | PH-02 | The boolean switch becomes a `host:port` allowlist. Empty default ⇒ private hosts are blocked for everyone; `=all` remains available for local Ollama/LM Studio and is documented as a deliberate risk acceptance. |
+| **Q-6** | Rename the deployment identity to `newsbot.service` / `/opt/bot-official-telegram`, or keep `bot-ai-automatic`? | **(c) — read the host first, then decide** | PH-04 | The rename is **blocked on the PH-00 production read** (still not executable from this environment). If the rename is later approved, the old unit name must be kept as an alias for one release so the rollback path stays intact. |
+
+> **Note on Q-3 and Q-4:** both were answered as "keep the current product promise, fix the implementation and
+> the wording". Neither authorises a change to what a customer was promised. PH-01 therefore **must not**
+> alter the referral rate, the per-purchase rule, or the existence of negotiable plans.
 
 ---
 
-## 2b. Decisions taken during the PH-00 verification pass (2026-10-20)
+## 2b. Design consequences for PH-01 (derived from the owner's decisions)
+
+The decisions above turn PH-01 from a "patch the arithmetic" phase into a **schema + money-path** phase.
+Concretely, PH-01 will:
+
+### 2b.1 The wallet becomes currency-tagged (from Q-1 = c)
+
+- **New table** `wallet(user_id INTEGER, cur TEXT, amount REAL, PRIMARY KEY(user_id, cur))`.
+  A separate table (rather than a `credit_cur` column on `users`) is required because option (c) is
+  *per-currency balances*: with one column a user could hold only one currency at a time, which is not what
+  was decided.
+- **New tariff currency** derived from the same rule that already selects the tariff
+  (`newsbot/core_plans.py:151-159`): `price_num_fa` ⇒ `Toman`, `price_num` ⇒ `USD`. `plan_num()` gains a
+  sibling that returns **both** the amount and its currency, so no call site can pick the amount without the
+  unit.
+- **`credit_log` gains `cur`**; the referral trigger (`newsbot/db.py:82-94`) must credit the wallet row of
+  the *matching* currency and write the receipt with the same currency.
+- **`referrals.credit_amount` gains `credit_cur`**, so the cap (`ref_cap_amount`) is compared per currency and
+  can no longer mix Toman with USD (FIN-010).
+- **`users.credit` is retired**: the column stays (no destructive migration) but is no longer read or written;
+  its value is moved once into `wallet` with `cur='legacy'`.
+- **The legacy bucket is frozen**: `cur='legacy'` balances are displayed in the super-admin panel, are **not**
+  spendable against any tariff, and are not auto-converted. Moving them into a real currency is a **separate,
+  explicitly-authorised one-off script** with a dry-run and a before/after report — never part of the code
+  change.
+- **Accepted product consequence (must be shown in the UI):** because there is no conversion, a referral
+  reward is spendable **only on plans priced in the same currency as the payment that produced it**. The
+  referral page and the wallet view must state the currency of the balance and what it can be spent on.
+  This is the direct, intended consequence of choosing (c) over (a).
+
+### 2b.2 The approval re-derives the wallet share and can refuse (from Q-2 = a)
+
+- Inside the approval transaction: read the **live** wallet for the tariff's currency, recompute the wallet
+  share and the cash payable, and **keep the frozen cash price** as the amount the customer was shown.
+- A **material difference** stops the approval. The threshold is a new configuration knob
+  (e.g. `PAY_QUOTE_TOLERANCE`, absolute + percentage) so the rule is explicit and tunable rather than
+  hard-coded.
+- A distinct exception (e.g. `PayQuoteStale`) plus a **re-quote path** in the customer flow and in the super
+  panel: the admin sees "the wallet changed — re-quote", the customer is told the receipt is no longer
+  payable as quoted and can re-quote without re-sending anything.
+- This also closes **FIN-004**: the discount is applied to the **gross** tariff and the wallet share is
+  derived from the discounted amount, so `payable + used_balance == gross x (1 - pct/100)` and the number on
+  the plan page equals the number charged.
+
+### 2b.3 Scope additions implied by the decisions
+
+| Added to PH-01 | Why |
+|---|---|
+| `FIN-010` (atomic, per-currency referral cap) | required by Q-1 (c) and Q-3 (a): the cap must be enforced per currency and atomically |
+| `FIN-023` (the dead `REFERRAL_MAX_PER_USER` knob) | required by Q-3 (a): the documented knob must be removed so the operator is not misled about the cap |
+| `UI-017` (negotiable-price plans) | required by Q-4 (c): moved here from PH-05 because it is inseparable from the purchase-amount rules |
+| `OBS-014` (operator view of stuck payments) | needed to operate the new re-quote path (Q-2 a) |
+| `PAY_QUOTE_TOLERANCE` (new configuration knob) | the "material difference" rule of Q-2 (a) must be explicit and documented in `.env.example` |
+
+### 2b.4 What PH-01 must **not** do (from Q-3, Q-4, Q-6)
+
+- **Must not** change the referral percentage, the per-purchase reward rule, or the meaning of the reward.
+- **Must not** remove the ability to price a plan as negotiable, and **must not** change the seeded plan offer.
+- **Must not** touch the deployment identity (Q-6 = c is blocked on the production read) — that is PH-04.
+
+### 2b.5 Consequences for the other phases
+
+- **PH-02** now has an unambiguous target for Q-5: `ALLOW_PRIVATE_MODEL_HOSTS` becomes
+  `ALLOW_PRIVATE_MODEL_HOSTS=host:port[,host:port]`, default empty, with `=all` as the documented escape hatch.
+- **PH-04** now has an unambiguous rule for Q-6: read the host, then decide; if renamed, keep the old unit
+  name as an alias for one release.
+- **PH-01's risk level rises** from *high* to *high, with an additive schema migration*. Safeguards are written
+  into the phase entry in `ROADMAP.md`: additive-only migration, idempotent, rehearsed on a **copy** of the
+  production database, with the legacy allocation kept as a separate authorised script.
+
+---
+
+## 2c. Decisions taken during the PH-00 verification pass (2026-10-20)
 
 ### D-13 — The `bot-ai-automatic` identity is **not** renamed yet
 - **Decision:** the deploy identity, the systemd unit name and the install path are left **exactly as they

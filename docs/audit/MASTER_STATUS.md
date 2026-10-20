@@ -14,9 +14,9 @@
 | **Audit workspace** | `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (clean clone of `main` @ `08bc876`; audit docs written here) |
 | **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **1 CRITICAL** financial defect (now **reproduced**), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
 | **Audit completion** | **~94 %** (all 20 audit domains inspected; a second verification pass executed the FIN-001 reproduction and re-ran the suite; production runtime verification unavailable) |
-| **Current phase** | `PH-00` (executed) → `PH-01` (awaiting authorization) |
-| **Current phase status** | `PH-00 COMPLETE — production read BLOCKED (no access), repository-side verification COMPLETE, 2 infrastructure defects FIXED` |
-| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` |
+| **Current phase** | `PH-00` (executed) → `PH-01` (scoped, **not started**) |
+| **Current phase status** | `PH-00 COMPLETE — production read BLOCKED (no access), repository-side verification COMPLETE, 2 infrastructure defects FIXED` · `PH-01 SCOPED AND READY — owner decisions recorded 2026-10-20; awaiting the go-ahead` |
+| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` (merge of PR #20, and/or the PH-01 start) |
 | **Owner approval required** | `true` |
 
 ---
@@ -213,30 +213,41 @@
    - branch `audit/ph-00-verification-and-repo-integrity`, commit **`3ebe347`**
    - **PR #20** — https://github.com/Aryasamadi/Bot-Official-Telegram-/pull/20 — **CI green**
      (`test` → success, `docker-build` → success), **not merged** (merging was not authorised).
+7. **Owner decisions recorded (2026-10-20)** — all six questions answered; **PH-01 is now scoped and ready**:
+
+| # | Decision | Effect |
+|---|---|---|
+| Q-1 | **(c)** per-currency wallet, no conversion | PH-01 becomes a **schema** change: new `wallet(user_id, cur, amount)` table; `credit_log`/`referrals` gain a currency; existing balances **frozen** under `cur='legacy'`, never converted |
+| Q-2 | **(a)** refuse on a material difference, keeping the displayed cash amount | the approval re-derives only the **wallet share**; a new `PAY_QUOTE_TOLERANCE` knob and a `PayQuoteStale` re-quote path |
+| Q-3 | **(a)** keep the reward per purchase | no behavioural change; the cap becomes per-currency and atomic, and the dead `REFERRAL_MAX_PER_USER` knob is removed |
+| Q-4 | **(c)** keep the free text, mark negotiable plans not online-purchasable | a plan with no numeric tariff cannot start a payment; the plan page says the price is negotiable (UI-017 moves from PH-05 to PH-01) |
+| Q-5 | **(c)** allowlist, empty by default, `=all` escape hatch | PH-02: `ALLOW_PRIVATE_MODEL_HOSTS` becomes a `host:port` allowlist |
+| Q-6 | **(c)** read the host first, then decide | PH-04: the rename stays **blocked** on the PH-00 production read; if approved, the old unit name is kept as an alias for one release |
+
+Details and the concrete PH-01 design: `docs/audit/DECISIONS.md` §2 and §2b.
 
 ---
 
 ## 6. Next recommended action
 
-**The recommended first remediation phase is `PH-01 — Financial correctness & money-path integrity`**
-(FIN-001 → FIN-006, FIN-012, FIN-013, FIN-024, TEST-005, TEST-006, OBS-005, OBS-007), because it carries
-the only CRITICAL finding — now **reproduced** — and every mis-stated amount is a direct customer-trust and
-revenue issue.
+**`PH-01` is now scoped and ready to start** — the six owner decisions that gated it were given on
+2026-10-20 and are recorded in `docs/audit/DECISIONS.md` §2 with their design consequences in §2b.
 
-Two prerequisites remain open:
+Two things remain before it can start:
 
-1. **`PH-00` must be re-run from a host that has the VPS key** (or the owner must paste the outputs of the
-   checklist in `ROADMAP.md` PH-00). Until then, the production state is unverified and **OPS-001's fix must
-   not be applied** — renaming the service unit without reading the host could make a working service
-   unstartable.
-2. **Six owner decisions (Q-1…Q-6)** in `DECISIONS.md` must be answered, in particular **Q-1** (how a
-   cross-currency referral reward is denominated) and **Q-2** (whether a changed wallet refuses the
-   approval or re-derives it), which determine the design of PH-01.
+1. **Merge PR #20.** The audit register (`docs/audit/`) is the persistent project memory and PH-01 updates
+   it; if the register is not in `main`, the phase updates would land on a second, competing copy. PR #20 is
+   green (`test` ✅, `docker-build` ✅), touches **no application logic**, and is `mergeable_state: clean`.
+   **Merging is waiting on your explicit instruction.**
+2. **`PH-00` must be re-run from a host that has the VPS key** (or you paste the checklist outputs), so that
+   FIN-001's real-world exposure and the live tariffs are known. This is also the only way to unblock
+   **OPS-001** (Q-6c) — the deploy identity must not be renamed blind.
 
 `PH-04` (deployment identity and health gate) must be merged **before** the first release that carries any
 PH-01…PH-03 fix.
 
-**Nothing will be changed, committed, pushed, deployed or migrated until the owner names a phase.**
+**Nothing will be changed in the application logic, committed, pushed, merged, deployed or migrated until the
+owner names the action.**
 
 ---
 

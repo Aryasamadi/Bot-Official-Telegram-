@@ -2136,7 +2136,7 @@
       "dependencies": [
         "PH-00"
       ],
-      "risk": "high",
+      "risk": "high_with_additive_schema_migration",
       "complexity": "high",
       "finding_ids": [
         "FIN-001",
@@ -2155,15 +2155,25 @@
         "FIN-015",
         "FIN-019",
         "FIN-021",
+        "FIN-023",
         "FIN-024",
+        "OBS-005",
+        "OBS-007",
+        "OBS-014",
         "TEST-005",
         "TEST-006",
-        "OBS-005",
-        "OBS-007"
+        "UI-017"
       ],
-      "status": "OPEN",
+      "status": "OPEN_SCOPED_READY",
       "owner_approval_required": true,
-      "objective": "Make every monetary operation correct, atomic, auditable and reversible."
+      "objective": "Make every monetary operation correct, atomic, auditable and reversible.",
+      "owner_decisions_applied": [
+        "Q-1",
+        "Q-2",
+        "Q-3",
+        "Q-4"
+      ],
+      "execution_note": "Redesigned 2026-10-20 after the owner's answers to Q-1..Q-6. The wallet becomes a currency-tagged table (additive, idempotent migration, legacy balances frozen under cur='legacy' and never converted). The approval contract changes: the cash price stays frozen, the wallet share is re-derived, and a material difference refuses the approval with a re-quote (new PAY_QUOTE_TOLERANCE knob). NOT STARTED - awaiting the owner's go-ahead."
     },
     {
       "id": "PH-02",
@@ -2187,7 +2197,10 @@
       ],
       "status": "OPEN",
       "owner_approval_required": true,
-      "objective": "Validate every outbound request derived from user input on every hop; close the prompt-injection fence."
+      "objective": "Validate every outbound request derived from user input on every hop; close the prompt-injection fence.",
+      "owner_decisions_applied": [
+        "Q-5"
+      ]
     },
     {
       "id": "PH-03",
@@ -2251,7 +2264,10 @@
       "status": "OPEN",
       "owner_approval_required": true,
       "objective": "Make the deployment deploy the intended project, prove health correctly and roll back completely.",
-      "blocked_on": "PH-00 production read (OPS-001 rename must not be applied blind)"
+      "blocked_on": "PH-00 production read (OPS-001 rename must not be applied blind)",
+      "owner_decisions_applied": [
+        "Q-6"
+      ]
     },
     {
       "id": "PH-05",
@@ -2526,6 +2542,90 @@
     "continue_audit": "continue the audit",
     "start_phase": "start phase PH-01",
     "read_state": "read docs/audit/MASTER_STATUS.md",
-    "re_run_ph00": "start phase PH-00 from a host that has the VPS key"
+    "re_run_ph00": "start phase PH-00 from a host that has the VPS key",
+    "merge_pr": "merge PR #20"
+  },
+  "owner_decisions": {
+    "date": "2026-10-20",
+    "recorded_in": "docs/audit/DECISIONS.md#2-owner-decisions--answered-2026-10-20",
+    "design_consequences": "docs/audit/DECISIONS.md#2b-design-consequences-for-ph-01",
+    "note": "All six questions are answered and binding. No finding changed status; no application logic was touched.",
+    "decisions": {
+      "Q-1": {
+        "question": "How should a reward earned in one currency be denominated in the referrer's wallet?",
+        "answer": "c",
+        "summary": "Per-currency wallet balances, no conversion. Existing balances frozen under cur='legacy', never auto-converted.",
+        "phase": "PH-01",
+        "design_effect": [
+          "New table wallet(user_id, cur, amount) - a single credit_cur column on users is NOT equivalent (one currency per user only).",
+          "credit_log and referrals gain a currency column; the referral cap is compared per currency.",
+          "A currency companion to plan_num() so no call site can read an amount without its unit.",
+          "users.credit is retired by not being read/written - the column stays; the migration is additive and reversible.",
+          "Existing balances are frozen under cur='legacy', are not spendable, and are moved only by a separate explicitly-authorised one-off script.",
+          "Accepted product consequence: a reward is spendable only on plans priced in the same currency as the payment that produced it; the UI must state this."
+        ]
+      },
+      "Q-2": {
+        "question": "At approval, if the wallet changed since the request, refuse (re-quote) or proceed with the re-derived amount?",
+        "answer": "a",
+        "summary": "Refuse on a material difference, keeping the displayed cash amount. Only the wallet share is re-derived.",
+        "phase": "PH-01",
+        "design_effect": [
+          "The cash price stays frozen - the customer is charged the number they were shown.",
+          "The wallet share is re-derived at approval from the live balance; the cash payable is recomputed.",
+          "A material difference raises a distinct PayQuoteStale and offers a re-quote; a trivial difference is accepted.",
+          "New configuration knob PAY_QUOTE_TOLERANCE (absolute + percentage) - the rule must be explicit and tunable.",
+          "Closes FIN-004 as a side effect: the discount applies to the gross tariff, so payable + used_balance == gross x (1 - pct/100)."
+        ]
+      },
+      "Q-3": {
+        "question": "Should the 20 % referral reward remain per purchase or become once per referred user?",
+        "answer": "a",
+        "summary": "Keep the current per-purchase behaviour. No behavioural change.",
+        "phase": "PH-01",
+        "design_effect": [
+          "The referral rate and the per-purchase rule are NOT changed.",
+          "FIN-010: the cap becomes per-currency and atomic (single conditional statement + rowcount check).",
+          "FIN-023: the dead REFERRAL_MAX_PER_USER knob and its test are removed; the super-panel wording is corrected."
+        ]
+      },
+      "Q-4": {
+        "question": "Is the seeded paid plan's free-text price ('توافقی / Contact us') intentional?",
+        "answer": "c",
+        "summary": "Keep the free text, but mark such plans as not online-purchasable and give a clear message.",
+        "phase": "PH-01",
+        "design_effect": [
+          "A plan with no numeric tariff for the user's language cannot start a payment.",
+          "The plan page states the price is negotiable and points to support.",
+          "The receipt prompt can never appear without a numeric amount.",
+          "The seeded offer itself is NOT changed. UI-017 moves from PH-05 to PH-01."
+        ]
+      },
+      "Q-5": {
+        "question": "Is ALLOW_PRIVATE_MODEL_HOSTS used in this installation?",
+        "answer": "c",
+        "summary": "Convert it to an allowlist, empty by default, with a documented '=all' escape hatch.",
+        "phase": "PH-02",
+        "design_effect": [
+          "ALLOW_PRIVATE_MODEL_HOSTS becomes a host:port allowlist (comma separated), default empty.",
+          "'=all' remains available for local Ollama / LM Studio and is documented as a deliberate risk acceptance.",
+          "SEC-007 closes with this change; the blast-radius note stands (role 'admin' is granted by any plan, so this is not an admin-only surface)."
+        ]
+      },
+      "Q-6": {
+        "question": "Rename the deployment identity to newsbot.service / /opt/bot-official-telegram, or keep bot-ai-automatic?",
+        "answer": "c",
+        "summary": "Read the host first, then decide.",
+        "phase": "PH-04",
+        "design_effect": [
+          "The rename stays blocked on the PH-00 production read - it must not be applied blind.",
+          "If the rename is later approved, the old unit name (bot-ai-automatic) is kept as an alias for one release so the rollback path stays intact."
+        ]
+      }
+    },
+    "open_questions_remaining": 0,
+    "ph01_ready": true,
+    "ph01_started": false,
+    "ph01_blocked_by": "PH-00 production read (host access) - for exposure sizing and for OPS-001"
   }
 }

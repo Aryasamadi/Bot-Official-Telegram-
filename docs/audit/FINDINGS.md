@@ -47,6 +47,7 @@
 - **Fix:** add a currency discriminator to `users.credit` / `credit_log` / `referrals.credit_amount` (or per-currency balances) and only spend credit whose unit matches the tariff unit; make the referral cap per-currency.
 - **Regression test required:** yes — referrer `lang=en`, payer `lang=fa`; the referrer then buys a `$5` plan; assert `payable > 0` and that each balance is denominated.
 - **Dependencies / risks:** schema change → `SCHEMA_VERSION` bump (currently 7, `newsbot/__init__.py:9`), `MIGRATIONS` list, D1 migrate/restore `TABLES`, and a **manual allocation decision for existing balances** whose unit is unknown.
+- **Owner decision (2026-10-20, Q-1 → option c):** **per-currency balances, no conversion.** The implementation is a new `wallet(user_id, cur, amount)` table (a single `credit_cur` column would only allow one currency per user and is therefore *not* equivalent to the decision); `credit_log` and `referrals` gain a currency; the referral cap is compared per currency. Existing balances are **frozen** under `cur='legacy'`, are not spendable, and are **not** auto-converted — their allocation is a separate, explicitly-authorised one-off script. Accepted product consequence: a reward is spendable only on plans priced in the same currency as the payment that produced it, and the UI must state this.
 - **Status:** OPEN
 
 ## FIN-002 — The approval applies a frozen quote against a changed wallet: the customer is charged cash for credit that no longer exists
@@ -57,6 +58,7 @@
 - **Fix:** inside the approval transaction, recompute the wallet share against the live balance and re-derive `payable`; abort with `PayAlreadyDecided` if the amount differs from `final_price`.
 - **Regression test required:** yes — two pending requests with a wallet; approve both; assert the wallet, `credit_log` and `plan_changes.credit_used` reconcile and that the total charged equals the total quoted.
 - **Dependencies / risks:** changes the frozen-quote contract that `tests/test_payment_atomicity.py::test_approve_uses_persisted_final_price_not_requote` deliberately pins ("PAY-2"). The two contracts (frozen cash price vs. live wallet share) must be split explicitly.
+- **Owner decision (2026-10-20, Q-2 → option a):** **refuse the approval on a material difference, keeping the displayed cash amount.** The cash price stays frozen (the customer is charged the number they were shown); only the **wallet share** is re-derived at approval. A material difference (new knob `PAY_QUOTE_TOLERANCE`, absolute + percentage) raises a distinct `PayQuoteStale` and offers a re-quote; a trivial difference is accepted silently.
 - **Status:** OPEN
 
 ## FIN-003 — Two pending requests for one user: the later approval silently overwrites the earlier paid plan
@@ -77,6 +79,7 @@
 - **Fix:** apply the discount to the gross tariff, then derive the wallet share from the discounted amount, and render the same number in the plan page, the receipt prompt and `final_price`.
 - **Regression test required:** yes — quote with wallet + discount; assert `payable + used_balance == round(gross*(1-pct/100), 2)` and that the plan-page text equals the charged amount.
 - **Dependencies / risks:** changes the meaning of `pc["used_balance"]`/`pc["payable"]`; interacts with FIN-002 (re-quote at approval) and with the referral base `final_price`.
+- **Owner decision (2026-10-20, Q-2a + Q-4c):** the discount is applied to the **gross** tariff and the wallet share is derived from the discounted amount, so `payable + used_balance == gross x (1 - pct/100)` and the number on the plan page equals the number charged. A plan with no numeric tariff is **not online-purchasable** and states that its price is negotiable.
 - **Status:** OPEN
 
 ## FIN-005 — A paying customer can claim the free plan and lose their paid entitlements
@@ -137,6 +140,7 @@
 - **Fix:** a single conditional `UPDATE ... WHERE referred_id=? AND (SELECT SUM(...)) + ? <= ?` with a rowcount check, or an explicit per-referrer lock; align `credited` semantics.
 - **Regression test required:** yes — the SQLite case exists (`tests/test_phase1_fixes.py:49-72`); add a D1-simulated concurrent case.
 - **Dependencies / risks:** depends on the D1 reopening checklist in `docs/D1_DECISION.md` and on FIN-001 (a per-currency cap needs a per-currency SUM).
+- **Owner decision (2026-10-20, Q-1c + Q-3a):** the cap becomes **per-currency** and **atomic** (a single conditional statement with a rowcount check), and the `credited` flag is aligned with its meaning. Q-3a keeps the reward **per purchase** — the cap is the only bound, so making it per-currency and atomic is the whole fix.
 - **Status:** OPEN
 
 ## FIN-011 — The D1 approval path is not atomic; `recover_stuck_payments` ignores `applied_at`
@@ -147,6 +151,7 @@
 - **Fix:** make `recover_stuck_payments` refuse rows with `applied_at IS NOT NULL`; wrap the D1 approval in one batch; refund the wallet when `exp is None`.
 - **Regression test required:** yes — monkeypatch `assign_plan` / `_apply_applied_at` to raise and assert no double apply and no double debit.
 - **Dependencies / risks:** D1 is unsupported; the cheapest mitigation is an `applied_at`-aware recovery plus a hard startup guard for `DB_BACKEND=d1`.
+- **Owner decision (2026-10-20, Q-2a):** the D1 approval path is brought under the same contract — one transaction, or an `applied_at`-aware recovery — because Q-2a makes the approval re-derive and refuse, and that logic must not exist in two divergent forms.
 - **Status:** OPEN
 
 ## FIN-012 — `price_num` / `price_num_fa` accept `inf` / `1e400`: an infinite tariff permanently corrupts a referrer's wallet
@@ -267,6 +272,7 @@
 - **Fix:** delete the knob and its test; state "reward on every purchase, capped by amount only" in the super panel.
 - **Regression test required:** no.
 - **Dependencies / risks:** none.
+- **Owner decision (2026-10-20, Q-3a):** the reward stays **per purchase at the same rate** — this is a *product* decision, not a defect. The knob and its test are removed and the super-admin panel wording is corrected so no operator believes a per-referrer **count** cap exists.
 - **Status:** OPEN
 
 ## FIN-024 — Missing regression coverage for the monetary boundary/precision cases and ledger reconciliation
@@ -351,6 +357,7 @@
 - **Fix:** replace the boolean with a `host:port` allowlist; keep the old behaviour only behind an explicit `=all` escape hatch.
 - **Regression test required:** yes — with `127.0.0.1:11434` allowed, assert `169.254.169.254` and `10.0.0.5` are rejected.
 - **Dependencies / risks:** breaks deployments relying on the blanket flag.
+- **Owner decision (2026-10-20, Q-5c):** the allowlist is **empty by default** (private hosts blocked for everyone) and `=all` remains the documented escape hatch for local Ollama / LM Studio. The blast radius note stands: role `admin` is granted automatically by any plan, so this is not an admin-only surface.
 - **Status:** OPEN
 
 ## SEC-008 — Repeated channel-claim attempts rotate the owner's transfer token and spam the owner
@@ -707,6 +714,7 @@
 - **Fix:** require a numeric tariff per language (or derive the display from `fmt_amt`) and validate the price string for a unit on save.
 - **Regression test required:** yes.
 - **Dependencies / risks:** changing the seeded plan changes the public offer — needs an owner decision.
+- **Owner decision (2026-10-20, Q-4c):** the free text and the negotiable model are **kept**; a plan with no numeric tariff for the user's language becomes **not online-purchasable** — the plan page states that the price is negotiable and points to support, and the receipt prompt can never appear without a numeric amount. The seeded offer itself is **not** changed.
 - **Status:** OPEN
 
 ## UI-024 — `/lang` destroys an in-progress form and offers no way out of the language picker
@@ -1020,6 +1028,7 @@
 - **Fix:** single-source `APP_DIR`/`SERVICE`/`UNIT` constants (e.g. `deploy/systemd/newsbot.service` + `deploy/env.example`), rename `bot-ai-automatic` -> `newsbot` / `/opt/bot-official-telegram` everywhere, and ship the base unit file.
 - **Regression test required:** yes — extend `tests/test_deploy_script.py` to assert the script defaults equal the values used in the runbook and README.
 - **Dependencies / risks:** the real host's unit name must be read first (PH-00); **the rename must not be applied before that read**, because a wrong rename would make a currently-working service unstartable. Support both via an explicit `SERVICE=` override during the transition.
+- **Owner decision (2026-10-20, Q-6c):** **read the host first, then decide.** If the rename is later approved, the old unit name (`bot-ai-automatic`) is kept as an **alias for one release** so the "restart the previous unit" rollback path stays intact.
 - **Status:** OPEN — **the fix is blocked on the PH-00 production read** (no VPS access in this environment; see §13).
 
 ## OPS-002 — The health-gate budget (10 s) contradicts `Type=notify` / `TimeoutStartSec=180`

@@ -5,6 +5,54 @@ executed and observed, the commit, the deployment status and the verification st
 
 ---
 
+## 2026-10-20 — OWNER DECISIONS (Q-1 … Q-6) — **RECORDED**
+
+**Authorisation:** owner instruction «تصمیم‌های پیشنهادی مالک: Q-1: گزینه c · Q-2: گزینه a … این تصمیم‌ها را در اسناد ممیزی ثبت کن و اثرشان را بر طراحی PH-01 مشخص کن. هنوز PH-01 را اجرا نکن.»
+**Scope:** documentation only — **no application logic, no schema, no production contact.**
+
+### Decisions recorded
+
+| # | Decision | Phase it shapes |
+|---|---|---|
+| Q-1 | **(c)** per-currency wallet balances, no conversion; existing balances frozen under `cur='legacy'`, never converted | PH-01 |
+| Q-2 | **(a)** refuse the approval on a material difference, **keeping the displayed cash amount**; only the wallet share is re-derived | PH-01 |
+| Q-3 | **(a)** the 20 % referral reward stays **per purchase** (no behavioural change) | PH-01 |
+| Q-4 | **(c)** keep the free-text price; a plan with no numeric tariff is **not online-purchasable** and says why | PH-01 |
+| Q-5 | **(c)** `ALLOW_PRIVATE_MODEL_HOSTS` becomes a `host:port` **allowlist, empty by default**, with a documented `=all` escape hatch | PH-02 |
+| Q-6 | **(c)** read the host first, then decide on the deployment identity | PH-04 |
+
+### Effect on the PH-01 design (recorded in `DECISIONS.md` §2b and `ROADMAP.md` PH-01)
+
+- **PH-01 is now a schema + money-path phase, not an arithmetic patch.** New `wallet(user_id, cur, amount)`
+  table; `credit_log` and `referrals` gain a currency; a currency companion to `plan_num()`; the referral cap
+  becomes per-currency and atomic; `users.credit` is retired by *not reading it* (the column stays — the
+  migration is additive and reversible).
+- **The approval contract changes**: the cash price stays frozen, the wallet share is re-derived, and a
+  material difference raises `PayQuoteStale` and offers a re-quote (new knob `PAY_QUOTE_TOLERANCE`).
+- **Scope additions**: FIN-010, FIN-023, UI-017 (moved from PH-05), OBS-014, and the new configuration knob.
+- **Phase risk rises** from *high* to *high, with an additive schema migration*; the safeguards (additive
+  only, idempotent, rehearsed on a **copy** of the production database, legacy allocation as a separate
+  authorised script) are written into the phase entry.
+- **Explicit non-goals** (from Q-3, Q-4, Q-6): PH-01 must not change the referral rate, the per-purchase
+  rule, or the existence of negotiable plans, and must not touch the deployment identity.
+
+### Files changed
+`docs/audit/DECISIONS.md` · `docs/audit/ROADMAP.md` · `docs/audit/MASTER_STATUS.md` ·
+`docs/audit/FINDINGS.md` (an "Owner decision" line on FIN-001, FIN-002, FIN-004, FIN-010, FIN-011, FIN-023,
+UI-017, SEC-007, OPS-001) · `docs/audit/status.json` · `docs/audit/CHANGELOG.md`
+
+### Tests executed
+The full suite and the audit-document validator were re-run after the edits (results in the next commit's
+message). No production system was contacted.
+
+### Deployment status
+**None.** No commit was pushed to `main`; no PR was merged; nothing was deployed.
+
+### Verification status
+No finding changed status. The six questions moved from *open* to *answered*; the design of PH-01 changed.
+
+---
+
 ## 2026-10-20 — PH-00 Production verification (read-only) — **PARTIAL: production read BLOCKED, repository side COMPLETE**
 
 **Phase:** `PH-00` — Production verification (read-only) + audit-document validation + confirmed

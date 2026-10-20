@@ -37,19 +37,24 @@ safe fix. Each phase is **self-contained** and ends in a mergeable, revertable s
 
 ## PH-01 — Financial correctness and money-path integrity  ← recommended first remediation phase
 
+> **Redesigned 2026-10-20 after the owner's answers to Q-1…Q-6** (`DECISIONS.md` §2 and §2b). The decisions
+> turn this phase from an arithmetic patch into a **schema + money-path** phase. The scope, risk, tests and
+> acceptance criteria below reflect them.
+
 | Field | Value |
 |---|---|
-| **Objective** | Make every monetary operation correct, atomic, auditable and reversible: give the wallet a currency dimension, re-derive the quote at approval, make the advertised price equal the charged price, make the ledger authoritative, bound the tariff, and add a refund path. |
-| **Findings addressed** | FIN-001, FIN-002, FIN-003, FIN-004, FIN-005, FIN-006, FIN-007, FIN-008, FIN-012, FIN-013, FIN-015, FIN-016, FIN-019, FIN-024, TEST-005, OBS-005, OBS-007 |
-| **Priority** | P0 (contains the only CRITICAL finding) |
-| **Dependencies** | `PH-00` (to size the exposure of FIN-001 and to know the live tariff configuration). **Blocked by** an owner decision on the currency model (see DECISIONS.md D-03). |
-| **Risk** | **High** — this phase touches the schema (`SCHEMA_VERSION` bump), the wallet column semantics, and the payment approval contract. Existing wallet balances have an *unknown* currency and must not be silently re-denominated. Mitigations: (a) the migration must be additive and reversible; (b) balances are frozen, not converted, until the owner decides; (c) every step lands behind a regression test first (test-first). |
+| **Objective** | Give the wallet a currency (per-currency balances, no conversion — Q-1c); make the approval re-derive the wallet share and refuse on a material difference while keeping the displayed cash price (Q-2a); make the displayed price equal the charged price; make the ledger authoritative; bound the tariff; add a refund path; and keep the referral promise exactly as it is (Q-3a). |
+| **Findings addressed** | FIN-001, FIN-002, FIN-003, FIN-004, FIN-005, FIN-006, FIN-007, FIN-008, FIN-009, FIN-010, FIN-012, FIN-013, FIN-015, FIN-019, FIN-021, FIN-023, FIN-024, UI-017, TEST-005, TEST-006, OBS-005, OBS-007, OBS-014 |
+| **Owner decisions applied** | Q-1 → (c) · Q-2 → (a) · Q-3 → (a) · Q-4 → (c) · Q-5 → (c, PH-02) · Q-6 → (c, PH-04) |
+| **Priority** | P0 (contains the only CRITICAL finding, now reproduced) |
+| **Dependencies** | `PH-00` production read (to size FIN-001's exposure and to know the live tariffs) · the six owner decisions (**now given**, 2026-10-20) |
+| **Risk** | **High — and higher than originally assessed, because Q-1c is a schema change.** The wallet becomes a new currency-tagged table with an additive, idempotent migration; `SCHEMA_VERSION` is bumped; existing balances are **frozen** under `cur='legacy'` and are **not** converted, so no money can be silently re-denominated. Safeguards: (a) the migration is **additive only** — no column drop, no data rewrite, `users.credit` is retired by *not reading it*, not by deleting it; (b) the legacy allocation is a **separate, explicitly-authorised one-off script** with a dry-run and a before/after report, never part of the code change; (c) the migration is rehearsed against a **copy** of the production database before it is applied to production; (d) every step lands test-first. The approval contract changes (Q-2a) — `tests/test_payment_atomicity.py` currently *pins* the old contract and must be updated deliberately, in the same commit as the behaviour change. |
 | **Complexity** | High |
-| **Required tests** | New: wallet ledger reconciliation property test (TEST-005); cross-currency wallet test (FIN-001); frozen-vs-live quote reconciliation (FIN-002); two-pending-requests test (FIN-003); displayed-price == charged-price test (FIN-004); free-plan-claim-while-paid test (FIN-005); finite-tariff bound test (FIN-012); refund round-trip test (FIN-013); discount re-validation at approval (FIN-008). Update: `tests/test_payment_atomicity.py:84` and `:223-232` (they currently *pin* the defective behaviour) and `tests/test_phase11_limits_boundaries.py`. |
-| **Acceptance criteria** | (1) A reward earned in one currency cannot be spent against another currency's tariff — proven by a test. (2) The amount charged equals the amount displayed to the customer, in every quote path (no wallet, with wallet, with discount, with both) — proven by a test. (3) For every applied payment: `users.credit == SUM(credit_log.delta)` and `credit_log.balance_after == users.credit` for that user — proven by a property test. (4) Two simultaneous approvals of two different pending requests result in exactly one active plan and no double wallet debit. (5) A discount deactivated between request and approval is **not** honoured. (6) `inf`/`1e400`/negative/huge tariffs are rejected at input and cannot reach `users.credit`. (7) A refund restores the wallet, writes a `credit_log` receipt with `reason='refund'`, and leaves the ledger reconciled. (8) `SCHEMA_VERSION` incremented, the migration is idempotent, and it runs unchanged against a copy of the production database with a byte-identical result. (9) The full suite is green. |
-| **Rollback strategy** | The migration is additive (new columns/tables only, no column drops, no data rewrites). Rollback = revert the code and leave the new columns unused. Any wallet re-denomination, if the owner later approves one, must be performed by a **separate, explicitly-authorised script** with a pre-write backup and a row-level before/after report — never inside this phase. |
-| **Status** | `OPEN` |
-| **Owner approval required** | **YES** — plus the D-03 currency decision in `DECISIONS.md` |
+| **Required tests** | New: wallet ledger reconciliation property test (TEST-005); cross-currency wallet test — a reward in one currency is **not** spendable against another (FIN-001); legacy-balance freeze test (existing `users.credit` lands in `wallet` with `cur='legacy'` and is not spendable); frozen-cash + re-derived wallet-share test (FIN-002); material-difference refusal test and below-threshold acceptance test (FIN-002, Q-2a); two-pending-requests test (FIN-003); displayed price == charged price in all four quote paths (FIN-004, Q-4c); free-plan-claim-while-paid test (FIN-005); discount re-validation at approval (FIN-008); per-currency referral cap and atomicity test (FIN-010, Q-1c/Q-3a); finite-tariff bound test (FIN-012); refund round-trip test (FIN-013); negotiable-price plan is not online-purchasable and never produces a receipt without a numeric amount (UI-017, Q-4c); the dead `REFERRAL_MAX_PER_USER` knob is gone (FIN-023, Q-3a). Update: `tests/test_payment_atomicity.py:84` and `:223-232` (they currently *pin* the defective behaviour) and `tests/test_phase11_limits_boundaries.py`. |
+| **Acceptance criteria** | (1) A balance in one currency **cannot** be spent against a tariff of another currency — proven by a test. (2) The amount charged equals the amount displayed to the customer in every quote path (no wallet, with wallet, with discount, with both) — proven by a test. (3) For every applied payment: the wallet equals the sum of its receipts, and the receipt's stored balance equals the wallet — proven by a property test. (4) Two simultaneous approvals of two different pending requests result in exactly one active plan and no double wallet debit. (5) A discount deactivated between request and approval is **not** honoured. (6) `inf`/`1e400`/negative/huge tariffs are rejected at input and cannot reach a wallet. (7) A refund restores the wallet, writes a receipt, and leaves the ledger reconciled. (8) A material change in the wallet between request and approval **refuses** the approval and offers a re-quote; a trivial change does not. (9) A plan with no numeric tariff is not purchasable online and states why. (10) The referral reward stays **per purchase** at the same rate — unchanged. (11) `SCHEMA_VERSION` incremented, the migration is idempotent, and it runs unchanged against a copy of the production database with a byte-identical result. (12) The full suite is green. |
+| **Rollback strategy** | The migration is additive (a new table and new columns only). Rollback = revert the code and leave the new table unused; the frozen `legacy` balances are untouched by any rollback. Any movement of a legacy balance into a real currency is performed only by the **separate authorised script**, which has its own backup and a reverse operation. The approval-contract change is reverted by reverting its commit together with the test update — the two must move as one. |
+| **Status** | `OPEN` — **scoped and ready**; blocked only by the PH-00 production read |
+| **Owner approval required** | **YES** |
 
 ---
 
@@ -59,6 +64,7 @@ safe fix. Each phase is **self-contained** and ends in a mergeable, revertable s
 |---|---|
 | **Objective** | Make every outbound request derived from user input validated on every hop, and make the prompt-injection fence unbreakable. |
 | **Findings addressed** | SEC-001, SEC-002, SEC-007, SEC-010, NET-001, NET-002, NET-003, NET-004, SEC-016 |
+| **Owner decisions applied** | Q-5 → (c): `ALLOW_PRIVATE_MODEL_HOSTS` becomes a `host:port` **allowlist, empty by default**, with `=all` as a documented escape hatch (for local Ollama / LM Studio). Q-1c and Q-2a also land here: the AI-provider request path must not carry a wallet or pricing behaviour, but it must be the *same* guarded requester. |
 | **Priority** | P0 (SEC-001 is HIGH/P1) |
 | **Dependencies** | None technically. Coordinate with `PH-01` (FIN-001 mentions the AI path only tangentially). |
 | **Risk** | Medium — changing the HTTP client can break AI providers that legitimately redirect or use a self-signed/private host. Mitigations: keep `follow_redirects=False` only for the provider client (the fetch path already handles redirects manually); add an explicit allowlist rather than removing the private-host check; never change the *source/media* fetch path, which is already correct. |
@@ -95,6 +101,7 @@ safe fix. Each phase is **self-contained** and ends in a mergeable, revertable s
 |---|---|
 | **Objective** | Make the deployment actually deploy the intended project, prove health correctly, roll back completely, and document one safe restore procedure. |
 | **Findings addressed** | OPS-001, OPS-002, OPS-003, OPS-004, OPS-006, OPS-007, OPS-008, OPS-009, OPS-010, OPS-011, OPS-012, OPS-013, OPS-014, OPS-015, OPS-022, OPS-025, OPS-026, OPS-027, OPS-028, OPS-029, OPS-030, SEC-012, SEC-013, OBS-014 |
+| **Owner decisions applied** | Q-6 → (c): **read the host first, then decide.** The rename is blocked on the PH-00 production read. If the rename is later approved, the old unit name (`bot-ai-automatic`) must be kept as an **alias for one release** so the rollback path (restart the previous unit) stays intact. |
 | **Priority** | P0 (OPS-001 and OPS-002 are P0) |
 | **Dependencies** | `PH-00` (the real unit name and path must be read before renaming). **Must be merged before the first release of PH-01–PH-03.** |
 | **Risk** | **High** — this phase changes the release mechanism itself; a mistake can leave the service down. Mitigations: every change is rehearsed by `tests/test_deploy_script.py` in its sandbox before it is merged; the script keeps its `set -euo pipefail` discipline; the new health gate must be **stricter, not looser** than today's (it may only reject more, never accept more, unless a false positive is proven). The service name must be changeable by an explicit `SERVICE=` override so a mis-detection cannot brick a working host. |
@@ -252,9 +259,11 @@ PH-00 (read-only verification)  ──►  all phases (it grades them)
 
 | Finding prefix | Addressed by |
 |---|---|
-| FIN-001…015, FIN-019, FIN-021, FIN-023, FIN-024 | PH-01, PH-11 |
-| FIN-007, FIN-014, FIN-016, FIN-017, FIN-018, FIN-020, FIN-022 | PH-09, PH-01, PH-05 |
-| SEC-001, SEC-002, SEC-007, SEC-010, SEC-016 | PH-02 |
+| FIN-001…010, FIN-012, FIN-013, FIN-015, FIN-019, FIN-021, FIN-023, FIN-024 | PH-01 (owner decisions Q-1c, Q-2a, Q-3a applied) |
+| FIN-011 | PH-01 (D1 crash windows, same approval contract) |
+| FIN-014, FIN-016, FIN-017, FIN-018, FIN-020, FIN-022 | PH-09, PH-01, PH-05 |
+| UI-017 | PH-01 (moved from PH-05 — owner decision Q-4c) |
+| SEC-001, SEC-002, SEC-007, SEC-010, SEC-016 | PH-02 (owner decision Q-5c applied to SEC-007) |
 | SEC-003, SEC-004, SEC-005, SEC-006 | deferred to a later "secrets at rest" phase (not yet authorised) — see DECISIONS.md D-08 |
 | SEC-008, SEC-009, SEC-011, SEC-012, SEC-013, SEC-014, SEC-015 | PH-05, PH-04, PH-11, PH-09 |
 | DB-001…005, DB-007…011 | PH-09 |

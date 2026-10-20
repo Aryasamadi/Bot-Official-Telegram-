@@ -303,6 +303,27 @@ def test_fin013_refund_restores_wallet_and_writes_receipt():
     assert row["reason"] == "refund" and row["ref"] == f"pay:{rid}"
 
 
+def test_fin013_refund_is_idempotent_and_bounded():
+    """بازگشتِ وجه نباید دوبار انجام شود و نباید از سهمِ مصرف‌شده بیشتر برگرداند."""
+    uid = 90272
+    _mk(uid, "fa", credit=1000.0)
+    pid = _plan("ph01-refund2", price_num_fa=5000.0)
+    rid, qt = _request(uid, pid, "fa")
+    pay_approve_atomic(rid)
+    assert refund_payment(rid) is True
+    assert wallet_get(uid, CUR_TOMAN) == 1000.0
+    assert refund_payment(rid) is False, "بازگشتِ وجهِ دوم باید رد شود (idempotent)"
+    assert wallet_get(uid, CUR_TOMAN) == 1000.0, "کیف پول نباید دوباره شارژ شود"
+    # مبلغِ بیشتر از سهمِ مصرف‌شده هم نباید پرداخت شود
+    uid2 = 90273
+    _mk(uid2, "fa", credit=1000.0)
+    rid2, qt2 = _request(uid2, pid, "fa")
+    pay_approve_atomic(rid2)
+    assert wallet_get(uid2, CUR_TOMAN) == 0.0            # کلِ ۱۰۰۰ مصرف شد
+    assert refund_payment(rid2, amount=99999.0) is True
+    assert wallet_get(uid2, CUR_TOMAN) == 1000.0, "فقط سهمِ مصرف‌شده (۱۰۰۰) برمی‌گردد، نه ۹۹۹۹۹"
+
+
 def test_obs007_wallet_receipt_is_joinable_to_the_payment():
     """هر حرکتِ کیف پول به پرداختِ خودش وصل است (credit_log.ref = pay:<id>)."""
     uid = 90271

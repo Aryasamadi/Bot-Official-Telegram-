@@ -231,18 +231,30 @@ def refund_payment(rid, amount=None, reason="refund"):
 
     بدونِ این مسیر، هر خطای مالی فقط با SQL دستی جبران می‌شد و «دفترِ کیف پول» بی‌ردّ
     می‌ماند. مبلغ پیش‌فرض = سهمِ کیف پولِ مصرف‌شده در همان پرداخت.
+
+    گاردها (هر دو **داخلِ همان تراکنش** ⇒ در برابرِ کلیکِ دوباره امن است):
+      * پرداخت باید «approved» باشد.
+      * هر پرداخت فقط **یک‌بار** قابل بازگشت است (نشانِ ``refund:pay:<id>`` در settings).
+      * مبلغِ بازگشتی هرگز از سهمِ واقعیِ مصرف‌شده بیشتر نمی‌شود.
     """
     from newsbot.core_wallet import _apply as _wallet_apply, is_spendable
     r = pay_get(rid)
     if not r: return False
+    if r["status"] != "approved": return False        # فقط پرداختِ تأییدشده قابل بازگشت است
     cur = (r["cur"] if "cur" in r.keys() else "") or ""
     if not is_spendable(cur): return False
     try: pc = json.loads(r["pc"]) if ("pc" in r.keys() and r["pc"]) else {}
     except Exception: pc = {}
-    amt = round(float(amount if amount is not None else (pc.get("used_balance") or 0)), 2)
+    used = round(float(pc.get("used_balance") or 0), 2)
+    amt = round(float(amount if amount is not None else used), 2)
     if amt <= 0: return False
+    if used > 0: amt = min(amt, used)                 # بیش از سهمِ مصرف‌شده برنگردان
+    marker = f"refund:pay:{rid}"
     def _go(conn):
+        if conn.execute("SELECT 1 FROM settings WHERE key=?", (marker,)).fetchone():
+            return False                                # قبلاً بازگشت داده شده ⇒ idempotent
         _wallet_apply(conn, r["user_id"], cur, amt, reason, f"pay:{rid}")
+        conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (marker, "1"))
         conn.execute("INSERT INTO plan_changes(user_id, plan_id, from_plan, kind, credit_used, surplus, paid, rem_days, ref, ts) "
                      "VALUES(?,?,?,?,?,?,?,?,?,?)",
                      (r["user_id"], r["plan_id"], pc.get("from_plan"), reason, 0, amt, 0, 0, f"pay:{rid}", now_iso()))

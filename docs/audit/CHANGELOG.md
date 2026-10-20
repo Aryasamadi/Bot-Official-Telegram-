@@ -149,6 +149,54 @@ already asserts "zero undefined names"; the *gate* is stricter — pyflakes must
 
 ---
 
+## 2026-10-20 — PH-02 Untrusted egress closure — **IMPLEMENTED (awaiting merge)**
+
+**Branch:** `feature/ph-02-egress-closure` · **PR:** #23 · not merged, not deployed
+
+The AI-provider request path was the only outbound path with no host validation and `follow_redirects=True`.
+A `base_url` is user-supplied and role `admin` is granted automatically by any plan, so any Telegram user
+could aim the bot at an internal host. Now every destination and every redirect hop is re-validated
+(`egress_url_strict`), credential headers are dropped on a host change, `ALLOW_PRIVATE_MODEL_HOSTS` became an
+exact `host:port` allow-list (empty by default) enforced at request time, the article URL can no longer close
+the prompt's data fence, and `is_private_host` rejects multicast/reserved/malformed IP literals.
+
+**Closed:** SEC-001, SEC-002, SEC-007, SEC-010, NET-001, NET-002, NET-004. **NET-003 stays OPEN on purpose**
+(the rebinding window is narrower, not closed - closing it needs IP pinning).
+**Tests:** 39 new; 522 passed; pyflakes silent; 17/17.
+
+---
+
+## 2026-10-20 — PH-04 Deploy safety (host-independent half) — **PARTIALLY IMPLEMENTED (awaiting merge)**
+
+**Branch:** `feature/ph-04-deploy-safety` · **PR:** #24 · not merged, not deployed
+
+The health budget now matches `TimeoutStartSec` and waits for `READY=1` on `Type=notify`; the journal window
+is anchored to the restart and matches real crash markers instead of the word `traceback`; a failed
+`systemctl restart` triggers a real rollback; a rollback also restores the previous dependencies; every backup
+is verified before the deploy continues; the article-archive folder is included; a re-deploy of the current SHA
+still backs up and health-checks; the deploy script is now taken from `TARGET_SHA`; the manual path requires a
+CI-verified SHA; both migration tools support `--dry-run`.
+
+**Closed:** OPS-002/003/004/005/006/009/010/013/025/026. **Partial:** OPS-008 (detection only), OPS-030.
+**Still blocked on the production read:** OPS-001 (the service identity), OPS-021 (the base unit file) and
+OPS-019 (hash pinning).
+**Tests:** 20 new; 542 passed; 17/17.
+
+---
+
+## 2026-10-20 — PH-08 AI budget and cache correctness — **IMPLEMENTED (awaiting merge)**
+
+**Branch:** `feature/ph-08-ai-budget` · **PR:** #25 · not merged, not deployed
+
+The per-article call budget is now hard (it was reset mid-article, so it was not a cap); the daily quota is
+claimed per real provider call, so the cost is actually bounded; the personal-model test path is subject to the
+same gate; the cache TTL is enforced at read time; the cache key includes a fingerprint of the article text; and
+an over-long article is truncated to fit instead of failing silently.
+
+**Closed:** PIPE-001, PIPE-002, PIPE-003, PIPE-004, PIPE-006, PIPE-007. **Open:** PIPE-005, PIPE-008.
+**Tests:** 7 new; 549 passed; 17/17.
+
+---
 ## 2026-10-20 — PH-00 Production verification (read-only) — **PARTIAL: production read BLOCKED, repository side COMPLETE**
 
 **Phase:** `PH-00` — Production verification (read-only) + audit-document validation + confirmed

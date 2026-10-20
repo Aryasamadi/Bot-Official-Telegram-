@@ -14,9 +14,9 @@
 | **Audit workspace** | `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (clean clone of `main` @ `08bc876`; audit docs written here) |
 | **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **1 CRITICAL** financial defect (now **reproduced**), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
 | **Audit completion** | **~94 %** (all 20 audit domains inspected; a second verification pass executed the FIN-001 reproduction and re-ran the suite; production runtime verification unavailable) |
-| **Current phase** | `PH-00` (done) → `PH-01` (**implemented, awaiting merge**) → `PH-04` next |
-| **Current phase status** | `PH-00 COMPLETE` · `PH-01 IMPLEMENTED_AWAITING_MERGE` (PR #22) · PR #21 (deploy environment) open & green |
-| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` (merge PR #20, then PR #21, then PR #22) |
+| **Current phase** | `PH-00` done → `PH-01`, `PH-02`, `PH-04`, `PH-08` **all implemented, awaiting merge** |
+| **Current phase status** | PR **#20** audit register · **#21** deploy environment · **#22** PH-01 money · **#23** PH-02 egress · **#24** PH-04 deploy safety · **#25** PH-08 AI budget — all open, all CI green, **none merged** |
+| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` (merge order: #20 → #22 → #23 → #24 → #25) |
 | **Owner approval required** | `true` |
 
 ---

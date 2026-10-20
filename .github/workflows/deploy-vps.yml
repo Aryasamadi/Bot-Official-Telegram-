@@ -25,6 +25,11 @@ jobs:
        github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # دروازهٔ تأیید دستی: job روی محیط «production» اجرا می‌شود. تا وقتی در تنظیمات
+    # مخزن برای این محیط قاعدهٔ «Required reviewers» تعریف نشده باشد، GitHub محیط را
+    # خودکار می‌سازد و استقرار بدون دروازه ادامه می‌یابد. با تعریف قاعده، هر استقرار
+    # تا تأیید دستیِ اپراتور معلق می‌ماند و به VPS دسترسی پیدا نمی‌کند.
+    environment: production
     env:
       # SHA کامیتِ محرک CI (برای اجرای دستی: نوکِ ref انتخاب‌شده)
       TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}

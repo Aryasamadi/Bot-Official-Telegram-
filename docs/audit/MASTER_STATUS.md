@@ -209,6 +209,10 @@
      no VPS environment variables, so the host-side checklist (unit name, running SHA, `.env` mode, DB
      integrity, backup inventory, journal) could not be executed. This is recorded as an environment
      limitation, not as a finding.
+6. **Committed and pushed** (the owner authorised commit + push):
+   - branch `audit/ph-00-verification-and-repo-integrity`, commit **`3ebe347`**
+   - **PR #20** — https://github.com/Aryasamadi/Bot-Official-Telegram-/pull/20 — **CI green**
+     (`test` → success, `docker-build` → success), **not merged** (merging was not authorised).
 
 ---
 

@@ -94,6 +94,18 @@ behaviour was modified.
 
 **None.** Nothing was deployed, and no production system was contacted or modified.
 
+**Commit / push status**
+
+| Item | Value |
+|---|---|
+| Branch | `audit/ph-00-verification-and-repo-integrity` (from `main` @ `08bc876`) |
+| Commit | `3ebe34729c5f84b29bf16bb40cf40aabbb47714e` |
+| Pushed | yes — `origin/audit/ph-00-verification-and-repo-integrity` |
+| Pull request | **#20** — https://github.com/Aryasamadi/Bot-Official-Telegram-/pull/20 |
+| CI on the PR | **`test` → success**, **`docker-build` → success** (run 39443652653, completed 2026-10-20T14:56:08Z) |
+| Merge | **NOT merged** — merging is a separate action that was not authorised; the PR is green and ready |
+| Deployed to production | **no** |
+
 ### 13.7 Verification status
 
 | Finding | Before | After |
@@ -234,8 +246,8 @@ attempted, so no finding is `VERIFIED_FIXED`.
 
 | Phase | Status | Started | Completed | Findings closed | Commit | Deployed | Verified |
 |---|---|---|---|---|---|---|---|
-| AUDIT | COMPLETE | 2026-10-20 | 2026-10-20 | 0 (181 produced) | n/a (docs only, uncommitted) | no | yes (report presented) |
-| PH-00 | COMPLETE (production read BLOCKED — no VPS access) | 2026-10-20 | 2026-10-20 | 2 (OPS-028, DOC-001) → VERIFIED_FIXED; FIN-001 and OPS-001 upgraded to REPRODUCED | see §13.6 / the phase commit | no | yes (repository side) |
+| AUDIT | COMPLETE | 2026-10-20 | 2026-10-20 | 0 (181 produced) | `3ebe347` (docs only) | no | yes (report presented) |
+| PH-00 | COMPLETE (production read BLOCKED — no VPS access) | 2026-10-20 | 2026-10-20 | 2 (OPS-028, DOC-001) → VERIFIED_FIXED; FIN-001 and OPS-001 upgraded to REPRODUCED | `3ebe347` → PR #20, **CI green**, not merged | no | yes (repository side) |
 | PH-01 | OPEN | – | – | – | – | – | – |
 | PH-02 | OPEN | – | – | – | – | – | – |
 | PH-03 | OPEN | – | – | – | – | – | – |

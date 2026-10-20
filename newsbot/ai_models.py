@@ -15,7 +15,7 @@ from newsbot.logutils import log, log_event, bump, redact
 from newsbot.timeutils import now_utc, now_iso, parse_dt
 from newsbot.concurrency import AI_SEM, model_lock, model_busy
 from newsbot.notify import notify_super
-from newsbot.core_users import user_lang
+from newsbot.core_users import user_lang, ai_claim
 from newsbot.text_format import strip_tags, INJ_RESIDUE
 
 _ai_events = ContextVar("ai_events", default=None)
@@ -318,9 +318,13 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
     return None, None, code
 
 # ── FIX v4: بودجه‌ی per-article با ContextVar (نه global) ──
-def budget_reset():
-    """آغاز مقاله‌ی تازه: بودجه‌ی فراخوانی/زمان همین تسک صفر می‌شود."""
-    config.AI_BUDGET.set({"calls": 0, "t0": time.monotonic()})
+def budget_reset(hard=False):
+    """آغازِ یک کارِ تازه: بودجه‌ی فراخوانی/زمانِ همین تسک صفر می‌شود.
+
+    PH-08/PIPE-001: ``hard=True`` یعنی «این یک مقاله است» ⇒ در میانهٔ مقاله **هرگز**
+    پنجرهٔ بودجه ریست نمی‌شود. پیش‌تر ریستِ زمانی، شمارندهٔ فراخوانی را هم صفر می‌کرد و
+    سقفِ «N فراخوانی برای هر مقاله» عملاً بی‌اثر می‌شد."""
+    config.AI_BUDGET.set({"calls": 0, "t0": time.monotonic(), "hard": bool(hard)})
 
 def _budget():
     b = config.AI_BUDGET.get()
@@ -330,13 +334,20 @@ def _budget():
 
 async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, validate=None):
     b = _budget()
-    if (time.monotonic() - b["t0"]) > config.AI_ARTICLE_TIME_BUDGET * 2:
+    # PH-08/PIPE-001: ریستِ زمانی فقط برای فراخوانیِ خارج از مسیرِ مقاله مجاز است.
+    if not b.get("hard") and (time.monotonic() - b["t0"]) > config.AI_ARTICLE_TIME_BUDGET * 2:
         budget_reset(); b = _budget()   # تماس بیرون از مسیر مقاله: پنجرهٔ تازه
     b["calls"] += 1
     if b["calls"] > config.AI_MAX_CALLS_PER_ARTICLE:
         log.warning("AI call budget exhausted for one article (%d calls) — stopping", config.AI_MAX_CALLS_PER_ARTICLE); return None, None, "ai_budget"
     if (time.monotonic() - b["t0"]) > config.AI_ARTICLE_TIME_BUDGET:
         log.warning("AI time budget exhausted for one article (%.0fs) — stopping", time.monotonic() - b["t0"]); return None, None, "ai_timeout"
+    # PH-08/PIPE-006 · PIPE-007: هر فراخوانیِ واقعیِ مدل یک واحد از سقفِ روزانه می‌گیرد.
+    # برای یک مقالهٔ معمولی (یک فراخوانی) این دقیقاً مثل قبل است؛ فقط مقاله‌هایِ خیلی بلند
+    # که چند تکه خلاصه می‌شوند، واحدهای بیشتری می‌گیرند ⇒ هزینه واقعاً کران‌دار می‌شود.
+    # مسیرِ تستِ مدلِ شخصی هم از همین دروازه رد می‌شود (پیش‌تر هزینهٔ آن سقف نداشت).
+    if owner_id is not None and not ai_claim(owner_id):
+        log.warning("AI daily cap reached user=%s", owner_id); return None, None, "ai_limit"
     personal = [m for m in list_models(active_only=True, owner_id=owner_id) if _model_ready(m)] if owner_id else []
     if selected_id is not None:
         selected = get_model(selected_id)

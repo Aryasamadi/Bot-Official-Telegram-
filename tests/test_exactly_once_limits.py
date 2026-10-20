@@ -217,15 +217,18 @@ def test_ai_cap_super_unlimited():
 
 
 def test_generate_blocked_by_ai_cap():
-    """generate پشت سقف باید ai_limit بدهد، نه خطای مدل."""
-    import newsbot.generate as gmod
-    orig = gmod.ai_claim
-    gmod.ai_claim = lambda uid: False
+    """PH-08/PIPE-006 — سهمِ روزانه داخلِ هر فراخوانیِ مدل گرفته می‌شود ⇒ ai_chat باید ai_limit بدهد.
+
+    (پیش‌تر سقف در ابتدای ``generate`` گرفته می‌شد؛ حالا هر فراخوانیِ واقعیِ مدل یک واحد
+    می‌گیرد تا هزینهٔ واقعی کران‌دار باشد — و مسیرِ تستِ مدل هم مشمولِ سقف شد.)"""
+    import newsbot.ai_models as amod
+    orig = amod.ai_claim
+    amod.ai_claim = lambda uid: False
     try:
-        j, model, err = asyncio.run(gmod.generate({"language": "fa"}, {"url": "https://x.test/z", "title": "z"}, owner_id=900001))
-        assert j is None and err == "ai_limit"
+        out, usage, err = asyncio.run(amod.ai_chat("sys", "user", owner_id=900001))
+        assert out is None and err == "ai_limit"
     finally:
-        gmod.ai_claim = orig
+        amod.ai_claim = orig
 
 
 # ── PUB-6 (بسته-منسوخ): hard_html سقف را رعایت می‌کند ──

@@ -753,7 +753,7 @@
 - **Fix:** reset only when the call is outside an article context (explicit flag or a separate ContextVar); never reset `calls` mid-article.
 - **Regression test required:** yes — 13 chunk calls with a mocked clock; the 13th must return `ai_budget` and `b["calls"]` must never reset.
 - **Dependencies / risks:** low.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-08)** — بودجهٔ مقاله «سخت» شد (`budget_reset(hard=True)`) و ریستِ زمانیِ میانهٔ مقاله حذف شد ⇒ سقفِ «N فراخوانی برای هر مقاله» واقعاً سخت است.
 
 ## PIPE-002 — Articles longer than ~88 000 characters are structurally unprocessable
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG (config interaction)
@@ -763,7 +763,7 @@
 - **Fix:** derive the effective limit from `AI_MAX_CALLS_PER_ARTICLE-1` and truncate at extraction time, or emit a distinct `ai_too_long` code.
 - **Regression test required:** yes — a 100 000-char article must produce a defined outcome.
 - **Dependencies / risks:** changing `MAX_ARTICLE_CHARS` alters prompt cost.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-08)** — متنِ مقاله پیش از تولید به اندازه‌ای که در بودجهٔ فراخوانی جا می‌شود کوتاه می‌شود ⇒ نتیجهٔ مشخص به‌جای شکستِ خاموشِ «ai_budget».
 
 ## PIPE-003 — `AI_CACHE_TTL_DAYS` is not enforced on the read path
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG
@@ -773,7 +773,7 @@
 - **Fix:** add `AND created_at >= ?` to both cache reads.
 - **Regression test required:** yes — an old row must be a cache miss.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-08)** — TTL در **زمانِ خواندن** هم اعمال می‌شود (`created_at >= cutoff`) — دیگر به پاک‌سازیِ ساعتی وابسته نیست.
 
 ## PIPE-004 — The AI cache key omits the article content
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -783,7 +783,7 @@
 - **Fix:** add a cheap content fingerprint to the key.
 - **Regression test required:** yes — same URL/title, changed text => different key.
 - **Dependencies / risks:** invalidates the existing cache (one-off cost).
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-08)** — اثرِ انگشتِ محتوا به کلیدِ کش اضافه شد ⇒ مقاله‌ای که درجا اصلاح شده دیگر خلاصهٔ کهنه سرو نمی‌کند.
 
 ## PIPE-006 — The daily AI cap counts articles, not provider calls
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG
@@ -793,7 +793,7 @@
 - **Fix:** claim per provider call (inside `ai_chat`), or claim `1 + chunk_count`.
 - **Regression test required:** yes — a long article must consume more than one unit.
 - **Dependencies / risks:** changes the meaning of `usage.ai`; needs a semantics migration.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-08)** — سهمِ روزانهٔ AI به ازای **هر فراخوانیِ واقعیِ مدل** گرفته می‌شود (داخلِ `ai_chat`) ⇒ هزینه واقعی کران‌دار است. برای مقالهٔ معمولی (یک فراخوانی) رفتارِ مشتری تغییری نمی‌کند.
 
 ## PIPE-007 — The personal-model test path bypasses the daily AI cap entirely
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG
@@ -803,7 +803,7 @@
 - **Fix:** charge the quota in `ai_chat` for owner-scoped calls not already claimed by `generate()`.
 - **Regression test required:** yes.
 - **Dependencies / risks:** users may find the quota consumed by their own tests.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-08)** — تستِ مدلِ شخصی هم از همان دروازه‌ی سهمِ روزانه رد می‌شود (`owner_id` دارد) ⇒ دیگر هزینهٔ AI بدونِ سقف ندارد.
 
 ## PIPE-011 — There is no per-article extraction deadline
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS

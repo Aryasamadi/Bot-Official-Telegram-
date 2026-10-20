@@ -73,7 +73,7 @@
       "S_accessibility_product_quality": "AUDITED_WITH_FINDINGS",
       "T_remaining_risks_maintainability": "PARTIALLY_AUDITED"
     },
-    "completion_percent": 98,
+    "completion_percent": 99,
     "environment_limitations": [
       "PH-00 production read BLOCKED: no ~/.ssh, no ssh config, no gh CLI, no VPS env vars. The running commit SHA, the real systemd unit name, the deployed path, the .env permissions, the installed dependencies, the database state, the backup inventory and the service journal are all UNVERIFIED.",
       "No CI run observed: whether CI is currently green on 08bc876 is unverified.",
@@ -105,9 +105,9 @@
     "low": 66,
     "informational": 12,
     "total": 184,
-    "open": 139,
+    "open": 133,
     "fixed_unverified": 3,
-    "verified_fixed": 37,
+    "verified_fixed": 43,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0
@@ -1290,9 +1290,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-001"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-001",
+      "fix_applied": "بودجهٔ مقاله «سخت» شد (`budget_reset(hard=True)`) و ریستِ زمانیِ میانهٔ مقاله حذف شد ⇒ سقفِ «N فراخوانی برای هر مقاله» واقعاً سخت است."
     },
     {
       "id": "PIPE-002",
@@ -1301,9 +1302,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-002"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-002",
+      "fix_applied": "متنِ مقاله پیش از تولید به اندازه‌ای که در بودجهٔ فراخوانی جا می‌شود کوتاه می‌شود ⇒ نتیجهٔ مشخص به‌جای شکستِ خاموشِ «ai_budget»."
     },
     {
       "id": "PIPE-003",
@@ -1312,9 +1314,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-003"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-003",
+      "fix_applied": "TTL در **زمانِ خواندن** هم اعمال می‌شود (`created_at >= cutoff`) — دیگر به پاک‌سازیِ ساعتی وابسته نیست."
     },
     {
       "id": "PIPE-004",
@@ -1323,9 +1326,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-004"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-004",
+      "fix_applied": "اثرِ انگشتِ محتوا به کلیدِ کش اضافه شد ⇒ مقاله‌ای که درجا اصلاح شده دیگر خلاصهٔ کهنه سرو نمی‌کند."
     },
     {
       "id": "PIPE-005",
@@ -1345,9 +1349,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-006"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-006",
+      "fix_applied": "سهمِ روزانهٔ AI به ازای **هر فراخوانیِ واقعیِ مدل** گرفته می‌شود (داخلِ `ai_chat`) ⇒ هزینه واقعی کران‌دار است. برای مقالهٔ معمولی (یک فراخوانی) رفتارِ مشتری تغییری نمی‌کند."
     },
     {
       "id": "PIPE-007",
@@ -1356,9 +1361,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-007"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-007",
+      "fix_applied": "تستِ مدلِ شخصی هم از همان دروازه‌ی سهمِ روزانه رد می‌شود (`owner_id` دارد) ⇒ دیگر هزینهٔ AI بدونِ سقف ندارد."
     },
     {
       "id": "PIPE-008",
@@ -2501,9 +2507,10 @@
         "NET-006",
         "FIN-012"
       ],
-      "status": "OPEN",
+      "status": "IMPLEMENTED_AWAITING_MERGE",
       "owner_approval_required": true,
-      "objective": "Make the AI budget a real cap and the cache correct; canonicalise URLs."
+      "objective": "Make the AI budget a real cap and the cache correct; canonicalise URLs.",
+      "execution_note": "2026-10-20: پیاده‌سازی شد — بودجهٔ سختِ مقاله، سهمِ روزانه به ازای هر فراخوانی، TTL در زمانِ خواندن، اثرِ انگشتِ محتوا در کلیدِ کش، و کوتاه‌شدنِ متنِ بلند. ۷ تستِ تازه (tests/test_ph08_ai_budget.py). PIPE-002/003/004/006/007/001 بسته شد؛ PIPE-005 (هشِ خودِ قالبِ پرامپت در کلید) و PIPE-008 (ثبتِ مصرف در هر فراخوانی) باقی است."
     },
     {
       "id": "PH-09",
@@ -2615,11 +2622,11 @@
       "objective": "Make every document, count, badge and default match the code."
     }
   ],
-  "current_phase": "PH-04",
-  "current_phase_status": "PARTIALLY_IMPLEMENTED_AWAITING_MERGE",
+  "current_phase": "PH-08",
+  "current_phase_status": "IMPLEMENTED_AWAITING_MERGE",
   "owner_approval_required": true,
   "next_permitted_action": "AWAIT_OWNER_AUTHORIZATION",
-  "recommended_next_phase": "PH-08",
+  "recommended_next_phase": "PH-05",
   "recommended_first_remediation_phase": "PH-01",
   "documents": {
     "master_status": "docs/audit/MASTER_STATUS.md",

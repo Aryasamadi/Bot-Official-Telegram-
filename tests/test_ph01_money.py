@@ -8,14 +8,11 @@ import pytest
 
 from newsbot.db import q
 from newsbot.timeutils import now_iso, now_utc
-from newsbot.core_plans import (create_plan, get_plan, upgrade_quote, assign_plan,
-                                 apply_plan_change, free_claim)
-from newsbot.core_payments import (pay_create, pay_get, pay_approve_atomic, refund_payment,
-                                   PayQuoteStale, PayDiscountInvalid, PayError)
+from newsbot.core_plans import (create_plan, get_plan, upgrade_quote, assign_plan, apply_plan_change)
+from newsbot.core_payments import (pay_create, pay_get, pay_approve_atomic, refund_payment, PayQuoteStale, PayError)
 from newsbot.core_discounts import disc_create, disc_get
 from newsbot.core_referrals import record_referral, credit_referral_on_payment
-from newsbot.core_wallet import (wallet_get, wallet_total, wallet_rows, wallet_credit,
-                                 CUR_TOMAN, CUR_USD, CUR_LEGACY, WalletInsufficient)
+from newsbot.core_wallet import wallet_get, wallet_credit, CUR_TOMAN, CUR_USD, CUR_LEGACY
 
 
 # ── ابزار ───────────────────────────────────────────────────────────────────────────
@@ -183,7 +180,6 @@ def test_fin019_downgrade_is_rechecked_at_approval():
     """اگر تعرفه عوض شود و خرید به «نزول» تبدیل شود، تأیید باید متوقف شود."""
     uid = 90212
     _mk(uid, "fa")
-    cheap = _plan("ph01-cheap", price_num_fa=100.0)
     pricey = _plan("ph01-pricey", price_num_fa=500.0)
     assign_plan(uid, pricey)
     # quote روی پلنِ گران گرفته می‌شود تا «ارتقا» باشد

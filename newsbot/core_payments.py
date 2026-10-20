@@ -55,6 +55,12 @@ def pay_create(uid, pid, receipt_chat=None, receipt_msg=None, note="", discount=
 
 def pay_pending(): return q("SELECT r.*, u.username, u.name, p.name plan_name, p.price plan_price FROM pay_requests r JOIN users u ON u.id=r.user_id JOIN plans p ON p.id=r.plan_id WHERE r.status='pending' ORDER BY r.id")
 
+def pay_approved_recent(limit=8):
+    """پرداخت‌های اخیرِ تأییدشده — برای «بازگشتِ وجه» در پنل سوپرادمین (PH-01/FIN-013)."""
+    return q("SELECT r.*, u.username, u.name, p.name plan_name FROM pay_requests r "
+             "JOIN users u ON u.id=r.user_id JOIN plans p ON p.id=r.plan_id "
+             "WHERE r.status='approved' ORDER BY r.id DESC LIMIT ?", (int(limit or 8),))
+
 def pay_get(rid): return q("SELECT * FROM pay_requests WHERE id=?", (rid,), one=True)
 
 def pay_set(rid, status): q("UPDATE pay_requests SET status=?, decided_at=? WHERE id=?", (status, now_iso(), rid), commit=True)
@@ -92,11 +98,11 @@ def pay_approve_atomic(rid, by_uid=None):
 
     خروجی: (exp, queued, ref_reward) — ref_reward = (referrer_id, amount, cur) یا None.
     """
-    from newsbot.core_plans import _assign_state, _assign_writes, _apply_plan_change_sql, upgrade_quote, get_plan, get_user
+    from newsbot.core_plans import _assign_state, _assign_writes, _apply_plan_change_sql
     from newsbot.core_users import admin_limits_invalidate
     from newsbot.core_discounts import disc_use_tx
     from newsbot.core_referrals import _credit_in_tx, referral_cfg
-    from newsbot.core_wallet import currency_of, lang_of_currency
+    from newsbot.core_wallet import lang_of_currency
     r = pay_get(rid)
     if not r or r["status"] != "pending": raise PayAlreadyDecided(rid)
     p = q("SELECT * FROM plans WHERE id=?", (r["plan_id"],), one=True)
@@ -226,7 +232,6 @@ def refund_payment(rid, amount=None, reason="refund"):
     بدونِ این مسیر، هر خطای مالی فقط با SQL دستی جبران می‌شد و «دفترِ کیف پول» بی‌ردّ
     می‌ماند. مبلغ پیش‌فرض = سهمِ کیف پولِ مصرف‌شده در همان پرداخت.
     """
-    from newsbot.core_plans import _apply_plan_change_sql
     from newsbot.core_wallet import _apply as _wallet_apply, is_spendable
     r = pay_get(rid)
     if not r: return False

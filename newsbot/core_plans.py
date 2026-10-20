@@ -10,8 +10,8 @@ from newsbot.db import q, db, _lock, _safe_fields, _trx
 from newsbot.logutils import log_event
 from newsbot.timeutils import now_utc, now_iso, parse_dt, iso_fixed
 from newsbot.core_users import get_user, admin_limits_invalidate
-from newsbot.core_wallet import (currency_of, wallet_get, wallet_total, wallet_rows,
-                                 is_spendable, WalletError, WalletInsufficient)
+from newsbot.core_wallet import (currency_of, wallet_get, wallet_total,
+                                 is_spendable, WalletError)
 from newsbot.core_wallet import _apply as _wallet_apply
 
 

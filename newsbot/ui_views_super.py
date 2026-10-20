@@ -16,8 +16,8 @@ from newsbot.core_channels import list_channels, mandatory_cfg
 from newsbot.core_sources import count_sources
 from newsbot.core_articles import count_articles
 from newsbot.core_payments import (pay_pending, pay_get, pay_set, pay_approve_atomic, pay_mark_notified,
-                                   pay_unnotified, refund_payment, PayError)
-from newsbot.core_referrals import credit_referral_on_payment, referral_cfg
+                                   pay_unnotified, pay_approved_recent, PayError)
+from newsbot.core_referrals import referral_cfg
 from newsbot.secret_store import decrypt as decrypt_key   # SEC-09: نمایش ماسک‌شدهٔ کلید رمزنگاری‌شده
 from newsbot.ai_models import list_models, get_model
 from newsbot.text_format import strip_tags
@@ -44,6 +44,8 @@ async def view_health(update, context):
     models = list_models(); ok = sum(1 for m in models if m["active"] and m["status"] == "ok")
     try: pending = q("SELECT COUNT(*) c FROM pub_journal", one=True)["c"]
     except Exception: pending = 0
+    try: unnot = len(pay_unnotified(50))         # PH-01/OBS-014: پرداخت‌های تأییدشدهٔ اعلام‌نشده
+    except Exception: unnot = 0
     chans = q("SELECT COUNT(*) c FROM channels", one=True)["c"]; ready = q("SELECT COUNT(*) c FROM articles WHERE status='ready'", one=True)["c"]
     head = "🩺 <b>System health</b>" if not fa else "🩺 <b>سلامت سیستم</b>"
     # چیدمان مینیمال: هر سنجه یک خط، با فاصله بین گروه‌های مرتبط
@@ -58,6 +60,7 @@ async def view_health(update, context):
         f"\n\n📡 کانال‌های ثبت‌شده: {chans}"
         f"\n📥 موارد آماده در صف: {ready}"
         f"\n📌 موارد معلق ژورنال: {pending}"
+        f"\n🧾 پرداخت‌های تأییدشدهٔ اعلام‌نشده: {unnot}"
         f"\n\n🤖 وضعیت مدل‌های هوش مصنوعی: {ok}/{len(models)} سالم"
         f"\n\n💾 حجم دیتابیس: {size:.1f} MB"
         f"\n🧠 مصرف حافظهٔ فرایند: {rss_mb():.0f} MB"
@@ -236,6 +239,15 @@ async def view_s_pays(update, context):
     text = tr(lang, "s_pays_title") + ("".join(tr(lang, "s_pay_line", id=r["id"], who=esc(("@" + r["username"]) if r["username"] else (r["name"] or r["user_id"])), plan=esc(r["plan_name"]), price=esc(r["final_price"] or r["plan_price"]), t=r["created_at"][5:16]) for r in shown) or "\n" + tr(lang, "s_pay_none"))
     if hidden: text += tr(lang, "s_pays_more", n=hidden)
     kb = [[B(tr(lang, "s_pay_rc", id=r["id"]), f"s:pay_rc:{r['id']}"), B(tr(lang, "s_pay_ok"), f"s:pay_ok:{r['id']}:l"), B(tr(lang, "s_pay_no"), f"s:pay_no:{r['id']}:l")] for r in shown] + [[B(tr(lang, "back"), "s:home")]]
+    # PH-01/FIN-013: پرداخت‌های اخیرِ تأییدشده با دکمهٔ «بازگشتِ وجه»
+    done = pay_approved_recent(8)
+    if done:
+        text += "\n\n" + tr(lang, "s_pays_done_title")
+        for r in done:
+            text += tr(lang, "s_pay_line", id=r["id"], who=esc(("@" + r["username"]) if r["username"] else (r["name"] or r["user_id"])),
+                        plan=esc(r["plan_name"] or "—"), price=esc(r["final_price"] or "—"),
+                        t=(r["decided_at"] or r["created_at"] or "")[5:16])
+        kb = kb[:-1] + [[B(tr(lang, "s_pay_refund_btn", id=r["id"]), f"s:pay_refund:{r['id']}") for r in done[:4]]] + [kb[-1]]
     await render(update, context, text, kb)
 
 async def view_s_texts(update, context):

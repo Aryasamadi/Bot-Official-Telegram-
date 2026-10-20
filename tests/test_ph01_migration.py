@@ -13,14 +13,11 @@
   ۴) **مبدأ دست‌نخورده** — فایلِ کپی‌شده پیش از مهاجرت، با اثرِ انگشتِ SHA-256 یکسان می‌ماند.
 """
 import hashlib
-import os
 import shutil
 import sqlite3
-import tempfile
 
 import pytest
 
-from newsbot.db import q
 from newsbot.timeutils import now_iso
 
 OLD_TRIGGER = """
@@ -110,7 +107,6 @@ def legacy_copy(tmp_path):
 
 
 def test_migration_on_a_copy_is_additive_and_preserves_data(legacy_copy):
-    from newsbot.core_wallet import wallet_balance, wallet_get, CUR_LEGACY
     conn = _migrate(legacy_copy["copy"])
     try:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(credit_log)")}
@@ -135,7 +131,7 @@ def test_migration_on_a_copy_is_additive_and_preserves_data(legacy_copy):
 
 
 def test_migration_moves_legacy_balance_into_a_frozen_bucket(legacy_copy):
-    from newsbot.core_wallet import wallet_balance, wallet_get, CUR_LEGACY, CUR_USD
+    from newsbot.core_wallet import wallet_get, CUR_USD
     # موجودیِ قدیمیِ یک کاربر در فایلِ v7
     c = sqlite3.connect(legacy_copy["copy"])
     c.execute("INSERT OR IGNORE INTO users(id,username,name,role,credit,created_at,last_seen) "
@@ -190,7 +186,6 @@ def test_migration_does_not_touch_the_source_database(legacy_copy):
 
 def _restore():
     """بازگرداندنِ اتصالِ برنامه به پایگاه‌دادهٔ اصلیِ تست."""
-    from newsbot import config
     from newsbot import db as D
     D._tls.conn = None
     D._SCHEMA_READY = False

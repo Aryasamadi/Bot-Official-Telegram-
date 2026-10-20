@@ -264,6 +264,12 @@ TXT = {
      # PH-01/FIN-008: کد تخفیف بین درخواست و تأیید غیرفعال/منقضی شده
      "s_pay_disc_invalid": ("⚠️ کد تخفیف دیگر معتبر نیست (غیرفعال، منقضی یا تکمیل)؛ تأیید متوقف شد.",
                             "⚠️ The discount code is no longer valid (inactive, expired or exhausted); approval was stopped."),
+     # PH-01/FIN-013 — بازگشتِ وجه
+     "s_pays_done_title": ("<b>پرداخت‌های اخیرِ تأییدشده</b>", "<b>Recently approved payments</b>"),
+     "s_pay_refund_btn": ("↩️ بازگشت #{id}", "↩️ Refund #{id}"),
+     "confirm_pay_refund_q": ("مبلغِ پرداخت #{id} به کیف پولِ مشتری برگردانده شود؟ این کار یک «رسیدِ بازگشت» ثبت می‌کند.",
+                              "Return payment #{id} to the customer's wallet? This records a refund receipt."),
+     "s_pay_refund_done": ("✅ مبلغ به کیف پولِ مشتری برگشت و رسیدِ بازگشت ثبت شد.", "✅ The amount was returned to the customer's wallet and a refund receipt was recorded."),
     "s_pay_new": ("🛎 <b>پرداخت #{id}</b>\n👤 {who} (<code>{uid}</code>)\n🧾 <b>{plan}</b>\n💵 مبلغ پلن: {plan_price}\n💰 پرداختی: {price}{disc}{note}", "🛎 <b>Payment #{id}</b>\n👤 {who} (<code>{uid}</code>)\n🧾 <b>{plan}</b>\n💵 Plan price: {plan_price}\n💰 Payable: {price}{disc}{note}"),
     "s_bc_prompt": ("پیام همگانی (متن/عکس/ویدیو؛ فرمت حفظ می‌شود):", "Broadcast message (text/photo/video; formatting kept):"), "s_bc_confirm": ("📣 ارسال به <b>{n}</b> کاربر؟", "📣 Send to <b>{n}</b> users?"), "s_bc_go": ("✅ ارسال", "✅ Send"),     "s_bc_sending": ("📣 ارسال به {n} کاربر…", "📣 Sending to {n} users…"), "s_bc_progress": ("📣 ارسال همگانی: {i}/{n}", "📣 Broadcasting: {i}/{n}"), "s_bc_done": ("📣 موفق {ok} · ناموفق {fail}", "📣 ok {ok} · failed {fail}"),
     "s_texts_title": ("<b>متن‌ها</b>\nجای‌گذار: <code>{name}</code> <code>{plan}</code> <code>{price}</code>", "<b>Texts</b>\nPlaceholders: <code>{name}</code> <code>{plan}</code> <code>{price}</code>"),

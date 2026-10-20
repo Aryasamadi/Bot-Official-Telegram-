@@ -14,7 +14,7 @@ Idempotent: همه‌ی درج‌ها INSERT OR REPLACE هستند؛ اجرای 
   ۵) اسکیمای D1 در یک batch اتمیک ساخته می‌شود (DB-24) و در پایان last_migrate_at ثبت می‌گردد.
 استفاده:
     export CF_ACCOUNT_ID=... CF_D1_DATABASE_ID=... CF_D1_TOKEN=... DB_FILE=newsbot.db
-    python tools/migrate_sqlite_to_d1.py [--force]
+    python tools/migrate_sqlite_to_d1.py [--force] [--dry-run]
 """
 import asyncio, hashlib, json, os, sqlite3, sys, time
 
@@ -30,6 +30,8 @@ TABLES = ["users", "plans", "discounts", "channels", "sources", "usage", "articl
           "credit_log", "rate_limits", "meta"]
 SEM = asyncio.Semaphore(8)
 FORCE = "--force" in sys.argv[1:]
+# PH-04/OPS-13: حالتِ پیش‌نمایش — هیچ نوشتنی و هیچ درخواستِ شبکه‌ای انجام نمی‌شود.
+DRY_RUN = "--dry-run" in sys.argv[1:]
 LIVE_HEARTBEAT_SEC = 300
 
 
@@ -204,6 +206,23 @@ async def main():
         if sv.isdigit() and int(sv) != SCHEMA_VERSION and not FORCE:
             sys.exit(f"⛔ schema_version مبدأ ({sv}) با این ابزار ({SCHEMA_VERSION}) یکی نیست؛ "
                      "بیلد درست را استفاده کنید یا --force بدهید.")
+        if DRY_RUN:
+            # PH-04/OPS-13: پیش‌نمایش — بدونِ نوشتن و بدونِ درخواستِ شبکه.
+            rows = []
+            for tbl in TABLES:
+                try:
+                    n = con.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
+                except sqlite3.Error:
+                    n = 0
+                rows.append((tbl, n))
+            print("→ پیش‌نمایشِ مهاجرت (--dry-run): هیچ چیزی نوشته نمی‌شود.")
+            print(f"   مبدأ: {config.DB_FILE}  (schema_version={sv or '؟'})")
+            print(f"   مقصد: D1 {config.CF_D1_DATABASE_ID}")
+            for tbl, n in rows:
+                print(f"   ↳ {tbl}: {n} ردیف")
+            print(f"   مجموعِ ردیف‌هایِ کپی‌شدنی: {sum(n for _t, n in rows)}")
+            print("   برای اجرای واقعی: بدونِ --dry-run و (در صورتِ لزوم) --force اجرا کنید.")
+            return
         async with httpx.AsyncClient() as client:
             print("→ ساخت/به‌روزرسانی اسکیمای D1 (batch اتمیک) …")
             await ensure_schema(client)

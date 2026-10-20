@@ -44,7 +44,16 @@ def ensure_unique_indexes_local(con):
 async def main():
     if not (config.CF_ACCOUNT_ID and config.CF_D1_DATABASE_ID and config.CF_D1_TOKEN):
         sys.exit("⛔ CF_ACCOUNT_ID / CF_D1_DATABASE_ID / CF_D1_TOKEN لازم است.")
-    out_path = sys.argv[1] if len(sys.argv) > 1 else "restored.db"
+    args = [a for a in sys.argv[1:] if a != "--dry-run"]
+    dry_run = "--dry-run" in sys.argv[1:]
+    out_path = args[0] if args else "restored.db"
+    if dry_run:
+        # PH-04/OPS-13: پیش‌نمایش — فایلی نوشته نمی‌شود و چیزی بازنویسی نمی‌شود.
+        print("→ پیش‌نمایشِ بازگردانی (--dry-run): هیچ فایلی نوشته نمی‌شود.")
+        print(f"   مقصدِ پیشنهادی: {out_path}"
+          + ("  (از قبل وجود دارد — بدونِ --dry-run متوقف می‌شود)" if os.path.exists(out_path) else ""))
+        print("   برای اجرای واقعی: بدونِ --dry-run اجرا کنید.")
+        return
     if os.path.exists(out_path):
         sys.exit(f"⛔ فایل مقصد وجود دارد؛ اول حذفش کنید: {out_path}")
     con = sqlite3.connect(out_path)

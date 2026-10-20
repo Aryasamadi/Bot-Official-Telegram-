@@ -152,6 +152,8 @@ def sandbox(tmp_path):
     sqlite3.connect(str(app / "newsbot.db")).close()
 
     # استاب‌های PATH: systemctl/journalctl قلابی + python3 واقعی
+    # PH-04: استابِ systemctl اکنون یک بلوکِ Key=Value می‌دهد (مثل systemctl show واقعی)
+    # تا health بتواند ActiveState/SubState/Type/NRestarts را بخواند.
     sbin = tmp_path / "sbin"
     sbin.mkdir()
     (sbin / "python3").write_text(f'#!/bin/sh\nexec "{py}" "$@"\n', encoding="utf-8")
@@ -160,14 +162,28 @@ def sandbox(tmp_path):
         'echo "systemctl $*" >> "$STUB_LOG"\n'
         "case \"$1\" in\n"
         '  is-active) [ -f "$STUB_DIR/inactive" ] && exit 3 || exit 0 ;;\n'
-        '  show) echo "${STUB_NRESTARTS:-0}" ;;\n'
+        '  restart) [ -f "$STUB_DIR/restart-fails" ] && exit 1 || exit 0 ;;\n'
+        "  show)\n"
+        '    if [ -f "$STUB_DIR/inactive" ]; then echo "ActiveState=inactive"; else echo "ActiveState=active"; fi\n'
+        '    echo "SubState=${STUB_SUBSTATE:-running}"\n'
+        '    echo "Type=${STUB_TYPE:-simple}"\n'
+        '    echo "NRestarts=${STUB_NRESTARTS:-0}"\n'
+        '    echo "Result=success"\n'
+        '    echo "ExecMainStatus=0"\n'
+        '    echo "FragmentPath=/etc/systemd/system/${STUB_SERVICE_NAME}.service"\n'
+        "    exit 0 ;;\n"
+        "  cat) cat \"$STUB_DIR/unit.conf\" 2>/dev/null; exit 0 ;;\n"
         "  *) exit 0 ;;\n"
         "esac\n",
         encoding="utf-8",
     )
     (sbin / "journalctl").write_text(
-        '#!/bin/sh\necho "journalctl $*" >> "$STUB_LOG"\nexit 0\n',
+        '#!/bin/sh\necho "journalctl $*" >> "$STUB_LOG"\n'
+        'cat "$STUB_DIR/journal" 2>/dev/null\nexit 0\n',
         encoding="utf-8",
+    )
+    (sbin / "unit.conf").write_text(
+        "[Service]\nEnvironmentFile=/opt/app/.env\n", encoding="utf-8"
     )
 
     for f in [vbin / "python", vbin / "pip", sbin / "python3",
@@ -183,6 +199,7 @@ def sandbox(tmp_path):
         "HEALTH_TRIES": "3",
         "STUB_LOG": str(tmp_path / "stub.log").replace("\\", "/"),
         "STUB_DIR": str(sbin).replace("\\", "/"),
+        "STUB_SERVICE_NAME": "sandbox-service",
     })
     return Sandbox(tmp_path, app, env, origin)
 
@@ -252,3 +269,96 @@ def test_rollback_subcommand_restores_previous_sha(sandbox):
     assert sandbox.restart_count() == 1
     assert "rolled back to" in r.stdout
     assert "health check passed" in r.stdout
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# PH-04 — سناریوهای امنیتِ استقرار
+# ══════════════════════════════════════════════════════════════════════════════════════
+def test_failed_restart_triggers_a_real_rollback(sandbox):
+    """OPS-26 — شکستِ `systemctl restart` باید rollback واقعی بسازد (نه خروجِ خام)."""
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    Path(sandbox.env["STUB_DIR"], "restart-fails").write_text("1")
+    r = sandbox.deploy(sha)
+
+    assert r.returncode != 0, "شکستِ restart باید deploy را ناموفق کند"
+    head, prev, _ = sandbox.rollback_files()
+    assert head == sandbox.head0, "کد باید به SHA قبلی برگردد"
+    assert "rolling code back" in r.stderr, "باید مسیرِ rollback اجرا شود"
+    assert not (sandbox.app / ".deployed_sha").exists(), "نشانگرِ deploy نباید ثبت شود"
+
+
+def test_rollback_also_restores_the_dependency_set(sandbox):
+    """OPS-06 — rollback فقط کد نیست: وابستگی‌ها هم باید به نسخهٔ قبلی برگردند."""
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    Path(sandbox.env["STUB_DIR"], "restart-fails").write_text("1")
+    sandbox.deploy(sha)
+    pip_log = sandbox.app / "pip.log"
+    assert pip_log.exists()
+    installs = [ln for ln in pip_log.read_text().splitlines() if "requirements.txt" in ln]
+    assert len(installs) >= 2, "rollback باید دوباره وابستگی‌هایِ نسخهٔ قبلی را نصب کند"
+
+
+def test_health_waits_for_ready_when_the_unit_is_type_notify(sandbox):
+    """OPS-02 — با Type=notify، سرویس تا READY=1 در حالتِ activating می‌ماند ⇒ گیت باید منتظر بماند."""
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha, extra={"STUB_TYPE": "notify", "STUB_SUBSTATE": "activating"})
+    # گیت باید شکست بخورد چون سرویس «running» نشد
+    assert r.returncode != 0, "با Type=notify و SubState=activating نباید deploy موفق شود"
+    assert "not ready" in r.stderr or "health check failed" in r.stderr
+
+
+def test_handled_traceback_in_the_journal_does_not_fail_the_release(sandbox):
+    """OPS-03 — «traceback» معیارِ خرابی نیست: برنامه برای استثناهایِ مدیریت‌شده هم آن را می‌نویسد."""
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    Path(sandbox.env["STUB_DIR"], "journal").write_text(
+        "2026-10-20 10:00:00 host bot[1]: Traceback (most recent call last):\n"
+        "2026-10-20 10:00:00 host bot[1]: RuntimeError: handled by the app\n",
+        encoding="utf-8",
+    )
+    r = sandbox.deploy(sha, check=True)
+    assert "health check passed" in r.stdout
+    assert sandbox.restart_count() == 1, "یک releaseِ سالم نباید rollback شود"
+
+
+def test_crash_marker_in_the_journal_fails_the_release(sandbox):
+    """OPS-03 — نشانهٔ مرگبارِ واقعی (Main process exited) باید انتشار را متوقف کند."""
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    Path(sandbox.env["STUB_DIR"], "journal").write_text(
+        "2026-10-20 10:00:00 host systemd[1]: bot-ai-automatic.service: Main process exited, code=exited, status=1/FAILURE\n",
+        encoding="utf-8",
+    )
+    r = sandbox.deploy(sha)
+    assert r.returncode != 0, "نشانهٔ مرگبار باید deploy را ناموفق کند"
+    head, prev, _ = sandbox.rollback_files()
+    assert head == sandbox.head0, "کد باید به SHA قبلی برگردد"
+
+
+def test_backup_is_verified_before_the_deploy_continues(sandbox):
+    """OPS-09 — بکاپ باید باز و بررسی شود، نه فقط نوشته."""
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha, check=True)
+    assert "backup written and verified" in r.stdout
+    backups = list(sandbox.backups.glob("newsbot-*.db"))
+    assert len(backups) == 1 and backups[0].stat().st_size > 0
+
+
+def test_redeploying_the_same_sha_still_backs_up_and_health_checks(sandbox):
+    """OPS-25 — «سبز بودنِ deploy» باید شاهدِ سلامت باشد، نه فقط «کد عوض نشده»."""
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    sandbox.deploy(sha, check=True)
+    before = len(list(sandbox.backups.glob("newsbot-*.db")))
+    r = sandbox.deploy(sha, check=True)
+    assert "already at" in r.stdout
+    assert len(list(sandbox.backups.glob("newsbot-*.db"))) == before + 1, \
+        "استقرارِ تکراری هم باید بکاپ بگیرد"
+    assert "health check passed" in r.stdout
+
+
+def test_optional_environment_file_is_reported(sandbox):
+    """OPS-08 — اگر EnvironmentFile یونیت اختیاری باشد، هشدار داده می‌شود."""
+    (Path(sandbox.env["STUB_DIR"]) / "unit.conf").write_text(
+        "[Service]\nEnvironmentFile=-/opt/app/.env\n", encoding="utf-8"
+    )
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha, check=True)
+    assert "OPTIONAL EnvironmentFile" in r.stderr

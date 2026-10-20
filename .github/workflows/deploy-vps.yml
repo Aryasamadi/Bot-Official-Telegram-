@@ -8,6 +8,11 @@ on:
     branches: [main]
   # اجرای دستیِ انتخاب‌شده (مثلاً برای retry) — مستقل از CI
   workflow_dispatch:
+    inputs:
+      sha:
+        description: 'SHA دقیقی که باید مستقر شود (باید CI سبز داشته باشد)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -27,7 +32,7 @@ jobs:
     timeout-minutes: 25
     env:
       # SHA کامیتِ محرک CI (برای اجرای دستی: نوکِ ref انتخاب‌شده)
-      TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      TARGET_SHA: ${{ github.event.workflow_run.head_sha || inputs.sha }}
     steps:
       # بدون secrets کافی، خطا روشن و سریع است (به‌جای شکست مبهم وسط SSH)
       - name: Preflight — required secrets must exist
@@ -42,8 +47,30 @@ jobs:
           if [ -z "$VPS_FPR" ]; then echo "::error::secret VPS_HOST_FINGERPRINT is not set (ssh-keyscan output)"; fail=1; fi
           exit $fail
 
+      # OPS-05: مسیرِ اجرای دستی هم باید یک اجرای موفقِ CI برای همان SHA داشته باشد.
+      # (fail-closed: اگر وضعیت قابل تعیین نبود، اجازهٔ استقرار داده نمی‌شود.)
+      - name: Verify the target SHA has a successful CI run
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ env.TARGET_SHA }}
+        run: |
+          set -euo pipefail
+          conclusion="$(gh api "repos/$REPO/commits/$SHA/check-runs" \
+            --jq '[.check_runs[] | select(.name == "test") | .conclusion] | first // "none"')"
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::CI برای $SHA موفق نیست (conclusion=$conclusion) — استقرار متوقف شد."
+            exit 1
+          fi
+          echo "CI برای $SHA سبز است."
+
       # اکشن‌ها به SHA کامیت پین شده‌اند (تگ متحرک = تغییر بی‌اعلام)
+      # OPS-04: checkout باید روی همان SHA باشد تا «اسکریپتِ استقرار» و «کدِ مستقرشده»
+      # از یک کامیت بیایند (قبلاً اسکریپت از headِ شاخهٔ پیش‌فرض برداشته می‌شد).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
 
       - name: Copy deploy script to VPS
         uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0

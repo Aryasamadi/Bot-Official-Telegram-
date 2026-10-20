@@ -73,7 +73,7 @@
       "S_accessibility_product_quality": "AUDITED_WITH_FINDINGS",
       "T_remaining_risks_maintainability": "PARTIALLY_AUDITED"
     },
-    "completion_percent": 97,
+    "completion_percent": 98,
     "environment_limitations": [
       "PH-00 production read BLOCKED: no ~/.ssh, no ssh config, no gh CLI, no VPS env vars. The running commit SHA, the real systemd unit name, the deployed path, the .env permissions, the installed dependencies, the database state, the backup inventory and the service journal are all UNVERIFIED.",
       "No CI run observed: whether CI is currently green on 08bc876 is unverified.",
@@ -105,9 +105,9 @@
     "low": 66,
     "informational": 12,
     "total": 184,
-    "open": 151,
-    "fixed_unverified": 1,
-    "verified_fixed": 27,
+    "open": 139,
+    "fixed_unverified": 3,
+    "verified_fixed": 37,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0
@@ -854,9 +854,10 @@
       "priority": "P0",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-002"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-002",
+      "fix_applied": "بودجهٔ سلامت ۱۰ ثانیه → ۱۸۰ ثانیه (هم‌ارز TimeoutStartSec) و برای `Type=notify` تا `SubState=running` (دریافت READY=1) منتظر می‌ماند."
     },
     {
       "id": "OPS-003",
@@ -865,9 +866,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-003"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-003",
+      "fix_applied": "پنجرهٔ ژورنال به لحظهٔ همین restart لنگر شد (`RESTART_EPOCH`) و فقط نشانه‌های مرگبار (Main process exited / failed with result / core dumped / watchdog timeout) بررسی می‌شوند — «traceback» معیار نیست."
     },
     {
       "id": "OPS-004",
@@ -876,9 +878,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-004"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-004",
+      "fix_applied": "`actions/checkout` با `ref: ${{ env.TARGET_SHA }}` سنجاق شد ⇒ اسکریپتِ استقرار و کدِ مستقرشده از یک کامیت می‌آیند."
     },
     {
       "id": "OPS-005",
@@ -887,9 +890,10 @@
       "priority": "P1",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-005"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-005",
+      "fix_applied": "مسیرِ `workflow_dispatch` حالا SHA اجباری می‌گیرد و با `gh api` یک اجرای موفقِ CI برای همان SHA را **fail-closed** مطالببه می‌کند."
     },
     {
       "id": "OPS-006",
@@ -898,9 +902,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-006"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-006",
+      "fix_applied": "rollback علاوه بر کد، دوباره `pip install -r requirements.txt` را اجرا می‌کند ⇒ کدِ قدیمی روی وابستگی‌هایِ قدیمی اجرا می‌شود."
     },
     {
       "id": "OPS-007",
@@ -920,9 +925,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-008"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-008",
+      "fix_applied": "پیش‌خیم: اگر `EnvironmentFile` یونیت اختیاری باشد (`EnvironmentFile=-`) استقرار هشدار می‌دهد و مسیرِ حلقهٔ ری‌استارت را توضیح می‌دهد. **خودِ یونیت هنوز اصلاح نشده** — فایلِ یونیت در مخزن نیست و ساختنش به تأییدِ هویتِ سرویس روی میزبان نیاز دارد (PH-00)."
     },
     {
       "id": "OPS-009",
@@ -931,9 +937,10 @@
       "priority": "P2",
       "category": "MISSING TEST / UNKNOWN BEHAVIOR",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-009"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-009",
+      "fix_applied": "هر بکاپ پیش از ادامه باز و با `PRAGMA quick_check` و مقایسهٔ تعداد اشیا با مبدأ تأیید می‌شود."
     },
     {
       "id": "OPS-010",
@@ -942,9 +949,10 @@
       "priority": "P2",
       "category": "CONFIRMED CONFIGURATION DEFECT",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-010"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-010",
+      "fix_applied": "پوشهٔ آرشیوِ مقالاتِ قدیمی (`$APP_DIR/backups`) در `$BACKUP_DIR/archive` کپی می‌شود."
     },
     {
       "id": "OPS-011",
@@ -975,9 +983,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-013"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-013",
+      "fix_applied": "هر دو ابزارِ مهاجرت/بازگردانی `--dry-run` دارند: هیچ نوشتنی و هیچ درخواستِ شبکه‌ای انجام نمی‌شود و طرحِ انتقال چاپ می‌گردد."
     },
     {
       "id": "OPS-014",
@@ -1107,9 +1116,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-025"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-025",
+      "fix_applied": "استقرارِ دوبارهٔ همان SHA هم حالا بکاپ می‌گیرد و سلامت را می‌سنجد ⇒ «سبز بودنِ deploy» شاهدِ سلامت است، نه صرفاً «کد عوض نشده»."
     },
     {
       "id": "OPS-026",
@@ -1118,9 +1128,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-026"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-026",
+      "fix_applied": "شکستِ `systemctl restart` از مسیرِ `rollback_and_die` می‌گذرد (به‌جای exitِ خام) ⇒ کد و وابستگی‌ها برمی‌گردند و سرویس روی نسخهٔ قبلی بالا می‌آید."
     },
     {
       "id": "OPS-027",
@@ -1163,9 +1174,10 @@
       "priority": "P3",
       "category": "IMPROVEMENT OPPORTUNITY",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-030"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-030",
+      "fix_applied": "سمتِ استقرار: `HEAD == TARGET_SHA` پس از sync بررسی می‌شود و `.deployed_sha` فقط پس از عبورِ سلامت نوشته می‌شود. **سمتِ برنامه** (ثبتِ SHAِ در حالِ اجرا در `/health`) هنوز اضافه نشده."
     },
     {
       "id": "OPS-031",
@@ -2341,13 +2353,14 @@
         "SEC-012",
         "SEC-013"
       ],
-      "status": "OPEN",
+      "status": "PARTIALLY_IMPLEMENTED_AWAITING_MERGE",
       "owner_approval_required": true,
       "objective": "Make the deployment deploy the intended project, prove health correctly and roll back completely.",
       "blocked_on": "PH-00 production read (OPS-001 rename must not be applied blind)",
       "owner_decisions_applied": [
         "Q-6"
-      ]
+      ],
+      "execution_note": "2026-10-20: بخشِ مستقل از میزبان پیاده و تست شد (۱۲ تستِ تازه در tests/test_ph04_deploy_safety.py + ۸ سناریوی تازه در tests/test_deploy_script.py). بسته شد: OPS-002/003/004/005/006/009/010/013/025/026. نیمه‌کاره: OPS-008 (هشدار) و OPS-030. باقی‌مانده و مسدود: هویتِ استقرار (OPS-001/Q-6c) — به خواندنِ میزبان نیاز دارد؛ فایلِ یونیتِ پایه (OPS-021) و hash-pinning (OPS-019) عمداً انجام نشد."
     },
     {
       "id": "PH-05",
@@ -2602,11 +2615,11 @@
       "objective": "Make every document, count, badge and default match the code."
     }
   ],
-  "current_phase": "PH-02",
-  "current_phase_status": "IMPLEMENTED_AWAITING_MERGE",
+  "current_phase": "PH-04",
+  "current_phase_status": "PARTIALLY_IMPLEMENTED_AWAITING_MERGE",
   "owner_approval_required": true,
   "next_permitted_action": "AWAIT_OWNER_AUTHORIZATION",
-  "recommended_next_phase": "PH-04",
+  "recommended_next_phase": "PH-08",
   "recommended_first_remediation_phase": "PH-01",
   "documents": {
     "master_status": "docs/audit/MASTER_STATUS.md",

@@ -121,6 +121,22 @@ still has to be created in the repository settings).
 **None.** No production system was contacted; no migration was run against a production database; nothing
 was deployed or merged.
 
+### CI incident (recorded, not hidden)
+
+The **first** push of PR #22 failed in CI — and **not** in the test suite: the static-guard step
+(`python -m pyflakes newsbot tools run.py tests`) reported **25 unused-import messages** introduced with
+the new module and the new tests. Locally they had been masked by a filter that only looked for the
+string `undefined name`, so the gate failure was invisible until CI ran it on Linux.
+
+Fix: every unused import was removed, and the two PH-01 helpers that had no caller were turned into live
+features instead of being deleted — `refund_payment()` is now reachable from the super-admin payments
+screen through a two-phase confirmation (`s:pay_refund` -> `s:pay_refund2`), and `pay_unnotified()` is
+surfaced in `/health` (OBS-014). Re-run: pyflakes exit 0, 482 passed, 17/17, `run.py --check` green, and
+**CI green** on `b3adb6b`.
+
+**Lesson recorded:** the local static check must be run *without* a filter. `tests/test_static_guard.py`
+already asserts "zero undefined names"; the *gate* is stricter — pyflakes must be completely silent.
+
 ### Remaining risks in this phase
 
 - The **legacy balance** is deliberately unusable until a separate, explicitly authorised allocation

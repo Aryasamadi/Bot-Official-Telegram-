@@ -246,6 +246,13 @@ Details and the concrete PH-01 design: `docs/audit/DECISIONS.md` §2 and §2b.
      `run.py --check` green. **Negative controls:** forcing the reward into a single bucket (the
      pre-fix behaviour) makes FIN-001/FIN-010 fail; the ADD-variant of the migration breaks the
      idempotency test.
+   - **CI incident (recorded, not hidden):** the first push failed at the **static-guard** step
+     (25 unused-import messages, masked locally by a filter that only looked for "undefined name") —
+     not in the test suite. Fixed, and the two orphaned helpers were turned into live features
+     (`refund_payment` → a two-phase super-admin action; `pay_unnotified` → a `/health` counter).
+     Final: `482 passed`, pyflakes silent, **CI green** on `b3adb6b`.
+   - **PR #22** — https://github.com/Aryasamadi/Bot-Official-Telegram-/pull/22 — `test` ✅ `docker-build` ✅
+     — **open, not merged**.
 
 ---
 

@@ -271,7 +271,7 @@ INFO | در حال اجرا…
 | `CF_KV_NAMESPACE_ID` | آینهٔ «بیشتر» روی KV (هر سه مقدار CF لازم است) |
 | `CF_API_TOKEN` | توکن API کلادفلر (برای KV) |
 | `TELEGRAM_API_BASE` | سرور Bot API محلی → آپلود تا ۲۰۰۰MB (≈۲GB؛ پیش‌فرض ۵۰MB) |
-| `ALLOW_PRIVATE_MODEL_HOSTS` | فقط برای مدل‌های محلی مثل Ollama |
+| `ALLOW_PRIVATE_MODEL_HOSTS` | PH-02: فهرستِ `host:port`هایی که اجازهٔ دسترسی به میزبانِ خصوصی دارند (برای مدل‌های محلی مثل Ollama). خالی = هیچ. `all` = همه (ریسک) |
 
 </details>
 

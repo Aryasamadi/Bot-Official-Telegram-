@@ -297,7 +297,7 @@
 - **Fix:** route provider calls through a guarded requester: validate the resolved host, set `follow_redirects=False`, follow up to 5 hops manually, re-validating each, and strip `Authorization`/`x-api-key`/`apikey` on a host change.
 - **Regression test required:** yes — mock a `base_url` that 302s to `169.254.169.254`; assert no request reaches it and no credential header crosses the hop.
 - **Dependencies / risks:** providers that legitimately redirect must keep working.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-02)** — مسیرِ provider از `fetch_post` عبور می‌کند: هر مقصد (و هر redirect) با `egress_url_strict` اعتبارسنجی می‌شود و `follow_redirects=False` است ⇒ یک `base_url` دلخواه دیگر نمی‌تواند به میزبانِ داخلی/metadata برسد.
 
 ## SEC-002 — The prompt-injection fence is breakable through the article URL
 - **Severity / Priority / Category:** MEDIUM · P1 · CONFIRMED SECURITY ISSUE
@@ -307,7 +307,7 @@
 - **Fix:** apply `strip_injection` to the URL as well; strip `<`/`>` at ingest.
 - **Regression test required:** yes — extend `tests/test_security.py::test_build_prompt_keeps_single_data_boundary` with a URL containing `</article_data>` and assert exactly one boundary pair.
 - **Dependencies / risks:** percent-encoding at ingest changes the stored URL and therefore the dedup hash.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-02)** — نشانیِ مقاله هم با `strip_injection` خنثی می‌شود و در ورودی، نویسه‌های زاویه‌ای از URL حذف می‌شوند ⇒ مرزِ `<article_data>` دیگر با URL قابل بستن نیست.
 
 ## SEC-003 — Customer source-API keys are stored in plaintext (SEC-09 encryption covers only `ai_models.api_key`)
 - **Severity / Priority / Category:** LOW · P2 · DESIGN WEAKNESS
@@ -358,7 +358,7 @@
 - **Regression test required:** yes — with `127.0.0.1:11434` allowed, assert `169.254.169.254` and `10.0.0.5` are rejected.
 - **Dependencies / risks:** breaks deployments relying on the blanket flag.
 - **Owner decision (2026-10-20, Q-5c):** the allowlist is **empty by default** (private hosts blocked for everyone) and `=all` remains the documented escape hatch for local Ollama / LM Studio. The blast radius note stands: role `admin` is granted automatically by any plan, so this is not an admin-only surface.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-02)** — `ALLOW_PRIVATE_MODEL_HOSTS` از پرچمِ boolean به فهرستِ `host:port` تبدیل شد (پیش‌فرض: خالی) و در **زمانِ درخواست** هم اعمال می‌شود؛ `all` تنها راه فرارِ صریح و مستند است.
 
 ## SEC-008 — Repeated channel-claim attempts rotate the owner's transfer token and spam the owner
 - **Severity / Priority / Category:** LOW · P2 · DESIGN WEAKNESS
@@ -388,7 +388,7 @@
 - **Fix:** close SEC-001/SEC-007, then add the AI-provider path to `docs/SECURITY.md` sections 1 and 5.
 - **Regression test required:** no (documentation); optionally a static test that every `http().post(`/`get(` call site is a Cloudflare endpoint or is wrapped by a validator.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-02)** — سندِ امنیتی اکنون هر سه مسیرِ خروجیِ محافظت‌شده (خوراک، رسانه، پروایدر AI) و سازوکارِ حذفِ هدرِ اعتبار را توصیف می‌کند.
 
 ## SEC-011 — Super-admin Telegram IDs are written to the service journal in cleartext
 - **Severity / Priority / Category:** INFO · P3 · DESIGN WEAKNESS
@@ -897,7 +897,7 @@
 - **Severity / Priority / Category:** HIGH · P1 · CONFIRMED BUG
 - **Evidence:** `newsbot/ai_models.py:93-95`; `newsbot/net_http.py:26-27`.
 - **Actual vs Expected / Impact / Fix / Test:** see SEC-001 (identical mechanism and remediation). Tracked separately because the fix belongs in the transport layer (`newsbot/net_http.py`) rather than in the security model.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-02)** — همان SEC-001 — مسیرِ provider اکنون از `fetch_post` (با اعتبارسنجیِ هر جهش) عبور می‌کند.
 
 ## NET-002 — `x-api-key` / `apikey` / `Cookie` are not stripped on cross-origin redirects
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG
@@ -907,7 +907,7 @@
 - **Fix:** use a dedicated provider client with `follow_redirects=False` and a redirect handler that strips the full credential set (re-use the rule at `newsbot/net_http.py:167`).
 - **Regression test required:** yes — a cross-origin redirect must not carry `x-api-key`.
 - **Dependencies / risks:** same-origin redirects keep the header, so this is safe.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-02)** — هدرهای `Authorization`/`x-api-key`/`apikey`/`cookie`/`proxy-authorization` روی تغییرِ میزبان در هر redirect حذف می‌شوند.
 
 ## NET-003 — The DNS-rebinding window is narrowed but not closed
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -917,7 +917,7 @@
 - **Fix:** pin the validated IP or use a transport that reuses the validated address.
 - **Regression test required:** yes — a resolver that returns different answers per call must be rejected.
 - **Dependencies / risks:** IP pinning breaks TLS SNI/virtual hosting unless done carefully.
-- **Status:** OPEN
+- **Status:** OPEN — PH-02 پنجرهٔ TOCTOU را **باریک‌تر** کرد (هر جهشِ redirect جداگانه اعتبارسنجی می‌شود) اما **نمی‌بندد**: اتصالِ واقعی همچنان توسط httpx/httpcore با رزولوشنِ خودشان انجام می‌شود. بستنِ کامل نیازمندِ pinningِ IP است (خارج از محدودهٔ این فاز).
 
 ## NET-005 — The Telegram client's connection pool is never configured
 - **Severity / Priority / Category:** MEDIUM · P2 · MISSING TEST / UNKNOWN BEHAVIOR (RUNTIME-REQUIRED)
@@ -933,7 +933,7 @@
 
 | ID | Title | Sev/Pri | Category | Evidence | Actual vs Expected | Impact | Fix | Test | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| NET-004 | `is_private_host` allows multicast and some `inet_aton` forms | LOW · P3 | CONFIRMED BUG (measured) | `newsbot/net_http.py:80-87`; `_parse_ip_alt` rejects heads > 255 although `socket.inet_aton("0x7fffff.1")` is valid. **Measured:** `224.0.0.1` allowed, `ff02::1` allowed, `0x7fffff.1` allowed. Correctly blocked: `::ffff:127.0.0.1`, `fc00::/7`, `fe80::/10`, `100.64/10`, `0.0.0.0/8`, `198.18/15`, `192.0.2/24`, `2001:db8::/32`, `100::/64`, `metadata.google.internal`, `169.254.169.254`, and the decimal/octal/hex/short IPv4 forms | Low in practice (the fetch path also resolves and checks every IP); relevant for the input-time-only check (`newsbot/ui_inputs.py:59`) and the model path (NET-001) | Add `is_multicast`/`is_reserved`/`is_unspecified` checks; relax the `_parse_ip_alt` head limit | yes | OPEN |
+| NET-004 | `is_private_host` missed multicast and the invalid-IP-literal forms | LOW · P3 | CONFIRMED BUG (measured) | `newsbot/net_http.py:80-87`; `_parse_ip_alt` rejects heads > 255 although `socket.inet_aton("0x7fffff.1")` is valid. **Measured:** `224.0.0.1` allowed, `ff02::1` allowed, `0x7fffff.1` allowed. Correctly blocked: `::ffff:127.0.0.1`, `fc00::/7`, `fe80::/10`, `100.64/10`, `0.0.0.0/8`, `198.18/15`, `192.0.2/24`, `2001:db8::/32`, `100::/64`, `metadata.google.internal`, `169.254.169.254`, and the decimal/octal/hex/short IPv4 forms | Low in practice (the fetch path also resolves and checks every IP); relevant for the input-time-only check (`newsbot/ui_inputs.py:59`) and the model path (NET-001) | Add `is_multicast`/`is_reserved`/`is_unspecified` checks; relax the `_parse_ip_alt` head limit | yes | OPEN |
 | NET-006 | Compression is disabled for all outbound traffic | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/net_http.py:27` — `Accept-Encoding: identity` on the shared client used for feeds, pages, media **and** AI provider calls | Every response is transferred uncompressed; expected `gzip, deflate` for text | ~3-5x more bytes for HTML/JSON feeds (not measured in this audit) | `Accept-Encoding: gzip, deflate` (httpx decodes transparently) | n/a | OPEN |
 | NET-007 | An API key embedded in the URL **path** is not covered by `redact()` | LOW · P3 | DESIGN WEAKNESS | `newsbot/discover.py:274-278` substitutes the key into the path (`{key}` placeholders); `newsbot/logutils.py:39` masks secrets only in the query string and in `key=value` forms; `newsbot/core_sources.py:61` stores `redact(err)[:200]` in `sources.last_error` | A path-embedded provider key is not masked anywhere and can reach the DB and the logs | Residual secret leakage into the DB and the logs | Mask the substituted key before it can reach any message, or forbid path substitution | yes — extend `tests/test_log_secret_leak.py` | OPEN |
 | NET-008 | `public_url_strict` costs three DNS lookups per hop, in a thread | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/net_http.py:109-115` — 3 x `socket.getaddrinfo` per hop, executed via `asyncio.to_thread` (`newsbot/net_http.py:154,164`), sharing the default executor with the CPU-bound trafilatura work (`newsbot/extract.py:179,188,197`) | 3x DNS amplification per request, on a shared executor | Resolver load and executor contention; not measured in this audit | Cache the resolution per (host, short TTL) and reuse it for the connection (see NET-003) | n/a | OPEN |

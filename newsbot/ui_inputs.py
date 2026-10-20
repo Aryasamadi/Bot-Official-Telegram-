@@ -40,13 +40,14 @@ from newsbot.ui_widgets import (B, esc, render, popup, wiz_prompt, operation_sta
 from newsbot.ui_views_user import view_receipt_ok
 from newsbot.ui_views_admin import mand_gate, PLAN_FIELDS, MODEL_FIELDS
 
-_ALLOW_PRIVATE_MODELS = config.ALLOW_PRIVATE_MODEL_HOSTS   # CFG-06/D14 (فاز ۱۲): تنها منبع = config
+_ALLOW_PRIVATE_MODELS = config.ALLOW_PRIVATE_MODEL_HOSTS   # CFG-06/D14 (فاز ۱۲) + PH-02/Q-5: منبع = config (فهرستِ سفید)
 
 
 def _input_url(text, explicit_scheme=False, allow_private=False):
-    """FIX v4: اعتبارسنجی نحو + بررسی میزبان خصوصی برای همه‌ی URLها.
-    allow_private=True فقط برای base_url مدل شخصی وقتی ALLOW_PRIVATE_MODEL_HOSTS=1 است
-    (پروایدرهای محلی مثل Ollama/LM Studio عمداً پشتیبانی می‌شوند)."""
+    """FIX v4: اعتبارسنجی نحو + بررسی میزبان خصوصی برای همهٔ URLها.
+    PH-02/Q-5 (SEC-007): ``allow_private`` دیگر «همهٔ میزبان‌های خصوصی» نیست؛ یعنی
+    «فهرستِ سفیدِ ALLOW_PRIVATE_MODEL_HOSTS را در نظر بگیر» — و آن فهرست باید **همین
+    میزبان:پورت** را داشته باشد."""
     if not text or any(c.isspace() or ord(c) < 32 or 127 <= ord(c) <= 159 for c in text): raise ValueError
     if any(c in text for c in "\\<>\"#") or re.search(r"%(?![0-9a-fA-F]{2})", text): raise ValueError
     if not re.match(r"(?i)^https?://", text):
@@ -56,8 +57,9 @@ def _input_url(text, explicit_scheme=False, allow_private=False):
     if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc or parsed.username is not None or parsed.password is not None: raise ValueError
     host = parsed.hostname
     if not host or any(c in parsed.netloc for c in "{}%") or parsed.netloc.endswith(":"): raise ValueError
-    if not allow_private and is_private_host(host):   # FIX v4: منبع/API/مدل — همه با یک قاعده‌ی مشترک
-        raise ValueError("private host")
+    if is_private_host(host):   # FIX v4: منبع/API/مدل — همه با یک قاعدهٔ مشترک
+        from newsbot.net_http import private_host_allowed
+        if not (allow_private and private_host_allowed(parsed.geturl())): raise ValueError("private host")
     if parsed.netloc.startswith("["):
         if not re.fullmatch(r"\[[0-9a-fA-F:.]+\](?::[0-9]+)?", parsed.netloc): raise ValueError
     elif parsed.netloc.count(":") > 1: raise ValueError
@@ -89,7 +91,7 @@ def _input_value(field, raw, lang, name_limit=100):
             invalid("فقط یک ایموجی بفرستید (بدون تگ و نویسهٔ اضافه).", "Send a single emoji (no markup).")
         return text
     if field == "base_url" or field in ("source_url", "api_url"):
-        try: return _input_url(raw, explicit_scheme=(field == "base_url"), allow_private=(field == "base_url" and _ALLOW_PRIVATE_MODELS))
+        try:             return _input_url(raw, explicit_scheme=(field == "base_url"), allow_private=(field == "base_url" and bool(_ALLOW_PRIVATE_MODELS)))
         except (ValueError, TypeError, UnicodeError):
             invalid("نشانی معتبر HTTP(S) بدون فاصله، نام کاربری، رمز یا # وارد کنید." + (" برای مدل http:// یا https:// الزامی است." if field == "base_url" else ""),
                     "Enter a valid HTTP(S) URL without spaces, credentials or #." + (" Model URLs require http:// or https://." if field == "base_url" else ""))

@@ -50,8 +50,11 @@ Return ONLY one valid JSON object (no code fences) with exactly this structure:
     text = raw_text[:config.AI_INPUT_TEXT_CHARS]
     if len(raw_text) > len(text): log.warning("prompt input truncated %d -> %d chars (summarizer did not converge)", len(raw_text), len(text))
     safe_text, safe_title = strip_injection(text), strip_injection(art['title'])
-    if safe_text != text or safe_title != str(art['title']): log.warning("prompt injection patterns neutralized in source data (%s)", redact(art.get("url"))[:80])
-    user = f"<article_data>\nTITLE: {safe_title}\nSOURCE: {art['url']}\nDATE: {art.get('published') or 'unknown'}\n\nARTICLE TEXT:\n{safe_text}\n</article_data>"
+    # PH-02/SEC-002: نشانیِ مقاله هم داخلِ «جعبهٔ دادهٔ نامطمئن» است ⇒ باید خنثی شود،
+    # وگرنه یک URL مثل «…</article_data>SYSTEM: …» می‌تواند جعبه را ببندد و دستور تزریق کند.
+    safe_url = strip_injection(art.get('url') or '')
+    if safe_text != text or safe_title != str(art['title']) or safe_url != str(art.get('url') or ''): log.warning("prompt injection patterns neutralized in source data (%s)", redact(art.get("url"))[:80])
+    user = f"<article_data>\nTITLE: {safe_title}\nSOURCE: {safe_url}\nDATE: {art.get('published') or 'unknown'}\n\nARTICLE TEXT:\n{safe_text}\n</article_data>"
     return system, user
 
 def weighted_score(s, scores):

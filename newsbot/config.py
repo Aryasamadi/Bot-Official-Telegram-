@@ -152,7 +152,12 @@ REFERRAL_PERCENT = _env_float("REFERRAL_PERCENT", 20.0, 0.0, 50.0)
 # خالی ⇒ بدون رمزنگاری (سازگاری با نصب‌های موجود؛ استارت هشدار می‌دهد اگر کلید متن ساده وجود داشته باشد).
 SECRETS_KEY = os.getenv("SECRETS_KEY", "").strip()
 # فقط برای پرووایدرهای AI محلی (Ollama/LM Studio): اجازهٔ مقصد خصوصی برای base_url مدل
-ALLOW_PRIVATE_MODEL_HOSTS = os.getenv("ALLOW_PRIVATE_MODEL_HOSTS", "").strip() == "1"
+# فقط برای پروایدرهای AI محلی (Ollama/LM Studio): فهرستِ «میزبان:پورت»هایی که اجازهٔ
+# دسترسی به میزبانِ خصوصی دارند — جداشده با کاما. خالی (پیش‌فرض) = هیچ میزبانِ خصوصی
+# مجاز نیست. «all» یعنی همهٔ میزبان‌های خصوصی (پذیرشِ آگاهانهٔ ریسک).
+# PH-02/Q-5 (SEC-007): پیش‌تر یک پرچمِ boolean بود که کلِ محافظتِ میزبانِ خصوصی را برای
+# همهٔ مدیرها برمی‌داشت؛ حالا فهرستِ سفیدِ دقیق است.
+ALLOW_PRIVATE_MODEL_HOSTS = os.getenv("ALLOW_PRIVATE_MODEL_HOSTS", "").strip()
 
 # ── کانال اجباری (فقط برای ادمین‌ها) ──
 MANDATORY_CHANNEL_ID = os.getenv("MANDATORY_CHANNEL_ID", "").strip()

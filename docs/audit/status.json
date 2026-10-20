@@ -73,7 +73,7 @@
       "S_accessibility_product_quality": "AUDITED_WITH_FINDINGS",
       "T_remaining_risks_maintainability": "PARTIALLY_AUDITED"
     },
-    "completion_percent": 96,
+    "completion_percent": 97,
     "environment_limitations": [
       "PH-00 production read BLOCKED: no ~/.ssh, no ssh config, no gh CLI, no VPS env vars. The running commit SHA, the real systemd unit name, the deployed path, the .env permissions, the installed dependencies, the database state, the backup inventory and the service journal are all UNVERIFIED.",
       "No CI run observed: whether CI is currently green on 08bc876 is unverified.",
@@ -105,9 +105,9 @@
     "low": 66,
     "informational": 12,
     "total": 184,
-    "open": 158,
+    "open": 151,
     "fixed_unverified": 1,
-    "verified_fixed": 20,
+    "verified_fixed": 27,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0
@@ -573,9 +573,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-02",
-      "evidence_ref": "docs/audit/FINDINGS.md#net-001"
+      "evidence_ref": "docs/audit/FINDINGS.md#net-001",
+      "fix_applied": "همان SEC-001 — مسیرِ provider اکنون از `fetch_post` (با اعتبارسنجیِ هر جهش) عبور می‌کند."
     },
     {
       "id": "NET-002",
@@ -584,9 +585,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-02",
-      "evidence_ref": "docs/audit/FINDINGS.md#net-002"
+      "evidence_ref": "docs/audit/FINDINGS.md#net-002",
+      "fix_applied": "هدرهای `Authorization`/`x-api-key`/`apikey`/`cookie`/`proxy-authorization` روی تغییرِ میزبان در هر redirect حذف می‌شوند."
     },
     {
       "id": "NET-003",
@@ -597,7 +599,8 @@
       "verification": "STATIC",
       "status": "OPEN",
       "phase": "PH-02",
-      "evidence_ref": "docs/audit/FINDINGS.md#net-003"
+      "evidence_ref": "docs/audit/FINDINGS.md#net-003",
+      "fix_applied": "PH-02: هر جهشِ redirect جداگانه اعتبارسنجی می‌شود (پنجره باریک‌تر شد) اما پنجرهٔ TOCTOU باقی است ⇒ باز."
     },
     {
       "id": "NET-004",
@@ -606,9 +609,10 @@
       "priority": "P3",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-02",
-      "evidence_ref": "docs/audit/FINDINGS.md#net-004"
+      "evidence_ref": "docs/audit/FINDINGS.md#net-004",
+      "fix_applied": "`is_private_host` حالا multicast/reserved/unspecified را هم رد می‌کند و فرم‌هایِ نامعتبرِ شبیه به IP (مثل «0x7fffff.1») fail-closed رد می‌شوند؛ فرمِ کوتاهِ inet_aton درست پیاده شد."
     },
     {
       "id": "NET-005",
@@ -1571,9 +1575,10 @@
       "priority": "P1",
       "category": "CONFIRMED SECURITY ISSUE",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-02",
-      "evidence_ref": "docs/audit/FINDINGS.md#sec-001"
+      "evidence_ref": "docs/audit/FINDINGS.md#sec-001",
+      "fix_applied": "مسیرِ provider از `fetch_post` عبور می‌کند: هر مقصد (و هر redirect) با `egress_url_strict` اعتبارسنجی می‌شود و `follow_redirects=False` است ⇒ یک `base_url` دلخواه دیگر نمی‌تواند به میزبانِ داخلی/metadata برسد."
     },
     {
       "id": "SEC-002",
@@ -1582,9 +1587,10 @@
       "priority": "P1",
       "category": "CONFIRMED SECURITY ISSUE",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-02",
-      "evidence_ref": "docs/audit/FINDINGS.md#sec-002"
+      "evidence_ref": "docs/audit/FINDINGS.md#sec-002",
+      "fix_applied": "نشانیِ مقاله هم با `strip_injection` خنثی می‌شود و در ورودی، نویسه‌های زاویه‌ای از URL حذف می‌شوند ⇒ مرزِ `<article_data>` دیگر با URL قابل بستن نیست."
     },
     {
       "id": "SEC-003",
@@ -1637,9 +1643,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-02",
-      "evidence_ref": "docs/audit/FINDINGS.md#sec-007"
+      "evidence_ref": "docs/audit/FINDINGS.md#sec-007",
+      "fix_applied": "`ALLOW_PRIVATE_MODEL_HOSTS` از پرچمِ boolean به فهرستِ `host:port` تبدیل شد (پیش‌فرض: خالی) و در **زمانِ درخواست** هم اعمال می‌شود؛ `all` تنها راه فرارِ صریح و مستند است."
     },
     {
       "id": "SEC-008",
@@ -1670,9 +1677,10 @@
       "priority": "P2",
       "category": "DOCUMENTATION MISMATCH",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-02",
-      "evidence_ref": "docs/audit/FINDINGS.md#sec-010"
+      "evidence_ref": "docs/audit/FINDINGS.md#sec-010",
+      "fix_applied": "سندِ امنیتی اکنون هر سه مسیرِ خروجیِ محافظت‌شده (خوراک، رسانه، پروایدر AI) و سازوکارِ حذفِ هدرِ اعتبار را توصیف می‌کند."
     },
     {
       "id": "SEC-011",
@@ -2266,12 +2274,13 @@
         "NET-003",
         "NET-004"
       ],
-      "status": "OPEN",
+      "status": "IMPLEMENTED_AWAITING_MERGE",
       "owner_approval_required": true,
       "objective": "Validate every outbound request derived from user input on every hop; close the prompt-injection fence.",
       "owner_decisions_applied": [
         "Q-5"
-      ]
+      ],
+      "execution_note": "2026-10-20: پیاده‌سازی شد. ۳۹ تستِ تازه؛ ۵۲۲ تست سبز؛ pyflakes ساکت؛ ۱۷/۱۷ final_verification. SEC-001/002/007/010 و NET-001/002/004 بسته شد؛ NET-003 (پنجرهٔ TOCTOU) عمداً باز ماند."
     },
     {
       "id": "PH-03",
@@ -2593,7 +2602,7 @@
       "objective": "Make every document, count, badge and default match the code."
     }
   ],
-  "current_phase": "PH-01",
+  "current_phase": "PH-02",
   "current_phase_status": "IMPLEMENTED_AWAITING_MERGE",
   "owner_approval_required": true,
   "next_permitted_action": "AWAIT_OWNER_AUTHORIZATION",

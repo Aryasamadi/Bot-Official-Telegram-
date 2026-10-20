@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """مدل‌های هوش مصنوعی — هر سرویسی با Base URL + کلید + نام مدل (نوع خودکار تشخیص داده می‌شود).
 FIX v4: بودجه‌ی هر مقاله (تعداد فراخوانی + زمان) با ContextVar ایزوله است؛
 دو چرخه‌ی هم‌زمان دیگر بودجه‌ی یکدیگر را مصرف نمی‌کنند.
@@ -91,8 +91,18 @@ def _openai_content(j):
 async def _post(url, **kw): return await http_post(url, **kw)
 
 async def http_post(url, **kw):
-    from newsbot.net_http import http
-    return await http().post(url, timeout=httpx.Timeout(120, connect=15), **kw)
+    """PH-02/SEC-001 · NET-001 · NET-002: درخواست به پروایدرِ AI از مسیرِ محافظت‌شده می‌رود.
+
+    پیش‌تر این تنها مسیرِ خروجیِ برنامه بود که هیچ اعتبارسنجیِ میزبان نداشت و
+    ``follow_redirects=True`` داشت ⇒ یک ``base_url`` دلخواه (که هر کاربرِ دارای نقشِ
+    admin می‌تواند ثبت کند) می‌توانست به میزبانِ داخلی/متادیتای سرور برسد و کلیدِ API هم
+    همراهِ redirect منتقل می‌شد.
+
+    حالا: هر مقصد با ``egress_url_strict`` اعتبارسنجی می‌شود (میزبانِ خصوصی فقط اگر در
+    فهرستِ سفیدِ ``ALLOW_PRIVATE_MODEL_HOSTS`` باشد) و هدرهایِ اعتبار روی تغییرِ میزبان
+    حذف می‌شوند."""
+    from newsbot.net_http import fetch_post
+    return await fetch_post(url, timeout=httpx.Timeout(120, connect=15), **kw)
 
 def _usage_dict(u, ptkey, ctkey):
     """استخراج مصرف توکن از بدنه‌ی provider (PLB-03)؛ نامعتبر/صفر ⇒ None."""
@@ -391,3 +401,4 @@ def parse_json(text):
             try: return json.loads(cand, strict=strict)
             except Exception: continue
     return None
+

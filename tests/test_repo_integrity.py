@@ -29,6 +29,7 @@ PROPOSED_PATHS = {
     "deploy/env.example",               # OPS-001 — پیشنهادِ تک‌منبعِ APP_DIR/SERVICE
     ".github/CODEOWNERS",               # OPS-023 — پیشنهادِ مالکیت مسیرهای حساس
     ".github/dependabot.yml",           # OPS-023 — پیشنهادِ به‌روزرسانی خودکار وابستگی
+    "tests/test_deploy_gate.py",        # OPS-032 — در PR #21 (نگهبانِ دروازهٔ تأییدِ استقرار)
 }
 
 # فایل‌های سطح ریشه که مراجعه به آن‌ها باید معتبر باشد

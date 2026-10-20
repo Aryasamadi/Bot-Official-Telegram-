@@ -155,7 +155,9 @@ def _mk_user(uid):
 
 
 def _wallet(uid):
-    return round(float(q("SELECT credit FROM users WHERE id=?", (uid,), one=True)["credit"] or 0), 2)
+    "PH-01: موجودی در جدولِ wallet (واحد‌دار) نگه‌داری می‌شود."
+    from newsbot.core_wallet import wallet_total
+    return wallet_total(uid)
 
 
 def test_referral_cfg_panel_validation_and_roundtrip():
@@ -184,7 +186,7 @@ def test_credit_per_purchase_dedupe_and_amount_cap():
     p0, c0 = referral_cfg()
     try:
         set_referral_cfg(percent=10, cap_amount=0)
-        q("UPDATE users SET credit=0 WHERE id IN (?,?)", (referrer, ref2), commit=True)
+        q("DELETE FROM wallet WHERE user_id IN (?,?)", (referrer, ref2), commit=True)
         assert credit_referral_on_payment(buyer, 200.0, ref_key="pay:11") == (referrer, 20.0)
         assert credit_referral_on_payment(buyer, 200.0, ref_key="pay:11") is None      # همان پرداخت ⇒ idempotent
         assert credit_referral_on_payment(buyer, 100.0, ref_key="pay:12") == (referrer, 10.0)  # هر خرید پاداش دارد
@@ -205,10 +207,12 @@ def test_credit_per_purchase_dedupe_and_amount_cap():
 
 
 def test_referral_max_per_user_deprecated_not_used_in_modules():
+    """PH-01/FIN-023: سقفِ «تعداد» به‌طور کامل حذف شد — نه در ماژول‌ها، نه در config."""
     for rel in ("newsbot/core_referrals.py", "newsbot/ui_views_user.py",
                 "newsbot/ui_views_super.py", "newsbot/ui_inputs.py"):
         assert "REFERRAL_MAX_PER_USER" not in _src(rel), f"{rel} نباید دیگر سقف «تعداد» را بخواند"
-    assert "REFERRAL_MAX_PER_USER" in _src("newsbot/config.py")   # فقط برای سازگاری import نگه داشته شده
+    assert "REFERRAL_MAX_PER_USER" not in _src("newsbot/config.py"), \
+        "سقفِ «تعداد» باید از config حذف شود (Q-3a: فقط سقفِ مبلغی/واحدی وجود دارد)"
 
 
 def test_trigger_v6_delta_receipt_and_drop_before_create():
@@ -261,11 +265,11 @@ def test_env_example_is_in_sync_with_config():
 def test_readme_reflects_phase12_claims():
     readme = _src("README.md")
     for needle in ("runtime.py", "secret_store.py", "SECRETS_KEY", "net_http.py",
-                   "REFERRAL_MAX_PER_USER", "منسوخ", "CF_ACCOUNT_ID"):
+                   "PAY_QUOTE_TOLERANCE_PCT", "CF_ACCOUNT_ID"):
         assert needle in readme, f"README فاقد: {needle}"
     assert re.search(r"AI_MAX_MODEL_ATTEMPTS` \| `6`", readme), "ردیف AI_MAX_MODEL_ATTEMPTS باید ۶ باشد (D1)"
 
 
-def test_schema_version_bumped_to_v7():
+def test_schema_version_bumped_to_v8():
     import newsbot
-    assert newsbot.SCHEMA_VERSION == 7
+    assert newsbot.SCHEMA_VERSION == 8

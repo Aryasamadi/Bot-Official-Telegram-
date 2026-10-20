@@ -73,7 +73,7 @@
       "S_accessibility_product_quality": "AUDITED_WITH_FINDINGS",
       "T_remaining_risks_maintainability": "PARTIALLY_AUDITED"
     },
-    "completion_percent": 94,
+    "completion_percent": 96,
     "environment_limitations": [
       "PH-00 production read BLOCKED: no ~/.ssh, no ssh config, no gh CLI, no VPS env vars. The running commit SHA, the real systemd unit name, the deployed path, the .env permissions, the installed dependencies, the database state, the backup inventory and the service journal are all UNVERIFIED.",
       "No CI run observed: whether CI is currently green on 08bc876 is unverified.",
@@ -101,15 +101,15 @@
   "summary": {
     "critical": 1,
     "high": 26,
-    "medium": 78,
-    "low": 65,
-    "informational": 11,
-    "total": 181,
-    "open": 175,
-    "fixed_unverified": 0,
-    "verified_fixed": 2,
+    "medium": 79,
+    "low": 66,
+    "informational": 12,
+    "total": 184,
+    "open": 158,
+    "fixed_unverified": 1,
+    "verified_fixed": 20,
     "blocked": 0,
-    "deferred": 4,
+    "deferred": 5,
     "wont_fix": 0
   },
   "findings": [
@@ -235,6 +235,22 @@
       "evidence_ref": "docs/audit/FINDINGS.md#db-011"
     },
     {
+      "id": "DB-012",
+      "title": "ستونِ `users.credit` بازنشسته شد ولی حذف نشده (مهاجرت افزایشی)",
+      "severity": "INFO",
+      "priority": "P3",
+      "category": "IMPROVEMENT OPPORTUNITY",
+      "verification": "STATIC",
+      "status": "OPEN",
+      "phase": "PH-09",
+      "evidence_ref": "docs/audit/FINDINGS.md#db-012",
+      "evidence": [
+        "newsbot/db.py:SCHEMA (users.credit)",
+        "newsbot/db.py:_migrate_legacy_credit"
+      ],
+      "fix_applied": "PH-01: دیگر خوانده/نوشته نمی‌شود ولی حذف نشده (اصلاحِ افزایشی) — حذفِ ستون یک فازِ جداگانه با بکاپ لازم دارد."
+    },
+    {
       "id": "DOC-001",
       "title": "Six references point to a ROADMAP.md that is not tracked in the repository",
       "severity": "LOW",
@@ -259,10 +275,11 @@
       "priority": "P0",
       "category": "CONFIRMED BUG",
       "verification": "REPRODUCED",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
       "evidence_ref": "docs/audit/FINDINGS.md#fin-001",
-      "verification_note": "Executed 2026-10-20 against an isolated temporary SQLite DB using the real record_referral -> credit_referral_on_payment -> upgrade_quote path: a 600000-Toman payer produced a 120000.0 reward credited to the unitless wallet; the en referrer's quote for a $5 plan returned used_balance=5.0, payable=0.0 (24000x over-credit). Mirror case confirmed."
+      "verification_note": "Executed 2026-10-20 against an isolated temporary SQLite DB using the real record_referral -> credit_referral_on_payment -> upgrade_quote path: a 600000-Toman payer produced a 120000.0 reward credited to the unitless wallet; the en referrer's quote for a $5 plan returned used_balance=5.0, payable=0.0 (24000x over-credit). Mirror case confirmed.",
+      "fix_applied": "کیف پولِ واحد‌دار: جدولِ ``wallet(user_id,cur,amount)`` + واحد روی credit_log/referrals/pay_requests؛ پاداش فقط در واحدِ خودش قابل خرج است؛ سطلِ ``legacy`` برای موجودیِ قدیمی منجمد شد (Q-1c)."
     },
     {
       "id": "FIN-002",
@@ -271,9 +288,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-002"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-002",
+      "fix_applied": "مبلغِ نقدی یخ‌زده می‌ماند و فقط **سهمِ کیف پول** بازمحاسبه می‌شود؛ اختلافِ مؤثر ⇒ ``PayQuoteStale`` و توقفِ تأیید (Q-2a)."
     },
     {
       "id": "FIN-003",
@@ -282,9 +300,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-003"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-003",
+      "fix_applied": "بازمحاسبهٔ «نوعِ خرید» در زمانِ تأیید، درخواستِ دوم را رد می‌کند (پلنِ اول برقرار می‌ماند)."
     },
     {
       "id": "FIN-004",
@@ -293,9 +312,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-004"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-004",
+      "fix_applied": "تخفیف روی **ناخالص** اعمال می‌شود و سهمِ کیف پول از مقدارِ تخفیف‌خورده می‌آید ⇒ ``payable + used_balance == ناخالص×(۱-درصد)``؛ صفحهٔ پلن همان ``payable`` را نشان می‌دهد."
     },
     {
       "id": "FIN-005",
@@ -304,9 +324,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-005"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-005",
+      "fix_applied": "در ``do_free`` اگر پلنِ فعالِ پولی وجود داشته باشد، فعال‌سازیِ رایگان رد می‌شود و ``free_used`` مصرف نمی‌شود."
     },
     {
       "id": "FIN-006",
@@ -315,9 +336,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-006"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-006",
+      "fix_applied": "مقدارِ ذخیره‌شده گرد (۲ رقم) می‌شود و رسید دقیقاً همان مقدارِ ذخیره‌شده را می‌نویسد ⇒ جمعِ رسیدها == موجودی، همیشه."
     },
     {
       "id": "FIN-007",
@@ -326,9 +348,10 @@
       "priority": "P2",
       "category": "DOCUMENTATION MISMATCH",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-09",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-007"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-007",
+      "fix_applied": "ردیفِ ``plan_changes`` برای **هر** پرداختِ تأییدشده ثبت می‌شود (نه فقط وقتی کیف پول جابه‌جا شود)."
     },
     {
       "id": "FIN-008",
@@ -337,9 +360,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-008"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-008",
+      "fix_applied": "کدِ تخفیف در زمانِ تأیید دوباره اعتبارسنجی می‌شود (فعال/منقضی/ظرفیت) ⇒ ``PayDiscountInvalid``."
     },
     {
       "id": "FIN-009",
@@ -348,9 +372,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-009"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-009",
+      "fix_applied": "پاداشِ ارجاع **داخلِ همان تراکنشِ تأیید** اعطا می‌شود ⇒ کرش دیگر پاداش را برای همیشه از بین نمی‌برد."
     },
     {
       "id": "FIN-010",
@@ -359,9 +384,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-010"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-010",
+      "fix_applied": "سقفِ ارجاع **به تفکیکِ واحد** و با یک دستورِ شرطیِ اتمیک اعمال می‌شود؛ واحد در ``referrals.credit_cur`` ثبت می‌گردد."
     },
     {
       "id": "FIN-011",
@@ -381,9 +407,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-012"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-012",
+      "fix_applied": "تعرفهٔ نامتناهی/بی‌کران در ``tariff()`` نادیده گرفته می‌شود ⇒ هرگز وارد کیف پول نمی‌گردد."
     },
     {
       "id": "FIN-013",
@@ -392,9 +419,10 @@
       "priority": "P2",
       "category": "DOCUMENTATION MISMATCH",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-013"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-013",
+      "fix_applied": "``refund_payment()`` اضافه شد: بازگشتِ وجه به کیف پولِ همان واحد + رسیدِ ``reason='refund'`` + ردیفِ سابقه."
     },
     {
       "id": "FIN-014",
@@ -414,9 +442,10 @@
       "priority": "P2",
       "category": "IMPROVEMENT OPPORTUNITY",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "DEFERRED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-015"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-015",
+      "fix_applied": "مبالغ همچنان REAL با گردکردنِ half-even هستند. تغییر به واحدِ کوچک/Decimal یک بازآراییِ بزرگ است و به فازِ بعدی موکول شد (اصلاحِ interim = FIN-006 که انجام شد)."
     },
     {
       "id": "FIN-016",
@@ -425,9 +454,10 @@
       "priority": "P3",
       "category": "DOCUMENTATION MISMATCH",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-09",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-016"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-016",
+      "fix_applied": "دک‌استرینگِ ``assign_plan`` اصلاح شد: «زنجیرهٔ پلن» صریحاً پیاده‌نشده اعلام شد (ستون‌ها و پرچمِ ``queued`` بی‌استفاده‌اند)."
     },
     {
       "id": "FIN-017",
@@ -458,9 +488,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-019"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-019",
+      "fix_applied": "قاعدهٔ نزول در زمانِ تأیید دوباره ارزیابی می‌شود ⇒ تأییدِ نزولِ تازه متوقف می‌شود."
     },
     {
       "id": "FIN-020",
@@ -480,9 +511,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-03",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-021"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-021",
+      "fix_applied": "ستونِ ``notified_at`` + ``pay_mark_notified`` + ``pay_unnotified`` و تلاشِ دوباره در هر تیکِ زمان‌بندی (``_renotify_payments``)."
     },
     {
       "id": "FIN-022",
@@ -502,9 +534,10 @@
       "priority": "P3",
       "category": "DOCUMENTATION MISMATCH",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-11",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-023"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-023",
+      "fix_applied": "``REFERRAL_MAX_PER_USER`` از config حذف شد؛ README و ``.env.example`` و تستِ ``final_verification`` هم‌راستا شدند."
     },
     {
       "id": "FIN-024",
@@ -516,6 +549,22 @@
       "status": "OPEN",
       "phase": "PH-01",
       "evidence_ref": "docs/audit/FINDINGS.md#fin-024"
+    },
+    {
+      "id": "FIN-025",
+      "title": "موجودیِ منتقل‌شده به سطلِ «legacy» تا اجرای اسکریپتِ تخصیصِ دستی قابل خرج نیست",
+      "severity": "MEDIUM",
+      "priority": "P2",
+      "category": "DESIGN WEAKNESS",
+      "verification": "STATIC",
+      "status": "OPEN",
+      "phase": "PH-01",
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-025",
+      "evidence": [
+        "newsbot/db.py:_migrate_legacy_credit",
+        "newsbot/core_wallet.py:CUR_LEGACY"
+      ],
+      "fix_applied": "PH-01: موجودیِ قدیمی در سطلِ «legacy» منجمد شد (نه تبدیل، نه خرج). تخصیصِ دستیِ آن یک اسکریپتِ جداگانه و صریحاً مجاز است که هنوز نوشته نشده."
     },
     {
       "id": "NET-001",
@@ -678,9 +727,10 @@
       "priority": "P1",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-007"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-007",
+      "fix_applied": "بخشِ «اتصالِ حرکتِ کیف پول به پرداخت» رفع شد (``credit_log.ref``/``plan_changes.ref`` = ``pay:<id>`` و ``pay_requests.decided_by``/``cur``)؛ **هم‌ترازیِ نگه‌داریِ داده (۹۰ روز) هنوز باقی است** و به PH-09 موکول شد."
     },
     {
       "id": "OBS-008",
@@ -1123,6 +1173,22 @@
       "status": "OPEN",
       "phase": "PH-10",
       "evidence_ref": "docs/audit/FINDINGS.md#ops-031"
+    },
+    {
+      "id": "OPS-032",
+      "title": "jobِ استقرار روی محیطِ «production» اجرا می‌شود ولی قاعدهٔ محیط هنوز در تنظیمات ساخته نشده",
+      "severity": "LOW",
+      "priority": "P2",
+      "category": "CONFIRMED CONFIGURATION DEFECT",
+      "verification": "STATIC",
+      "status": "OPEN",
+      "phase": "PH-04",
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-032",
+      "evidence": [
+        ".github/workflows/deploy-vps.yml:environment: production",
+        "tests/test_deploy_gate.py"
+      ],
+      "fix_applied": "PR #21: کلیدِ `environment: production` اضافه و با تست نگهبانی شد. تا وقتی قاعدهٔ «Required reviewers» در تنظیمات ساخته نشود، GitHub محیط را بدونِ محافظت می‌سازد ⇒ استقرار هنوز خودکار است."
     },
     {
       "id": "PERF-001",
@@ -1725,9 +1791,10 @@
       "priority": "P1",
       "category": "MISSING TEST / UNKNOWN BEHAVIOR",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#test-005"
+      "evidence_ref": "docs/audit/FINDINGS.md#test-005",
+      "fix_applied": "تستِ تسویهٔ دفترِ کیف پول اضافه شد (جمعِ رسیدها == موجودی، و ``balance_after`` == مقدارِ ذخیره‌شده)."
     },
     {
       "id": "TEST-006",
@@ -2011,9 +2078,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-017"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-017",
+      "fix_applied": "پلنِ بدونِ تعرفهٔ عددی آنلاین خریداری نمی‌شود: پیامِ «قیمت توافقی» + دکمهٔ خرید حذف می‌شود (Q-4c)."
     },
     {
       "id": "UI-018",
@@ -2139,6 +2207,7 @@
       "risk": "high_with_additive_schema_migration",
       "complexity": "high",
       "finding_ids": [
+        "DB-012",
         "FIN-001",
         "FIN-002",
         "FIN-003",
@@ -2157,14 +2226,16 @@
         "FIN-021",
         "FIN-023",
         "FIN-024",
+        "FIN-025",
         "OBS-005",
         "OBS-007",
         "OBS-014",
+        "OPS-032",
         "TEST-005",
         "TEST-006",
         "UI-017"
       ],
-      "status": "OPEN_SCOPED_READY",
+      "status": "IMPLEMENTED_AWAITING_MERGE",
       "owner_approval_required": true,
       "objective": "Make every monetary operation correct, atomic, auditable and reversible.",
       "owner_decisions_applied": [
@@ -2173,7 +2244,7 @@
         "Q-3",
         "Q-4"
       ],
-      "execution_note": "Redesigned 2026-10-20 after the owner's answers to Q-1..Q-6. The wallet becomes a currency-tagged table (additive, idempotent migration, legacy balances frozen under cur='legacy' and never converted). The approval contract changes: the cash price stays frozen, the wallet share is re-derived, and a material difference refuses the approval with a re-quote (new PAY_QUOTE_TOLERANCE knob). NOT STARTED - awaiting the owner's go-ahead."
+      "execution_note": "2026-10-20: پیاده‌سازی شد روی شاخهٔ feature/ph-01-money-integrity. ۴۸۱ تست سبز (۴۵۵ پیشین + ۲۶ تازه)، ۱۷/۱۷ بررسیِ final_verification، ۰ نامِ تعریف‌نشده. مهاجرت روی کپیِ پایگاه‌داده اجرا و اثبات شد (افزایشی، idempotent، بدونِ تبدیل). ادغام‌نشده؛ منتظر تأیید مالک."
     },
     {
       "id": "PH-02",
@@ -2522,11 +2593,11 @@
       "objective": "Make every document, count, badge and default match the code."
     }
   ],
-  "current_phase": "PH-00",
-  "current_phase_status": "COMPLETE_WITH_BLOCKED_PRODUCTION_READ",
+  "current_phase": "PH-01",
+  "current_phase_status": "IMPLEMENTED_AWAITING_MERGE",
   "owner_approval_required": true,
   "next_permitted_action": "AWAIT_OWNER_AUTHORIZATION",
-  "recommended_next_phase": "PH-01",
+  "recommended_next_phase": "PH-04",
   "recommended_first_remediation_phase": "PH-01",
   "documents": {
     "master_status": "docs/audit/MASTER_STATUS.md",

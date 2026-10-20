@@ -3,12 +3,16 @@
 FIX v4: recover_stuck_payments() پرداخت‌های گیرکرده در 'processing'
 (کرش بین pay_claim و تصمیم نهایی) را پس از PAY_STUCK_MIN دقیقه به 'pending' برمی‌گرداند.
 """
+import math
 from datetime import timedelta
 from newsbot import config
 from newsbot.db import q, db, _lock, _safe_fields, _trx
 from newsbot.logutils import log_event
 from newsbot.timeutils import now_utc, now_iso, parse_dt, iso_fixed
 from newsbot.core_users import get_user, admin_limits_invalidate
+from newsbot.core_wallet import (currency_of, wallet_get, wallet_total, wallet_rows,
+                                 is_spendable, WalletError, WalletInsufficient)
+from newsbot.core_wallet import _apply as _wallet_apply
 
 
 # پلن‌های پایهٔ سیستم (DB-19): هرکدام با INSERT شرطیِ تک‌دستوره seed می‌شود
@@ -83,10 +87,13 @@ def _assign_writes(conn, uid, pid, st):
     return exp, False
 
 def assign_plan(uid, pid, days=None):
-    """
-    زنجیره‌ای: بدون پلن فعال → همین حالا · همان پلن فعال → روزها اضافه می‌شود · پلن متفاوت فعال → «پلن بعدی» (ارتقا از رایگان فوری است).
-    خروجی: (تاریخ انقضا/شروع, queued)
-    """
+    """واگذاریِ پلن: بدونِ پلنِ فعال → همین حالا · همان پلنِ فعال → روزها اضافه می‌شود ·
+    پلنِ متفاوتِ فعال → **پلن جایگزین می‌شود** (تاریخِ پایان دست‌نخورده می‌ماند؛ مبلغ طبق
+    upgrade_quote فقط برای روزهای باقی‌مانده محاسبه شده است).
+
+    توجه (FIN-016): ستون‌های ``next_plan_id``/``next_plan_days`` و پرچمِ ``queued`` **هنوز
+    پیاده‌سازی نشده‌اند** — «زنجیرهٔ پلن» (پلنِ بعدی پس از پایانِ پلنِ فعلی) یک قابلیتِ
+    محصولیِ پیاده‌نشده است، نه رفتارِ فعلی. خروجی: (تاریخ انقضا/شروع, queued=False)"""
     st = _assign_state(uid, pid, days)
     if not st: return None, False
     out = _trx(lambda conn: _assign_writes(conn, uid, pid, st))
@@ -147,20 +154,24 @@ def rollback_expired_benefits():
     if n: log_event("WARN", f"BIZ-03: role rolled back to user for {n} expired plan(s)")
     return n
 
-# ── قیمت عددی (دوواحدی) و کیف پول — فاز ۱۴ ──
+# ── قیمت عددی (دوواحدی) و کیف پول — فاز ۱۴ · PH-01/Q-1c ──
 def plan_num(p, lang="fa"):
     """تعرفهٔ عددیِ *هم‌واحدِ زبان کاربر*: fa → price_num_fa (تومان) · en → price_num ($).
     هیچ fallback بین‌واحدی انجام نمی‌شود؛ نبودِ تعرفهٔ همان زبان یعنی مسیر قیمت متنی (۰)."""
-    if not p: return 0.0
-    key = "price_num_fa" if lang == "fa" else "price_num"
-    try:
-        return float(p[key] or 0)
-    except (KeyError, IndexError, TypeError, ValueError):
-        return 0.0
+    return tariff(p, lang)[0]
 
-def _price_num(p):
-    """تعرفهٔ عددی دلاری (سازگاری عقب‌رو برای importهای قدیمی؛ در محاسبات مسیر اصلی plan_num)."""
-    return plan_num(p, "en")
+def tariff(p, lang="fa"):
+    """(مبلغِ عددیِ تعرفه, واحدِ پول) برای زبانِ داده‌شده.
+
+    واحد از همان قاعده‌ای می‌آید که ستونِ تعرفه را انتخاب می‌کند: fa → تومان · en → دلار.
+    اگر تعرفهٔ عددیِ آن زبان ثبت نشده باشد یا نامتناهی/بی‌کران باشد ⇒ (۰, ‹'') یعنی
+    «مسیرِ قیمتِ متنی» (پلنِ مذاکره‌ای — Q-4c)."""
+    if not p: return 0.0, ""
+    key = "price_num_fa" if lang == "fa" else "price_num"
+    try: amt = float(p[key] or 0)
+    except (KeyError, IndexError, TypeError, ValueError): return 0.0, ""
+    if not amt or not math.isfinite(amt): return 0.0, ""
+    return amt, currency_of(lang)
 
 def fmt_amt(v, lang="fa"):
     """نمایش مبلغ با واحد زبان کاربر: fa → «3000000 تومان» · en → «$30» (بدون نماد علمی)."""
@@ -170,31 +181,37 @@ def fmt_amt(v, lang="fa"):
 
 def _fmt_price(v): return fmt_amt(v, "en")
 
-def _user_credit(uid):
-    """موجودی کیف پول کاربر (از پاداش دعوت/مابه‌التفاوت تغییر پلن)."""
-    try:
-        r = q("SELECT credit FROM users WHERE id=?", (uid,), one=True); return float(r["credit"] or 0) if r else 0.0
-    except (KeyError, IndexError, TypeError, ValueError): return 0.0
+def _user_credit(uid, cur=None):
+    """موجودیِ کیف پولِ کاربر در واحدِ داده‌شده (بدون واحد ⇒ مجموعِ نمایشی، غیرقابل‌خرج)."""
+    if cur: return wallet_get(uid, cur)
+    return wallet_total(uid)
 
 def upgrade_quote(uid, p, cur, disc_percent=None, lang="en"):
-    """مبلغ ارتقا/تمدید/خرید طبق تعرفهٔ عددیِ هم‌واحدِ زبان کاربر (فاز ۱۴):
-    • ارتقا (پلن متفاوت با نرخ روزانهٔ بالاتر): مابه‌التفاوت روزهای باقی‌مانده − کیف پول؛ انقضای فعلی حفظ می‌شود.
-    • نزول پلن فروش نداریم → kind="blocked" (خرید متوقف؛ پس از پایان پلن فعلی آزاد است).
-    • تمدید (همان پلن فعال): مبلغ کامل دورهٔ جدید − کیف پول؛ روزها به پایان دورهٔ فعلی اضافه می‌شود.
-    • خرید (بدون پلن فعال): مبلغ کامل پلن − کیف پول.
-    اگر تعرفهٔ عددیِ همان زبان ثبت نشده باشد payable_num=False است (مسیر قیمت متنی روی رسید)."""
-    new_num = plan_num(p, lang); new_days = int(p["days"] or 0); rem = proration_remaining_days(uid); bal = _user_credit(uid)
+    """مبلغ ارتقا/تمدید/خرید طبق تعرفهٔ عددیِ هم‌واحدِ زبانِ کاربر.
+
+    PH-01/Q-1c: موجودیِ کیف پول **فقط از همان واحدِ تعرفه** خوانده می‌شود ⇒ پاداشِ یک
+    واحد با واحدِ دیگر قابل خرج نیست.
+    PH-01/FIN-004: تخفیف روی **ناخالص** اعمال می‌شود و سهمِ کیف پول از مقدارِ تخفیف‌خورده
+    مشتق می‌گردد ⇒ ``payable + used_balance == ناخالص × (۱-درصد)`` و مبلغِ نمایش‌داده‌شده
+    همان مبلغِ دریافتی است.
+    """
+    new_num, new_cur = tariff(p, lang)
+    new_days = int(p["days"] or 0); rem = proration_remaining_days(uid)
+    bal = wallet_get(uid, new_cur) if new_cur else 0.0
     out = {"kind": "fresh", "blocked": False, "rem_days": rem, "credit": 0.0, "new_cost": 0.0, "surplus": 0.0,
            "balance": bal, "used_balance": 0.0, "payable": 0.0, "keep_expiry": False, "payable_num": False,
-           "from_plan": (cur["id"] if cur else None), "to_plan": p["id"]}
+           "from_plan": (cur["id"] if cur else None), "to_plan": p["id"], "cur": new_cur}
     if new_days <= 0: return out
     same = bool(cur and p and cur["id"] == p["id"])
-    cur_num = plan_num(cur, lang); cur_days = int(cur["days"] or 0) if cur else 0
+    cur_num, _ccur = tariff(cur, lang); cur_days = int(cur["days"] or 0) if cur else 0
+    try: disc = max(0.0, min(100.0, float(disc_percent))) / 100.0 if disc_percent else 0.0
+    except (TypeError, ValueError): disc = 0.0
     if same and rem > 0:                                   # تمدید همان پلن فعال
         out["kind"] = "renew"
         if new_num:
-            out.update(new_cost=new_num, used_balance=round(min(bal, new_num), 2),
-                       payable=round(new_num - min(bal, new_num), 2), payable_num=True)
+            gross = round(new_num * (1 - disc), 2)
+            used = round(min(bal, gross), 2)
+            out.update(new_cost=gross, used_balance=used, payable=round(gross - used, 2), payable_num=True)
     elif not new_num:
         return out                                         # بدون تعرفهٔ عددیِ هم‌زبان: مسیر متنی
     elif rem > 0 and cur and cur_num and cur_days > 0:
@@ -203,50 +220,66 @@ def upgrade_quote(uid, p, cur, disc_percent=None, lang="en"):
             out.update(kind="blocked", blocked=True, payable_num=True)
             return out
         credit = proration_remaining_value(uid, cur_num, cur_days)
-        new_cost = round(new_num * (rem / new_days), 2)    # هزینهٔ پلن جدید فقط برای روزهای باقی‌مانده
-        backend = round(max(0.0, new_cost - credit), 2)
-        out.update(kind="upgrade", credit=credit, new_cost=new_cost, surplus=round(max(0.0, credit - new_cost), 2),
+        gross = round(new_num * (rem / new_days), 2)        # هزینهٔ پلن جدید برای روزهای باقی‌مانده
+        gross_d = round(gross * (1 - disc), 2)              # تخفیف روی ناخالص
+        backend = round(max(0.0, gross_d - credit), 2)
+        out.update(kind="upgrade", credit=credit, new_cost=gross_d, surplus=round(max(0.0, credit - gross_d), 2),
                    used_balance=round(min(bal, backend), 2), payable=round(backend - min(bal, backend), 2),
                    keep_expiry=True, payable_num=True)
     else:
-        out.update(kind="fresh", new_cost=new_num, used_balance=round(min(bal, new_num), 2),
-                   payable=round(new_num - min(bal, new_num), 2), payable_num=True)
-    if disc_percent and not out["blocked"]: out["payable"] = round(out["payable"] * (100 - disc_percent) / 100, 2)
+        gross = round(new_num * (1 - disc), 2)
+        used = round(min(bal, gross), 2)
+        out.update(kind="fresh", new_cost=gross, used_balance=used, payable=round(gross - used, 2), payable_num=True)
     return out
 
-def _apply_plan_change_sql(conn, uid, pid, pc):
+def _apply_plan_change_sql(conn, uid, pid, pc, ref=None):
     """نوشتن‌های کیف پول/سابقهٔ تغییر پلن روی conn داده‌شده (درون تراکنش یا standalone).
 
-    BIZ-09 (فاز ۱۳): هر حرکت کیف پول یک «رسید» در credit_log می‌گیرد (delta + موجودی پس از حرکت).
-    موجودی پس از حرکت از همان فرمول SQL در پایتون محاسبه می‌شود — روی D1 خواندنِ بعد از UPDATE
-    داخل batch وضعیت *قبل* را می‌دهد و قابل اتکا نیست. صفر خالص (used == surplus) رسید نمی‌سازد."""
+    PH-01/Q-1c: حرکتِ کیف پول روی **جدولِ wallet** و در **واحدِ تعرفه** انجام می‌شود؛
+    موجودیِ کافی نباشد ⇒ استثنا (کل تراکنش برمی‌گردد) به‌جای کلّ اشتباهِ بی‌سروصدا.
+    FIN-006: مقدارِ ذخیره‌شده گرد می‌شود و رسید دقیقاً همان مقدار را می‌نویسد ⇒ جمعِ
+    رسیدها همیشه با موجودی برابر است.
+    FIN-007: سابقهٔ تغییر پلن **همیشه** ثبت می‌شود (حتی وقتی کیف پول جابه‌جا نشده) تا
+    سابقهٔ خرید قابل‌بازسازی باشد.
+    """
     used = float(pc.get("used_balance") or 0); surplus = float(pc.get("surplus") or 0)
+    cur = pc.get("cur") or ""
     if used or surplus:
-        row = conn.execute("SELECT COALESCE(credit,0) AS c FROM users WHERE id=?", (uid,)).fetchone()
-        old = float(row["c"] or 0) if row else 0.0
-        conn.execute("UPDATE users SET credit=MAX(0, COALESCE(credit,0) - ? + ?) WHERE id=?", (used, surplus, uid))
-        new = round(max(0.0, old - used + surplus), 2)
-        delta = round(new - old, 2)
-        if delta:
-            conn.execute("INSERT INTO credit_log(user_id,delta,balance_after,reason,ref,ts) VALUES(?,?,?,?,?,?)",
-                         (uid, delta, new, "plan_change", str(pid), now_iso()))
-        conn.execute("INSERT INTO plan_changes(user_id, plan_id, from_plan, kind, credit_used, surplus, paid, rem_days, ts) VALUES(?,?,?,?,?,?,?,?,?)",
-                     (uid, pid, pc.get("from_plan"), pc.get("kind") or "fresh", used, surplus, pc.get("payable"), pc.get("rem_days"), now_iso()))
+        if not is_spendable(cur):
+            raise WalletError(f"plan change without a spendable currency: {cur!r}")
+        _wallet_apply(conn, uid, cur, round(-used + surplus, 2), "plan_change",
+                      str(pid) if ref is None else ref)
+    conn.execute("INSERT INTO plan_changes(user_id, plan_id, from_plan, kind, credit_used, surplus, paid, rem_days, ref, ts) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                 (uid, pid, pc.get("from_plan"), pc.get("kind") or "fresh", used, surplus, pc.get("payable"),
+                  pc.get("rem_days"), ("" if ref is None else str(ref)), now_iso()))
 
-def apply_plan_change(uid, pid, pc):
+def apply_plan_change(uid, pid, pc, ref=None):
     """کیف پول را مصرف می‌کند، مابه‌التفاوت کاهش پلن را برمی‌گرداند و سابقه‌ی تغییر پلن را ثبت می‌کند."""
     # یک تراکنش: یا هم موجودی کم می‌شود و هم سابقه ثبت، یا هیچ‌کدام (قبلاً دو commit جدا بود)
-    _trx(lambda conn: _apply_plan_change_sql(conn, uid, pid, pc))
+    _trx(lambda conn: _apply_plan_change_sql(conn, uid, pid, pc, ref))
 
 # ── FIX v4: بازیابی پرداخت گیرکرده ──
 def recover_stuck_payments():
     """پرداخت‌های گیرکرده در 'processing' (کرش/هنگ بین pay_claim و تصمیم نهایی) پس از
     PAY_STUCK_MIN دقیقه به 'pending' برمی‌گردند تا مدیر کلان دوباره تصمیم بگیرد.
-    Idempotent: فقط ردیف‌هایی با claimed_at قدیمی‌تر از cutoff جابه‌جا می‌شوند (CAS روی status)."""
-    cutoff = (now_utc() - timedelta(minutes=config.PAY_STUCK_MIN)).isoformat()
+    Idempotent: فقط ردیف‌هایی با claimed_at قدیمی‌تر از cutoff جابه‌جا می‌شوند (CAS روی status).
+
+    PH-01: (۱) cutoff با قالبِ کانونیکالِ DB-14 ساخته می‌شود (مقایسهٔ رشته‌ای هم‌فرمت)؛
+    (۲) ردیف‌هایی که ``applied_at`` دارند به «pending» **برنمی‌گردند** — پلنشان اعمال شده و
+    برگرداندن به pending یعنی اعمالِ دوباره (FIN-011/FIN-022). آن‌ها به «approved» بسته
+    می‌شوند (واقعیت: پرداخت اجرا شده) تا اپراتور بتواند ببندد."""
+    cutoff = iso_fixed(now_utc() - timedelta(minutes=config.PAY_STUCK_MIN))
     with _lock:
-        cur = db().execute("UPDATE pay_requests SET status='pending', claimed_at=NULL WHERE status='processing' AND claimed_at IS NOT NULL AND claimed_at<?", (cutoff,))
+        # ردیف‌هایی که قبلاً اعمال شده‌اند ⇒ وضعیتِ نهایی (applied) — نه «pending»
+        cur = db().execute("UPDATE pay_requests SET status='approved' "
+                           "WHERE status='processing' AND applied_at IS NOT NULL")
+        db().commit()
+        n_applied = cur.rowcount
+        cur = db().execute("UPDATE pay_requests SET status='pending', claimed_at=NULL "
+                           "WHERE status='processing' AND claimed_at IS NOT NULL AND claimed_at<? "
+                           "AND applied_at IS NULL", (cutoff,))
         db().commit()
         n = cur.rowcount
     if n: log_event("WARN", f"{n} stuck payment(s) returned to pending (claimed_at older than {config.PAY_STUCK_MIN}m)")
+    if n_applied: log_event("WARN", f"{n_applied} stuck payment(s) closed as approved (already applied)")
     return n

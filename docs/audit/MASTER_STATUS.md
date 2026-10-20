@@ -14,9 +14,9 @@
 | **Audit workspace** | `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (clean clone of `main` @ `08bc876`; audit docs written here) |
 | **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **1 CRITICAL** financial defect (now **reproduced**), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
 | **Audit completion** | **~94 %** (all 20 audit domains inspected; a second verification pass executed the FIN-001 reproduction and re-ran the suite; production runtime verification unavailable) |
-| **Current phase** | `PH-00` (executed) → `PH-01` (scoped, **not started**) |
-| **Current phase status** | `PH-00 COMPLETE — production read BLOCKED (no access), repository-side verification COMPLETE, 2 infrastructure defects FIXED` · `PH-01 SCOPED AND READY — owner decisions recorded 2026-10-20; awaiting the go-ahead` |
-| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` (merge of PR #20, and/or the PH-01 start) |
+| **Current phase** | `PH-00` (done) → `PH-01` (**implemented, awaiting merge**) → `PH-04` next |
+| **Current phase status** | `PH-00 COMPLETE` · `PH-01 IMPLEMENTED_AWAITING_MERGE` (PR #22) · PR #21 (deploy environment) open & green |
+| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` (merge PR #20, then PR #21, then PR #22) |
 | **Owner approval required** | `true` |
 
 ---
@@ -27,18 +27,18 @@
 |---|---|
 | CRITICAL | **1** |
 | HIGH | **26** |
-| MEDIUM | **78** |
-| LOW | **65** |
-| INFO | **11** |
-| **TOTAL** | **181** |
+| MEDIUM | **79** |
+| LOW | **66** |
+| INFO | **12** |
+| **TOTAL** | **184** |
 
 | Status | Count |
 |---|---|
-| OPEN | 175 |
-| FIXED_UNVERIFIED | 0 |
-| VERIFIED_FIXED | 2 (OPS-028, DOC-001) |
-| BLOCKED | 0 (OPS-001's *fix* is blocked on the PH-00 production read; the finding itself is OPEN) |
-| DEFERRED | 4 (SEC-003, SEC-004, SEC-005, SEC-006 — secrets-at-rest, awaiting decision D-08) |
+| OPEN | 158 |
+| FIXED_UNVERIFIED | 1 (OBS-007 — بخشِ «اتصال به پرداخت» رفع شد، هم‌ترازیِ نگه‌داری هنوز در PH-09 است) |
+| VERIFIED_FIXED | 20 (شامل ۱۶ یافتهٔ مالی، UI-017، TEST-005، OPS-028 و DOC-001) |
+| BLOCKED | 0 (رفعِ OPS-001 به خوانشِ تولید مسدود است) |
+| DEFERRED | 5 (SEC-003…SEC-006 + FIN-015) |
 | WONT_FIX | 0 |
 
 ### Findings by ID prefix
@@ -225,6 +225,27 @@
 | Q-6 | **(c)** read the host first, then decide | PH-04: the rename stays **blocked** on the PH-00 production read; if approved, the old unit name is kept as an alias for one release |
 
 Details and the concrete PH-01 design: `docs/audit/DECISIONS.md` §2 and §2b.
+8. **PH-01 implemented (2026-10-20)** on branch `feature/ph-01-money-integrity` (**PR #22**, not merged):
+   - **کیف پولِ واحد‌دار** (Q-1c): new table `wallet(user_id, cur, amount)`; `credit_log.cur`,
+     `referrals.credit_cur`, `pay_requests.cur/decided_by/notified_at`; a reward is only spendable
+     against a tariff of the **same** currency; the pre-existing balance is **frozen** under
+     `cur='legacy'` (never converted, never spendable) and is allocated manually later (FIN-025).
+   - **تأیید با بازمحاسبهٔ قیمت** (Q-2a): the cash price stays frozen; only the wallet share is
+     re-derived; a material difference raises `PayQuoteStale` and stops the approval
+     (`PAY_QUOTE_TOLERANCE_PCT`, default 0).
+   - **پاداشِ ارجاع داخلِ تراکنشِ تأیید** (FIN-009), **سقفِ per-currency و اتمیک** (FIN-010),
+     **تخفیف روی ناخالص و نمایش = دریافت** (FIN-004), **سابقهٔ خریدِ همیشگی** (FIN-007)،
+     **اعتبارسنجیِ دوبارهٔ تخفیف** (FIN-008)، **بازگشتِ وجه** (FIN-013)، **ردیابیِ پرداخت**
+     (OBS-007), **پلنِ توافقیِ غیرقابل‌خریدِ آنلاین** (Q-4c/UI-017)، **حذفِ کلیدِ سقفِ
+     «تعداد»** (FIN-023).
+   - **مهاجرت**: additive, idempotent (by construction, not only by a flag), rehearsed **on a copy**
+     of a real v7 database — 4 dedicated tests in `tests/test_ph01_migration.py` prove the new
+     columns/table appear, the legacy balance lands in the frozen bucket, a second run changes
+     nothing, and the **source file is byte-identical afterwards** (SHA-256).
+   - **Tests:** `481 passed` (455 before + 26 new), `0` undefined names, `17/17` `final_verification.py`,
+     `run.py --check` green. **Negative controls:** forcing the reward into a single bucket (the
+     pre-fix behaviour) makes FIN-001/FIN-010 fail; the ADD-variant of the migration breaks the
+     idempotency test.
 
 ---
 

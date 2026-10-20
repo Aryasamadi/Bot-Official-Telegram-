@@ -445,7 +445,10 @@ async def handle_input(update, context, st):
                 return await popup(update, context, tr(lang, "receipt_too_big", n=config.MAX_MEDIA_MB))
             if pay_pending_for(uid, pid): done(tr(lang, "req_pending")); return await dispatch(update, context, back)
             # st["final"] is the single source of truth (prorated amount for upgrades, full price text otherwise)
-            rid = pay_create(uid, pid, msg.chat_id, msg.message_id, text, st.get("disc"), st.get("final"), st.get("pc"))
+            # PH-01: واحدِ پول هم همراهِ مبلغ ذخیره می‌شود (Q-1c) تا پاداشِ ارجاع و بازمحاسبهٔ
+            # قیمت در همان واحد انجام شود.
+            rid = pay_create(uid, pid, msg.chat_id, msg.message_id, text, st.get("disc"), st.get("final"),
+                             st.get("pc"), (st.get("pc") or {}).get("cur", ""))
         done(); ud.get("disc", {}).pop(str(pid), None)
         disc = f"\n🎟 {esc(st['disc'])}" if st.get("disc") else ""; note = f"\n📝 {esc(text[:400])}" if text else ""
         price_txt = esc(st.get("display") or st.get("final") or p["price"])

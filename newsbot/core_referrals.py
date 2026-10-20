@@ -81,10 +81,12 @@ def record_referral(referrer_id, referred_id):
         return cur.rowcount == 1
 
 
-def credit_referral_on_payment(user_id, paid_amount, ref_key=None):
-    """پاداش هر خرید: amount = paid × درصد/۱۰۰ (محدود به سقف مبلغیِ معرف) به credit_amount اضافه
-    می‌شود و کیف پول را همان trigger اتمیک شارژ می‌کند.
-    خروجی: (referrer_id, amount) یا None. اگر ref_key تکراری باشد ⇒ None (idempotent per-payment)."""
+def credit_referral_on_payment(user_id, paid_amount, cur=None, ref_key=None):
+    """پاداش هر خرید: amount = paid × درصد/۱۰۰ (محدود به سقفِ مبلغیِ معرف در همان واحد)
+    به credit_amount اضافه می‌شود و trigger اتمیک کیف پولِ معرف را همان واحد شارژ می‌کند.
+
+    PH-01/Q-1c: واحدِ پول صریح است (``cur``) — پاداشِ تومانی در کیف پولِ دلاری خرج نمی‌شود.
+    خروجی: (referrer_id, amount, cur) یا None. اگر ref_key تکراری باشد ⇒ None (idempotent per-payment)."""
     if not config.REFERRAL_ENABLED:
         return None
     try:
@@ -97,6 +99,11 @@ def credit_referral_on_payment(user_id, paid_amount, ref_key=None):
             db().execute("UPDATE referrals SET credited=1, credit_amount=0, note='no_numeric_price' WHERE referred_id=? AND credited=0", (user_id,))
             db().commit()
         return None
+    if not cur:
+        # واحدِ پیش‌فرض = واحدِ تعرفهٔ زبانِ خودِ پرداخت‌کننده (Q-1c)
+        from newsbot.core_users import user_lang
+        from newsbot.core_wallet import currency_of
+        cur = currency_of(user_lang(user_id) or "fa")
     pct, cap = referral_cfg()
     amount = round(paid * pct / 100.0, 2)
     if amount <= 0:
@@ -105,38 +112,45 @@ def credit_referral_on_payment(user_id, paid_amount, ref_key=None):
             db().commit()
         return None
 
-    def _go(conn):
-        if ref_key is not None:   # قفل idempotency هر پرداخت — داخل همان تراکنش اتمیک
-            if conn.execute("SELECT 1 FROM settings WHERE key=?", (REF_PAID_PREFIX + str(ref_key),)).fetchone():
-                return None
-        row = conn.execute("SELECT referrer_id, credited FROM referrals WHERE referred_id=?", (user_id,)).fetchone()
-        if not row or row["referrer_id"] == user_id:
+    res = _trx(lambda conn: _credit_in_tx(conn, user_id, amount, cur, cap, ref_key))
+    if res:
+        rid, credited_amount, credited_cur = res
+        log_event("INFO", f"referral credit {credited_amount} {credited_cur} to {rid} (from paid user {user_id})", rid)
+        return rid, credited_amount
+    return None
+
+
+def _credit_in_tx(conn, user_id, amount, cur, cap=0.0, ref_key=None):
+    """اعطای پاداش روی conn داده‌شده — **درونِ تراکنشِ تأییدِ پرداخت** (PH-01/FIN-009).
+
+    FIN-010: سقف با **یک** دستورِ شرطی و بررسیِ rowcount اعمال می‌شود ⇒ در برابرِ رقابت
+    قابل عبور نیست. سقف در **همان واحدِ پول** مقایسه می‌شود (نه با جمعِ واحدهای مختلف).
+    """
+    if ref_key is not None:   # قفل idempotency هر پرداخت — داخل همان تراکنش اتمیک
+        if conn.execute("SELECT 1 FROM settings WHERE key=?", (REF_PAID_PREFIX + str(ref_key),)).fetchone():
             return None
-        give = amount
-        if cap > 0:   # REF-3: سقف مبلغی کل برای هر معرف (۰ = نامحدود)
-            earned = conn.execute("SELECT COALESCE(SUM(credit_amount),0) s FROM referrals WHERE referrer_id=? AND credited=1",
-                                  (row["referrer_id"],)).fetchone()["s"]
-            remaining = round(cap - float(earned or 0), 2)
-            give = 0.0 if remaining <= 0 else min(amount, remaining)
-        if give <= 0:
-            if not row["credited"]:
-                conn.execute("UPDATE referrals SET credited=1, credit_amount=0, note='cap' WHERE referred_id=? AND credited=0", (user_id,))
-            if ref_key is not None:
-                conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (REF_PAID_PREFIX + str(ref_key), "1"))
-            return None
-        note = "" if give >= amount else "cap_partial"
-        # افزایش credit_amount همین statement؛ trigger اتمیک delta را به کیف پول معرف می‌ریزد
-        conn.execute("UPDATE referrals SET credited=1, credit_amount=COALESCE(credit_amount,0)+?, note=? WHERE referred_id=?",
-                     (give, note, user_id))
+    row = conn.execute("SELECT referrer_id, credited FROM referrals WHERE referred_id=?", (user_id,)).fetchone()
+    if not row or row["referrer_id"] == user_id:
+        return None
+    give = amount
+    if cap > 0:   # REF-3: سقف مبلغیِ کل برای هر معرف، **به تفکیکِ واحد** (۰ = نامحدود)
+        earned = conn.execute("SELECT COALESCE(SUM(credit_amount),0) s FROM referrals "
+                              "WHERE referrer_id=? AND credited=1 AND credit_cur=?", (row["referrer_id"], cur)).fetchone()["s"]
+        remaining = round(cap - float(earned or 0), 2)
+        give = 0.0 if remaining <= 0 else min(amount, remaining)
+    if give <= 0:
+        if not row["credited"]:
+            conn.execute("UPDATE referrals SET credited=1, credit_amount=0, note='cap' WHERE referred_id=? AND credited=0", (user_id,))
         if ref_key is not None:
             conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (REF_PAID_PREFIX + str(ref_key), "1"))
-        return row["referrer_id"], give
-
-    res = _trx(_go)
-    if res:
-        rid, credited_amount = res
-        log_event("INFO", f"referral credit {credited_amount} to {rid} (from paid user {user_id})", rid)
-    return res
+        return None
+    note = "" if give >= amount else "cap_partial"
+    # افزایش credit_amount همین statement؛ trigger اتمیک delta را به کیف پولِ معرف می‌ریزد
+    conn.execute("UPDATE referrals SET credited=1, credit_amount=COALESCE(credit_amount,0)+?, note=?, credit_cur=? WHERE referred_id=?",
+                 (give, note, cur, user_id))
+    if ref_key is not None:
+        conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (REF_PAID_PREFIX + str(ref_key), "1"))
+    return row["referrer_id"], give, cur
 
 
 def referral_stats(uid):

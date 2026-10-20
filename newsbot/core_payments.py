@@ -24,6 +24,15 @@ class PayDiscountExhausted(PayError):
 class PayNoPlan(PayError):
     code = "notfound"        # پلن نامعتبر/رایگان/غیرفعال
 
+class PayQuoteStale(PayError):
+    """PH-01/Q-2a — کیف پول یا وضعیتِ کاربر بین درخواست و تأیید عوض شده ⇒ مبلغِ
+    نمایش‌داده‌شده دیگر معتبر نیست ⇒ تأیید متوقف می‌شود تا قیمت دوباره گرفته شود."""
+    code = "quote_stale"
+
+class PayDiscountInvalid(PayError):
+    """کدِ تخفیف بین درخواست و تأیید غیرفعال/منقضی/تکمیل شده (FIN-008)."""
+    code = "disc_invalid"
+
 
 def support_open(uid): q("INSERT OR REPLACE INTO support(user_id,open,opened_at) VALUES(?,1,?)", (uid, now_iso()), commit=True)
 def support_close(uid): q("UPDATE support SET open=0 WHERE user_id=?", (uid,), commit=True)
@@ -37,10 +46,12 @@ def support_map_get(msg_key):
 
 def pay_pending_for(uid, pid): return q("SELECT * FROM pay_requests WHERE user_id=? AND plan_id=? AND status='pending'", (uid, pid), one=True)
 
-def pay_create(uid, pid, receipt_chat=None, receipt_msg=None, note="", discount=None, final_price=None, pc=None):
-    return q("INSERT INTO pay_requests(user_id,plan_id,created_at,receipt_chat,receipt_msg,note,discount,final_price,pc) VALUES(?,?,?,?,?,?,?,?,?)",
+def pay_create(uid, pid, receipt_chat=None, receipt_msg=None, note="", discount=None, final_price=None, pc=None, cur=""):
+    """ثبتِ درخواستِ پرداخت. ``cur`` واحدِ پولِ مبلغ است (Q-1c) تا پاداشِ ارجاع و
+    بررسیِ مبلغ در همان واحد انجام شود."""
+    return q("INSERT INTO pay_requests(user_id,plan_id,created_at,receipt_chat,receipt_msg,note,discount,final_price,pc,cur) VALUES(?,?,?,?,?,?,?,?,?,?)",
              (uid, pid, now_iso(), receipt_chat, receipt_msg, (note or "")[:500], discount, final_price,
-              json.dumps(pc, ensure_ascii=False) if pc else None), commit=True)
+              json.dumps(pc, ensure_ascii=False) if pc else None, cur or ""), commit=True)
 
 def pay_pending(): return q("SELECT r.*, u.username, u.name, p.name plan_name, p.price plan_price FROM pay_requests r JOIN users u ON u.id=r.user_id JOIN plans p ON p.id=r.plan_id WHERE r.status='pending' ORDER BY r.id")
 
@@ -65,18 +76,27 @@ def _apply_applied_at(rid):
         db().commit()
         return cur.rowcount == 1
 
-def pay_approve_atomic(rid):
-    """تأیید کاملِ پرداخت: claim + مصرف تخفیف + کیف پول/سابقه + واگذاری پلن + وضعیت approved.
+def pay_approve_atomic(rid, by_uid=None):
+    """تأیید کاملِ پرداخت: claim + مصرفِ معتبرِ تخفیف + بازمحاسبهٔ قیمت + کیف پول/سابقه
+    + واگذاریِ پلن + پاداشِ ارجاع + وضعیت approved — همه در **یک** تراکنش.
 
     sqlite (بک‌اند تولید): همهٔ نوشتن‌ها در یک `_trx` (BEGIN IMMEDIATE) — کرش در هر نقطه
     رول‌بک کامل می‌کند (DB-04) و دابل‌کلیک با rowcount CAS رد می‌شود (GAP-06).
-    d1 (غیر-گواهی‌شده): توالی CAS تک‌دستوره + نشان applied_at — کرشِ بین واگذاری و تأییدِ
-    نهایی دیگر باعث دوباره‌اعمال نمی‌شود (بازیابی فقط approved را می‌بندد).
+    d1 (غیر-گواهی‌شده): توالی CAS تک‌دستوره + نشان applied_at.
 
-    خروجی: (exp, queued) — همان قرارداد assign_plan. خطا: PayError با code نمایشی.
+    PH-01/Q-2a: پیش از هر نوشتنی، **قیمت دوباره محاسبه می‌شود** با کیف پولِ زنده؛ اگر
+    مبلغِ نهایی با مبلغِ یخ‌زده (که به مشتری نشان داده شده) اختلافِ مؤثر داشته باشد،
+    تأیید **متوقف** می‌شود (``PayQuoteStale``) — هرگز عددی که مشتری ندیده دریافت نمی‌کند.
+    PH-01/FIN-009: پاداشِ ارجاع **داخلِ همین تراکنش** اعطا می‌شود ⇒ کرش دیگر پاداش را
+    برای همیشه از بین نمی‌برد.
+
+    خروجی: (exp, queued, ref_reward) — ref_reward = (referrer_id, amount, cur) یا None.
     """
-    from newsbot.core_plans import _assign_state, _assign_writes, _apply_plan_change_sql
+    from newsbot.core_plans import _assign_state, _assign_writes, _apply_plan_change_sql, upgrade_quote, get_plan, get_user
     from newsbot.core_users import admin_limits_invalidate
+    from newsbot.core_discounts import disc_use_tx
+    from newsbot.core_referrals import _credit_in_tx, referral_cfg
+    from newsbot.core_wallet import currency_of, lang_of_currency
     r = pay_get(rid)
     if not r or r["status"] != "pending": raise PayAlreadyDecided(rid)
     p = q("SELECT * FROM plans WHERE id=?", (r["plan_id"],), one=True)
@@ -90,25 +110,80 @@ def pay_approve_atomic(rid):
         from newsbot.timeutils import parse_dt
         exp = parse_dt(u["plan_expires"]) if u and u["plan_expires"] else None
         admin_limits_invalidate(r["user_id"])
-        return exp, False
+        return exp, False, None
     if config.DB_BACKEND == "d1":
         return _pay_approve_d1(rid, r, pc)
-    st = _assign_state(r["user_id"], r["plan_id"])
-    if not st: raise PayNoPlan(rid)
+    cur_code = (r["cur"] if "cur" in r.keys() else "") or (pc.get("cur") or "")
+    lang = lang_of_currency(cur_code) or "fa"
     def _go(conn):
         cur = conn.execute("UPDATE pay_requests SET status='processing', claimed_at=? WHERE id=? AND status='pending'", (now_iso(), rid))
         if cur.rowcount != 1: raise PayAlreadyDecided(rid)       # دابل‌کلیک/هم‌زمان (GAP-06)
+        # ── بازمحاسبهٔ قیمت با کیف پولِ زنده (Q-2a) ────────────────────────────────────
+        _revalidate_quote(conn, r, p, pc, lang)
         if r["discount"]:
-            cur = conn.execute("UPDATE discounts SET used=used+1 WHERE code=? AND (max_uses=0 OR used<max_uses)", (str(r["discount"]).strip().upper(),))
-            if cur.rowcount != 1: raise PayDiscountExhausted(rid)  # رول‌بک کامل ⇒ تخفیف مصرف‌نشده می‌ماند
-        _apply_plan_change_sql(conn, r["user_id"], r["plan_id"], pc)
+            ok, why = disc_use_tx(conn, r["discount"])
+            if not ok: raise PayDiscountInvalid(rid) if why in ("inactive", "expired", "notfound") else PayDiscountExhausted(rid)
+        st = _assign_state(r["user_id"], r["plan_id"])           # داخلِ تراکنش ⇒ بدون TOCTOU (FIN-003)
+        if not st: raise PayNoPlan(rid)
+        _apply_plan_change_sql(conn, r["user_id"], r["plan_id"], pc, ref=f"pay:{rid}")
         exp, queued = _assign_writes(conn, r["user_id"], r["plan_id"], st)
         if exp is None: raise PayNoPlan(rid)
-        conn.execute("UPDATE pay_requests SET status='approved', decided_at=?, applied_at=? WHERE id=?", (now_iso(), now_iso(), rid))
-        return exp, queued
+        # ── پاداشِ ارجاع: درونِ همین تراکنش (FIN-009/OBS-005) ─────────────────────────
+        ref_reward = None
+        paid_num = _paid_amount(r, p, pc, lang)
+        if paid_num:
+            _pct, cap = referral_cfg()
+            amount = round(paid_num * _pct / 100.0, 2)
+            if amount > 0:
+                got = _credit_in_tx(conn, r["user_id"], amount, cur_code, cap, ref_key=f"pay:{rid}")
+                if got: ref_reward = got
+        conn.execute("UPDATE pay_requests SET status='approved', decided_at=?, applied_at=?, decided_by=? WHERE id=?",
+                     (now_iso(), now_iso(), by_uid, rid))
+        return exp, queued, ref_reward
     out = _trx(_go)
     admin_limits_invalidate(r["user_id"])
     return out
+
+
+def _paid_amount(r, p, pc, lang):
+    """مبلغِ نقدیِ پرداخت‌شده (پایهٔ پاداشِ ارجاع) — عدد یا None."""
+    try: v = float(str(r["final_price"] or "").strip())
+    except (TypeError, ValueError): v = None
+    if v is None:
+        try: v = float(pc.get("payable") or 0) or None
+        except (TypeError, ValueError): v = None
+    if v is None:
+        from newsbot.core_plans import plan_num
+        v = plan_num(p, lang) or None
+    return v
+
+
+def _revalidate_quote(conn, r, p, pc, lang):
+    """PH-01/Q-2a — قیمت را با کیف پولِ زنده دوباره حساب کن و با مبلغِ یخ‌زده مقایسه کن.
+
+    * اگر «نوعِ» خرید عوض شده (fresh ↔ renew ↔ upgrade) ⇒ ردّ قیمت.
+    * اگر مبلغِ نهایی بیش از آستانه اختلاف داشته باشد ⇒ ردّ قیمت (``PayQuoteStale``).
+    * آستانه درصدی است (واحد-مستقل) ⇒ برای دو واحدِ پول یکسان معنی دارد.
+    """
+    from newsbot.core_plans import upgrade_quote, get_plan, get_user
+    frozen_payable = round(float(pc.get("payable") or 0), 2)
+    frozen_kind = pc.get("kind") or "fresh"
+    if not pc or not frozen_payable:
+        return                                    # ردیفِ قدیمی بدونِ قیمتِ یخ‌زده: تغییری داده نمی‌شود
+    u = get_user(r["user_id"]); cur = get_plan(u["plan_id"]) if u and u["plan_id"] else None
+    disc_pct = None
+    if r["discount"]:
+        from newsbot.core_discounts import disc_get
+        d = disc_get(r["discount"])
+        disc_pct = d["percent"] if d else None
+    q2 = upgrade_quote(r["user_id"], p, cur, disc_pct, lang=lang)
+    if q2["cur"] and pc.get("cur") and q2["cur"] != pc.get("cur"):
+        raise PayQuoteStale(r["id"])
+    if (q2["kind"] or "fresh") != frozen_kind:
+        raise PayQuoteStale(r["id"])
+    tol = round(abs(frozen_payable) * (config.PAY_QUOTE_TOLERANCE_PCT / 100.0), 2)
+    if abs(round(float(q2["payable"] or 0), 2) - frozen_payable) > tol:
+        raise PayQuoteStale(r["id"])
 
 def _pay_approve_d1(rid, r, pc):
     """مسیر d1: CASهای تک‌دستوره (هر کدام auto-commit اتمیک روی D1) + نشان applied_at."""
@@ -118,7 +193,7 @@ def _pay_approve_d1(rid, r, pc):
     if r["discount"] and not disc_use(r["discount"]):
         pay_set(rid, "pending"); raise PayDiscountExhausted(rid)
     try:
-        apply_plan_change(r["user_id"], r["plan_id"], pc)
+        apply_plan_change(r["user_id"], r["plan_id"], pc, ref=f"pay:{rid}")
         exp, queued = assign_plan(r["user_id"], r["plan_id"])
     except Exception:
         if r["discount"]:
@@ -131,4 +206,40 @@ def _pay_approve_d1(rid, r, pc):
         pay_set(rid, "pending"); raise PayNoPlan(rid)
     _apply_applied_at(rid)
     pay_set(rid, "approved")
-    return exp, queued
+    return exp, queued, None
+
+
+def pay_mark_notified(rid):
+    """PH-01/FIN-021 — علامت‌گذاریِ «نتیجه به مشتری اعلام شد»."""
+    q("UPDATE pay_requests SET notified_at=? WHERE id=? AND notified_at IS NULL", (now_iso(), rid), commit=True)
+
+
+def pay_unnotified(limit=50):
+    """پرداخت‌های تأییدشده‌ای که مشتری هنوز مطلع نشده (برای ارسالِ دوباره)."""
+    return q("SELECT * FROM pay_requests WHERE status='approved' AND notified_at IS NULL "
+             "ORDER BY id LIMIT ?", (int(limit or 50),))
+
+
+def refund_payment(rid, amount=None, reason="refund"):
+    """PH-01/FIN-013 — بازگرداندنِ مبلغ به کیف پولِ مشتری، با رسیدِ رسمی.
+
+    بدونِ این مسیر، هر خطای مالی فقط با SQL دستی جبران می‌شد و «دفترِ کیف پول» بی‌ردّ
+    می‌ماند. مبلغ پیش‌فرض = سهمِ کیف پولِ مصرف‌شده در همان پرداخت.
+    """
+    from newsbot.core_plans import _apply_plan_change_sql
+    from newsbot.core_wallet import _apply as _wallet_apply, is_spendable
+    r = pay_get(rid)
+    if not r: return False
+    cur = (r["cur"] if "cur" in r.keys() else "") or ""
+    if not is_spendable(cur): return False
+    try: pc = json.loads(r["pc"]) if ("pc" in r.keys() and r["pc"]) else {}
+    except Exception: pc = {}
+    amt = round(float(amount if amount is not None else (pc.get("used_balance") or 0)), 2)
+    if amt <= 0: return False
+    def _go(conn):
+        _wallet_apply(conn, r["user_id"], cur, amt, reason, f"pay:{rid}")
+        conn.execute("INSERT INTO plan_changes(user_id, plan_id, from_plan, kind, credit_used, surplus, paid, rem_days, ref, ts) "
+                     "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                     (r["user_id"], r["plan_id"], pc.get("from_plan"), reason, 0, amt, 0, 0, f"pay:{rid}", now_iso()))
+        return True
+    return bool(_trx(_go))

@@ -53,7 +53,13 @@ TXT = {
     "plan_upgrade_note": ("⬆️ <b>ارتقای فوری:</b> مبلغ = تفاوت تعرفه برای روزهای باقی‌مانده؛ انقضای فعلی حفظ می‌شود و مبلغ دقیق در صفحهٔ پرداخت می‌آید.", "⬆️ <b>Instant upgrade:</b> amount = tariff difference for the remaining days; your expiry stays the same and the exact amount shows on the payment page."),
     "plan_nonum": ("ℹ️ برای تغییر پلن، مدیر باید «تعرفهٔ عددی» این پلن را در زبان شما تنظیم کند؛ تا آن زمان ارتقا ممکن نیست.", "ℹ️ To switch plans, an admin must set this plan's numeric tariff in your language; upgrade is unavailable until then."),
     "plan_downgrade": ("🔒 نزول پلن فروش نداریم؛ پس از پایان پلن فعلی می‌توانید این پلن را بخرید.", "🔒 Downgrades are not sold; you can buy this plan after your current plan ends."),
-    "plan_locked_btn": ("🔒 در دسترس نیست", "🔒 Not available"),
+     "plan_locked_btn": ("🔒 در دسترس نیست", "🔒 Not available"),
+     # PH-01/FIN-005: پلنِ پولیِ فعال با پلنِ رایگان جایگزین نمی‌شود
+     "plan_active_free": ("ℹ️ پلنِ فعالِ شما تا پایانِ دوره برقرار است؛ پلنِ رایگان در این فاصله قابل فعال‌سازی نیست.",
+                         "ℹ️ Your active plan stays until it ends; the free plan cannot be activated in the meantime."),
+     # PH-01/Q-4c: پلنِ بدونِ تعرفهٔ عددی ⇒ قیمت توافقی و خریدِ آنلاین ممکن نیست
+     "plan_negotiable": ("💬 قیمت این پلن توافقی است و آنلاین خریداری نمی‌شود؛ برای دریافت قیمت با پشتیبانی (/man) تماس بگیرید.",
+                         "💬 This plan's price is negotiable and is not sold online; contact support (/man) for a quote."),
     "plan_num_line": ("💵 مبلغ محاسبهٔ این پلن: <b>{v}</b>", "💵 Billing amount for this plan: <b>{v}</b>"),
     "plan_credit_line": ("− اعتبار {name}: {v}", "− {name} credit: {v}"),
     "plan_wallet_line": ("− کیف پول: {v}", "− wallet: {v}"),
@@ -251,7 +257,13 @@ TXT = {
     "s_m_off": ("⏸ خاموش", "⏸ off"), "s_m_ok": ("🟢 سالم", "🟢 healthy"), "s_m_down": ("🔴 خراب", "🔴 down"), "s_model_test": ("🧪 تست", "🧪 Test"), "s_model_del": ("🗑 حذف مدل", "🗑 Delete model"),
     "s_model_testing": ("🧪 در حال تست…", "🧪 Testing…"), "s_model_progress": ("🧪 تست مدل {i}/{n}: <b>{name}</b>", "🧪 Testing model {i}/{n}: <b>{name}</b>"), "s_model_res": ("{i} {t}s: {out}", "{i} {t}s: {out}"), "s_model_added": ("✅ مدل «{name}» اضافه شد · {res}", "✅ Model “{name}” added · {res}"), "s_model_need": ("⚠️ Base URL و نام مدل الزامی است", "⚠️ Base URL and model name are required"), "s_model_on": ("🟢 مدل روشن شد", "🟢 Model on"), "s_model_off": ("⏸ مدل خاموش شد", "⏸ Model off"),
     "s_pays_title": ("🛎 <b>پرداخت‌های معلق</b>", "🛎 <b>Pending payments</b>"), "s_pay_none": ("📭 هیچ رسید در انتظاری وجود ندارد.", "📭 No pending receipts."), "s_pay_line": ("\n• #{id} {who} · 🕐 {t}\n🧾 <b>{plan}</b> · 💰 {price}", "\n• #{id} {who} · 🕐 {t}\n🧾 <b>{plan}</b> · 💰 {price}"), "s_pay_rc": ("📎 #{id}", "📎 #{id}"),
-    "s_pay_ok": ("✅ تأیید", "✅ Approve"), "s_pay_no": ("❌ رد", "❌ Reject"), "s_pay_done_ok": ("✅ تأیید شد · پلن فعال یا رزرو", "✅ Approved · plan activated or queued"), "s_pay_done_no": ("❌ رد شد", "❌ Rejected"), "s_pay_seen": ("⚠️ قبلاً بررسی شده", "⚠️ Already handled"),
+     "s_pay_ok": ("✅ تأیید", "✅ Approve"), "s_pay_no": ("❌ رد", "❌ Reject"), "s_pay_done_ok": ("✅ تأیید شد · پلن فعال یا رزرو", "✅ Approved · plan activated or queued"), "s_pay_done_no": ("❌ رد شد", "❌ Rejected"), "s_pay_seen": ("⚠️ قبلاً بررسی شده", "⚠️ Already handled"),
+     # PH-01/Q-2a: مبلغ/کیف پول بین درخواست و تأیید عوض شده ⇒ تأیید متوقف می‌شود
+     "s_pay_stale": ("⚠️ مبلغ یا موجودیِ کیف پول از زمانِ ثبتِ رسید تغییر کرده؛ تأیید متوقف شد. از مشتری بخواهید قیمت را دوباره بگیرد.",
+                     "⚠️ The amount or the wallet balance changed since the receipt was submitted; approval was stopped. Ask the customer to re-quote."),
+     # PH-01/FIN-008: کد تخفیف بین درخواست و تأیید غیرفعال/منقضی شده
+     "s_pay_disc_invalid": ("⚠️ کد تخفیف دیگر معتبر نیست (غیرفعال، منقضی یا تکمیل)؛ تأیید متوقف شد.",
+                            "⚠️ The discount code is no longer valid (inactive, expired or exhausted); approval was stopped."),
     "s_pay_new": ("🛎 <b>پرداخت #{id}</b>\n👤 {who} (<code>{uid}</code>)\n🧾 <b>{plan}</b>\n💵 مبلغ پلن: {plan_price}\n💰 پرداختی: {price}{disc}{note}", "🛎 <b>Payment #{id}</b>\n👤 {who} (<code>{uid}</code>)\n🧾 <b>{plan}</b>\n💵 Plan price: {plan_price}\n💰 Payable: {price}{disc}{note}"),
     "s_bc_prompt": ("پیام همگانی (متن/عکس/ویدیو؛ فرمت حفظ می‌شود):", "Broadcast message (text/photo/video; formatting kept):"), "s_bc_confirm": ("📣 ارسال به <b>{n}</b> کاربر؟", "📣 Send to <b>{n}</b> users?"), "s_bc_go": ("✅ ارسال", "✅ Send"),     "s_bc_sending": ("📣 ارسال به {n} کاربر…", "📣 Sending to {n} users…"), "s_bc_progress": ("📣 ارسال همگانی: {i}/{n}", "📣 Broadcasting: {i}/{n}"), "s_bc_done": ("📣 موفق {ok} · ناموفق {fail}", "📣 ok {ok} · failed {fail}"),
     "s_texts_title": ("<b>متن‌ها</b>\nجای‌گذار: <code>{name}</code> <code>{plan}</code> <code>{price}</code>", "<b>Texts</b>\nPlaceholders: <code>{name}</code> <code>{plan}</code> <code>{price}</code>"),

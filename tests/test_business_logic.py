@@ -12,7 +12,6 @@ from newsbot.ai_models import parse_json, _validate_generation, AIResponseError
 from newsbot.text_format import salvage_post
 from newsbot.core_discounts import disc_create, disc_use, disc_valid, disc_refund
 from newsbot.core_referrals import record_referral
-from newsbot.config import REFERRAL_MAX_PER_USER as CFG_CAP
 from newsbot.db import q
 
 
@@ -95,8 +94,13 @@ def test_expired_discount_is_invalid():
 # ── ارجاع: سقف و fail-closed ──
 
 def test_referral_cap_config_exists():
-    """H6: REFERRAL_MAX_PER_USER باید در config تعریف شده باشد (قبلاً AttributeError می‌داد)."""
-    assert isinstance(CFG_CAP, int) and CFG_CAP >= 0
+    """PH-01/FIN-023: سقفِ «تعدادِ» ارجاع حذف شد — فقط سقفِ مبلغی (به تفکیکِ واحد) وجود دارد.
+
+    قبلاً ``REFERRAL_MAX_PER_USER`` در config بود ولی هیچ مسیری از آن استفاده نمی‌کرد؛ فقط
+    یک تصورِ نادرست برای اپراتور می‌ساخت. حالا نباید وجود داشته باشد."""
+    import newsbot.config as cfg
+    assert not hasattr(cfg, "REFERRAL_MAX_PER_USER"), \
+        "سقفِ «تعداد» نباید برگردد (Q-3a: پاداش روی هر خرید است و سقف فقط مبلغی/واحدی)"
 
 
 def test_referral_self_and_missing_referrer_rejected():

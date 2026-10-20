@@ -74,7 +74,8 @@ def test_quote_en_tariff_and_wallet_deduction():
     p30 = create_plan(name="en30", days=30, price_num=30)
     p60 = create_plan(name="en60", days=30, price_num=60)
     uid = 88403; _mkuser(uid, "en")
-    q("UPDATE users SET credit=10 WHERE id=?", (uid,), commit=True)
+    from newsbot.core_wallet import wallet_credit
+    wallet_credit(uid, "usd", 10, "test", None)      # PH-01: کیف پولِ واحد‌دار
     assign_plan(uid, p30)
     up = upgrade_quote(uid, get_plan(p60), get_plan(p30), lang="en")
     assert up["kind"] == "upgrade" and up["used_balance"] == 10

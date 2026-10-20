@@ -11,23 +11,43 @@ from newsbot.timeutils import now_utc, now_iso
 from newsbot.core_plans import create_plan, get_plan
 import newsbot.core_plans as core_plans
 from newsbot.core_payments import (pay_create, pay_get, pay_approve_atomic,
-                                   PayAlreadyDecided, PayDiscountExhausted, PayNoPlan)
+                                   PayAlreadyDecided, PayDiscountExhausted, PayNoPlan, PayQuoteStale)
 from newsbot.core_discounts import disc_create, disc_get
 
 
-def _mk_user(uid, credit=0.0):
-    q("INSERT OR IGNORE INTO users(id,username,name,role,credit,created_at,last_seen) VALUES(?,?,?,?,?,?,?)",
-      (uid, f"u{uid}", f"U{uid}", "user", credit, now_iso(), now_iso()), commit=True)
+def _mk_user(uid, credit=0.0, cur="usd"):
+    """PH-01: موجودی در **کیف پولِ واحد‌دار** نگه‌داری می‌شود (نه users.credit)."""
+    q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(?,?,?,?,?,?)",
+      (uid, f"u{uid}", f"U{uid}", "user", now_iso(), now_iso()), commit=True)
+    if credit:
+        from newsbot.core_wallet import wallet_credit
+        wallet_credit(uid, cur, credit, "test", None)
 
 def _paid_plan(price_num=20.0, days=30):
     return create_plan(name=f"PA{price_num}", days=days, price_num=price_num, is_free=0, price="20")
+
+def _quote(uid, pid, disc_pct=None):
+    """همان quote‌ای که مسیرِ واقعیِ خرید می‌سازد — تا بازمحاسبهٔ قیمت (Q-2a) سازگار باشد."""
+    from newsbot.core_plans import upgrade_quote
+    return upgrade_quote(uid, get_plan(pid), None, disc_pct, lang="en")
+
+def _req(uid, pid, disc=None, cur="usd"):
+    """درخواستِ پرداخت به همان شکلی که محصول می‌سازد (pc یخ‌زده + واحد)."""
+    pct = None
+    if disc:
+        d = disc_get(disc)
+        pct = d["percent"] if d else None
+    qt = _quote(uid, pid, pct)
+    rid = pay_create(uid, pid, discount=disc, final_price=str(qt["payable"]), pc=qt, cur=qt.get("cur") or cur)
+    return rid, qt
 
 
 def test_double_approve_pays_exactly_once():
     """GAP-06: دو تأیید هم‌زمان روی یک rid — دقیقاً یک برنده؛ کیف پول و پلن دقیقاً یک‌بار."""
     uid = 410001; _mk_user(uid, credit=50.0)
     pid = _paid_plan(20.0)
-    rid = pay_create(uid, pid, pc={"used_balance": 5.0, "surplus": 0.0, "kind": "fresh", "payable": 15.0})
+    rid, qt = _req(uid, pid)
+    assert qt["payable"] == 0.0 and qt["used_balance"] == 20.0   # اعتبارِ ۵۰ دلاری کلِ ۲۰ دلار را می‌پوشاند
     results, errors = [], []
     def go():
         try: results.append(pay_approve_atomic(rid))
@@ -37,8 +57,9 @@ def test_double_approve_pays_exactly_once():
     assert len(results) == 1 and len(errors) == 1
     assert isinstance(errors[0], PayAlreadyDecided)
     assert pay_get(rid)["status"] == "approved"
-    u = q("SELECT credit, plan_id FROM users WHERE id=?", (uid,), one=True)
-    assert u["plan_id"] == pid and float(u["credit"]) == 45.0     # دقیقاً یک کسور ۵ دلاری
+    u = q("SELECT plan_id FROM users WHERE id=?", (uid,), one=True)
+    from newsbot.core_wallet import wallet_get
+    assert u["plan_id"] == pid and wallet_get(uid, "usd") == 30.0     # دقیقاً یک کسور ۲۰ دلاری
     assert q("SELECT COUNT(*) c FROM plan_changes WHERE user_id=?", (uid,), one=True)["c"] == 1
 
 
@@ -47,7 +68,7 @@ def test_crash_mid_approve_rolls_back_fully():
     uid = 410002; _mk_user(uid, credit=10.0)
     pid = _paid_plan(30.0)
     code = disc_create("CRASH10", 10, (now_utc() + timedelta(days=1)).isoformat(), max_uses=5)
-    rid = pay_create(uid, pid, discount=code, pc={"used_balance": 10.0, "surplus": 0.0, "kind": "fresh", "payable": 17.0})
+    rid, qt = _req(uid, pid, disc=code)
     used_before = disc_get(code)["used"]
     real = core_plans._assign_writes
     def boom(conn, u, p, st): raise RuntimeError("injected crash")
@@ -58,17 +79,19 @@ def test_crash_mid_approve_rolls_back_fully():
         core_plans._assign_writes = real
     r = pay_get(rid)
     assert r["status"] == "pending" and not r["applied_at"]
-    u = q("SELECT credit, plan_id FROM users WHERE id=?", (uid,), one=True)
-    assert float(u["credit"]) == 10.0 and u["plan_id"] is None    # کیف پول دست‌نخورده
+    u = q("SELECT plan_id FROM users WHERE id=?", (uid,), one=True)
+    from newsbot.core_wallet import wallet_get
+    assert wallet_get(uid, "usd") == 10.0 and u["plan_id"] is None    # کیف پول دست‌نخورده
     assert q("SELECT COUNT(*) c FROM plan_changes WHERE user_id=?", (uid,), one=True)["c"] == 0
     assert disc_get(code)["used"] == used_before                  # تخفیف مصرف‌نشده برگشت
 
 
 def test_stuck_recovery_reapprove_no_double_apply():
-    """PAY-3: بازیابیِ re-approve پس از اعمالِ موفق (applied_at ست است) دوباره اعمال نمی‌کند."""
+    """PAY-3/PH-01: بازیابیِ پرداختِ گیرکرده — ردیفی که قبلاً اعمال شده «pending» **نمی‌شود**
+    (اعمالِ دوباره) بلکه به «approved» بسته می‌شود؛ روزهای پلن هم اضافه نمی‌شود."""
     uid = 410003; _mk_user(uid, credit=0.0)
     pid = _paid_plan(20.0)
-    rid = pay_create(uid, pid, pc={"used_balance": 0.0, "surplus": 0.0, "kind": "fresh", "payable": 20.0})
+    rid, qt = _req(uid, pid)
     pay_approve_atomic(rid)
     u1 = q("SELECT plan_expires FROM users WHERE id=?", (uid,), one=True)
     # شبیه‌سازی کرش پس از اعمال و پیش از بستنِ نهایی (مسیر d1/بازیابی)
@@ -76,12 +99,25 @@ def test_stuck_recovery_reapprove_no_double_apply():
       ((now_utc() - timedelta(minutes=config.PAY_STUCK_MIN + 1)).isoformat(), rid), commit=True)
     from newsbot.core_plans import recover_stuck_payments
     recover_stuck_payments()
-    assert pay_get(rid)["status"] == "pending"
-    pay_approve_atomic(rid)                                        # re-approve: فقط بستن وضعیت
+    # applied_at ست است ⇒ به pending برنمی‌گردد (وگرنه اعمالِ دوباره)؛ به approved بسته می‌شود
     assert pay_get(rid)["status"] == "approved"
     u2 = q("SELECT plan_expires FROM users WHERE id=?", (uid,), one=True)
     assert u1["plan_expires"] == u2["plan_expires"]                 # روز اضافه نشده است
-    assert q("SELECT COUNT(*) c FROM plan_changes WHERE user_id=?", (uid,), one=True)["c"] == 0
+    # FIN-007: سابقهٔ خرید همیشه ثبت می‌شود ⇒ یک ردیف (از تأییدِ اول) و نه بیشتر
+    assert q("SELECT COUNT(*) c FROM plan_changes WHERE user_id=?", (uid,), one=True)["c"] == 1
+
+
+def test_stuck_recovery_without_apply_returns_to_pending():
+    """PH-01/FIN-022: پرداختی که اصلاً اعمال نشده (applied_at خالی) ⇒ به pending برمی‌گردد
+    تا اپراتور بتواند دوباره تصمیم بگیرد."""
+    uid = 410015; _mk_user(uid, credit=0.0)
+    pid = _paid_plan(20.0)
+    rid, qt = _req(uid, pid)
+    q("UPDATE pay_requests SET status='processing', claimed_at=? WHERE id=?",
+      ((now_utc() - timedelta(minutes=config.PAY_STUCK_MIN + 1)).isoformat(), rid), commit=True)
+    from newsbot.core_plans import recover_stuck_payments
+    recover_stuck_payments()
+    assert pay_get(rid)["status"] == "pending"
 
 
 def test_discount_exhausted_full_rollback():
@@ -90,7 +126,7 @@ def test_discount_exhausted_full_rollback():
     pid = _paid_plan(20.0)
     code = disc_create("EXH1", 10, (now_utc() + timedelta(days=1)).isoformat(), max_uses=1)
     q("UPDATE discounts SET used=1 WHERE code=?", (code,), commit=True)
-    rid = pay_create(uid, pid, discount=code, pc={"kind": "fresh", "payable": 18.0})
+    rid, qt = _req(uid, pid, disc=code)
     with pytest.raises(PayDiscountExhausted): pay_approve_atomic(rid)
     assert pay_get(rid)["status"] == "pending"
     assert q("SELECT plan_id FROM users WHERE id=?", (uid,), one=True)["plan_id"] is None
@@ -219,14 +255,35 @@ def test_referral_view_uses_live_config_without_hidden_stats():
     assert "referral_stats" not in src
 
 
-# ── PAY-2: تطبیق اجباری مبلغ — منبع واحد، بدون بازنگری در تصمیم ──
+# ── PH-01/Q-2a: مبلغِ نمایش‌داده‌شده ثابت می‌ماند، ولی قیمت پیش از تأیید بازمحاسبه می‌شود ──
+def test_approve_revalidates_quote_and_refuses_on_material_difference():
+    """PH-01/Q-2a — اگر کیف پول یا وضعیتِ کاربر بین درخواست و تأیید عوض شده باشد،
+    تأیید **متوقف** می‌شود (PayQuoteStale) تا مبلغِ نمایش‌داده‌شده دوباره گرفته شود."""
+    uid = 410014; _mk_user(uid, credit=10.0)
+    pid = _paid_plan(20.0)
+    rid, qt = _req(uid, pid)
+    assert qt["payable"] == 10.0                       # ۲۰ دلار منهای ۱۰ دلار اعتبار
+    # اعتبارِ کیف پول کم می‌شود ⇒ مبلغِ بازمحاسبه‌شده با مبلغِ یخ‌زده فرق می‌کند
+    from newsbot.core_wallet import wallet_debit
+    wallet_debit(uid, "usd", 10.0, "test", None)
+    with pytest.raises(PayQuoteStale):
+        pay_approve_atomic(rid)
+    r = pay_get(rid)
+    assert r["status"] == "pending" and not r["applied_at"]   # هیچ اثری باقی نماند
+    assert q("SELECT plan_id FROM users WHERE id=?", (uid,), one=True)["plan_id"] is None
+
+
 def test_approve_uses_persisted_final_price_not_requote():
-    """decide_pay/pay_approve_atomic مبلغ را از ردیف پرداخت می‌خوانند؛ quote دوباره محاسبه نمی‌شود."""
+    """قراردادِ جدید: مبلغِ نمایش‌داده‌شده از ردیفِ پرداخت می‌آید و هرگز بازنویسی نمی‌شود؛
+    اما **پیش از تأیید** با کیف پولِ زنده بازمحاسبه و مقایسه می‌شود (Q-2a)."""
     from pathlib import Path
     src = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_views_super.py").read_text(encoding="utf-8")
     # تصمیم تأیید از pay_approve_atomic استفاده می‌کند و final_price از ردیف r می‌آید
     assert "pay_approve_atomic" in src and 'r["final_price"]' in src
     assert "upgrade_quote" not in src.split("async def decide_pay")[1]   # در مسیر تصمیم، quote دوباره زده نمی‌شود
+    # بازمحاسبهٔ قیمت داخلِ خودِ تأیید انجام می‌شود (نه در لایهٔ UI)
+    pay_src = (Path(__file__).resolve().parent.parent / "newsbot" / "core_payments.py").read_text(encoding="utf-8")
+    assert "_revalidate_quote" in pay_src and "PayQuoteStale" in pay_src
     # رسید: مبلغ در لحظهٔ ثبت persist می‌شود (st["final"]) و بعداً overwrite نمی‌شود
     inp = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_inputs.py").read_text(encoding="utf-8")
     assert 'st.get("final")' in inp and "pay_pending_for" in inp

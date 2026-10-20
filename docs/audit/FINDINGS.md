@@ -2,8 +2,8 @@
 
 **Audited commit:** `08bc87655dc910a98076acd749ddf8f3e6bdca2c` (branch `main`)
 **Audit date:** 2026-10-20 · **Verification pass:** 2026-10-20 (PH-00) — see §13
-**Status:** 181 findings — 175 `OPEN`, 4 `DEFERRED` (SEC-003…SEC-006), 2 `VERIFIED_FIXED` (OPS-028, DOC-001)
-**Total findings: 181** — CRITICAL 1 · HIGH 26 · MEDIUM 78 · LOW 65 · INFO 11
+**Status:** 184 findings — 158 `OPEN`, 5 `DEFERRED`, 1 `FIXED_UNVERIFIED`, 20 `VERIFIED_FIXED`
+**Total findings: 184** — CRITICAL 1 · HIGH 26 · MEDIUM 79 · LOW 66 · INFO 12
 
 ## Category legend
 
@@ -48,7 +48,7 @@
 - **Regression test required:** yes — referrer `lang=en`, payer `lang=fa`; the referrer then buys a `$5` plan; assert `payable > 0` and that each balance is denominated.
 - **Dependencies / risks:** schema change → `SCHEMA_VERSION` bump (currently 7, `newsbot/__init__.py:9`), `MIGRATIONS` list, D1 migrate/restore `TABLES`, and a **manual allocation decision for existing balances** whose unit is unknown.
 - **Owner decision (2026-10-20, Q-1 → option c):** **per-currency balances, no conversion.** The implementation is a new `wallet(user_id, cur, amount)` table (a single `credit_cur` column would only allow one currency per user and is therefore *not* equivalent to the decision); `credit_log` and `referrals` gain a currency; the referral cap is compared per currency. Existing balances are **frozen** under `cur='legacy'`, are not spendable, and are **not** auto-converted — their allocation is a separate, explicitly-authorised one-off script. Accepted product consequence: a reward is spendable only on plans priced in the same currency as the payment that produced it, and the UI must state this.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — کیف پولِ واحد‌دار: جدولِ ``wallet(user_id,cur,amount)`` + واحد روی credit_log/referrals/pay_requests؛ پاداش فقط در واحدِ خودش قابل خرج است؛ سطلِ ``legacy`` برای موجودیِ قدیمی منجمد شد (Q-1c).
 
 ## FIN-002 — The approval applies a frozen quote against a changed wallet: the customer is charged cash for credit that no longer exists
 - **Severity / Priority / Category:** HIGH · P1 · CONFIRMED BUG
@@ -59,7 +59,7 @@
 - **Regression test required:** yes — two pending requests with a wallet; approve both; assert the wallet, `credit_log` and `plan_changes.credit_used` reconcile and that the total charged equals the total quoted.
 - **Dependencies / risks:** changes the frozen-quote contract that `tests/test_payment_atomicity.py::test_approve_uses_persisted_final_price_not_requote` deliberately pins ("PAY-2"). The two contracts (frozen cash price vs. live wallet share) must be split explicitly.
 - **Owner decision (2026-10-20, Q-2 → option a):** **refuse the approval on a material difference, keeping the displayed cash amount.** The cash price stays frozen (the customer is charged the number they were shown); only the **wallet share** is re-derived at approval. A material difference (new knob `PAY_QUOTE_TOLERANCE`, absolute + percentage) raises a distinct `PayQuoteStale` and offers a re-quote; a trivial difference is accepted silently.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — مبلغِ نقدی یخ‌زده می‌ماند و فقط **سهمِ کیف پول** بازمحاسبه می‌شود؛ اختلافِ مؤثر ⇒ ``PayQuoteStale`` و توقفِ تأیید (Q-2a).
 
 ## FIN-003 — Two pending requests for one user: the later approval silently overwrites the earlier paid plan
 - **Severity / Priority / Category:** HIGH · P1 · CONFIRMED BUG
@@ -69,7 +69,7 @@
 - **Fix:** move `_assign_state` inside `_trx`; implement the chain via `next_plan_id`/`next_plan_days` (currently never written — see FIN-016) or reject a conflicting second approval.
 - **Regression test required:** yes — two pending requests for two different plans; approve both; assert exactly one plan is active and the second is queued or explicitly refunded.
 - **Dependencies / risks:** depends on FIN-016 and on the refund design of FIN-013.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — بازمحاسبهٔ «نوعِ خرید» در زمانِ تأیید، درخواستِ دوم را رد می‌کند (پلنِ اول برقرار می‌ماند).
 
 ## FIN-004 — The advertised discounted price is not the amount charged
 - **Severity / Priority / Category:** HIGH · P1 · CONFIRMED BUG
@@ -80,7 +80,7 @@
 - **Regression test required:** yes — quote with wallet + discount; assert `payable + used_balance == round(gross*(1-pct/100), 2)` and that the plan-page text equals the charged amount.
 - **Dependencies / risks:** changes the meaning of `pc["used_balance"]`/`pc["payable"]`; interacts with FIN-002 (re-quote at approval) and with the referral base `final_price`.
 - **Owner decision (2026-10-20, Q-2a + Q-4c):** the discount is applied to the **gross** tariff and the wallet share is derived from the discounted amount, so `payable + used_balance == gross x (1 - pct/100)` and the number on the plan page equals the number charged. A plan with no numeric tariff is **not online-purchasable** and states that its price is negotiable.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — تخفیف روی **ناخالص** اعمال می‌شود و سهمِ کیف پول از مقدارِ تخفیف‌خورده می‌آید ⇒ ``payable + used_balance == ناخالص×(۱-درصد)``؛ صفحهٔ پلن همان ``payable`` را نشان می‌دهد.
 
 ## FIN-005 — A paying customer can claim the free plan and lose their paid entitlements
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG
@@ -90,7 +90,7 @@
 - **Fix:** refuse in `do_free` and in `view_plan` when a paid plan is active; do not consume `free_used`.
 - **Regression test required:** yes — paid plan active + `free_used=0` -> refuse, `free_used` stays 0.
 - **Dependencies / risks:** decide the canonical paid->free rule first (interacts with FIN-016 and `s:ufree2`).
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — در ``do_free`` اگر پلنِ فعالِ پولی وجود داشته باشد، فعال‌سازیِ رایگان رد می‌شود و ``free_used`` مصرف نمی‌شود.
 
 ## FIN-006 — `credit_log.balance_after` is a Python-rounded recomputation, and a sub-cent movement changes the wallet with no receipt
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -100,7 +100,7 @@
 - **Fix:** `UPDATE users SET credit=ROUND(MAX(0, ...), 2)` and write the receipt from the value read back in the same transaction; always write a receipt when the stored value changed.
 - **Regression test required:** yes — property test: for N random movements, `users.credit == SUM(credit_log.delta)` and `balance_after` is monotone per user.
 - **Dependencies / risks:** changing stored precision changes existing wallet values -> needs a one-off reconciliation migration.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — مقدارِ ذخیره‌شده گرد (۲ رقم) می‌شود و رسید دقیقاً همان مقدارِ ذخیره‌شده را می‌نویسد ⇒ جمعِ رسیدها == موجودی، همیشه.
 
 ## FIN-007 — Purchases that do not move the wallet leave no `plan_changes` row: there is no purchase history
 - **Severity / Priority / Category:** MEDIUM · P2 · DOCUMENTATION MISMATCH / DESIGN WEAKNESS
@@ -110,7 +110,7 @@
 - **Fix:** always insert the `plan_changes` row; keep the guard only for `credit_log`.
 - **Regression test required:** yes — a purchase with no wallet movement must produce exactly one `plan_changes` row with `paid` = the charged amount.
 - **Dependencies / risks:** the two existing assertions (`plan_changes` count == 0 / == 1) must be updated deliberately, not silently.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — ردیفِ ``plan_changes`` برای **هر** پرداختِ تأییدشده ثبت می‌شود (نه فقط وقتی کیف پول جابه‌جا شود).
 
 ## FIN-008 — Discount validity is re-checked for capacity only at approval: expired or deactivated codes are still honoured
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG
@@ -120,7 +120,7 @@
 - **Fix:** add `AND active=1 AND (expires IS NULL OR expires > ?)` to the approval-time UPDATE, using the canonical `iso_fixed` format (see FIN-022).
 - **Regression test required:** yes — deactivate/expire a code after the receipt is created, then approve.
 - **Dependencies / risks:** low.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — کدِ تخفیف در زمانِ تأیید دوباره اعتبارسنجی می‌شود (فعال/منقضی/ظرفیت) ⇒ ``PayDiscountInvalid``.
 
 ## FIN-009 — The referral reward is granted outside the payment transaction, with no reconciler
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -130,7 +130,7 @@
 - **Fix:** move the credit into the approval transaction (the trigger already makes it atomic) **or** add a reconciler in `scheduler._recover_state`; give the marker rows a TTL in `cleanup()`.
 - **Regression test required:** yes — simulate a crash between the commit and the referral call; assert the reward is granted exactly once after recovery.
 - **Dependencies / risks:** moving it inside couples two subsystems — the current "a referral failure never breaks the payment" property (`newsbot/ui_views_super.py:275-276`) must be preserved via the reconciler instead.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — پاداشِ ارجاع **داخلِ همان تراکنشِ تأیید** اعطا می‌شود ⇒ کرش دیگر پاداش را برای همیشه از بین نمی‌برد.
 
 ## FIN-010 — The referral cap is a read-then-write with no conditional UPDATE, and is compared against mixed-unit amounts
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -141,7 +141,7 @@
 - **Regression test required:** yes — the SQLite case exists (`tests/test_phase1_fixes.py:49-72`); add a D1-simulated concurrent case.
 - **Dependencies / risks:** depends on the D1 reopening checklist in `docs/D1_DECISION.md` and on FIN-001 (a per-currency cap needs a per-currency SUM).
 - **Owner decision (2026-10-20, Q-1c + Q-3a):** the cap becomes **per-currency** and **atomic** (a single conditional statement with a rowcount check), and the `credited` flag is aligned with its meaning. Q-3a keeps the reward **per purchase** — the cap is the only bound, so making it per-currency and atomic is the whole fix.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — سقفِ ارجاع **به تفکیکِ واحد** و با یک دستورِ شرطیِ اتمیک اعمال می‌شود؛ واحد در ``referrals.credit_cur`` ثبت می‌گردد.
 
 ## FIN-011 — The D1 approval path is not atomic; `recover_stuck_payments` ignores `applied_at`
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG (D1 only; the backend is officially unsupported per `docs/D1_DECISION.md:8-16`) + DOCUMENTATION MISMATCH
@@ -162,7 +162,7 @@
 - **Fix:** `if not math.isfinite(value) or value < 0 or value > MAX_TARIFF: invalid(...)` at input time and `math.isfinite` guards in `plan_num` / `upgrade_quote` / `credit_referral_on_payment`.
 - **Regression test required:** yes — inputs `inf`, `1e400`, `nan`, `-inf`, `1e15`; assert rejection and that no `inf` can reach `users.credit`.
 - **Dependencies / risks:** super-admin-only input; also add a one-off DB scan for `credit = inf`.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — تعرفهٔ نامتناهی/بی‌کران در ``tariff()`` نادیده گرفته می‌شود ⇒ هرگز وارد کیف پول نمی‌گردد.
 
 ## FIN-013 — No refund or compensation path exists, while the README claims money operations are "atomic and reversible"
 - **Severity / Priority / Category:** MEDIUM · P2 · DOCUMENTATION MISMATCH / MISSING FEATURE
@@ -172,7 +172,7 @@
 - **Fix:** implement the refund path (or correct the README claim if refunds are out of scope).
 - **Regression test required:** yes — refund a payment; assert the wallet is restored, a receipt exists and `SUM(credit_log.delta) == users.credit`.
 - **Dependencies / risks:** depends on FIN-006 (ledger correctness).
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — ``refund_payment()`` اضافه شد: بازگشتِ وجه به کیف پولِ همان واحد + رسیدِ ``reason='refund'`` + ردیفِ سابقه.
 
 ## FIN-014 — The receipt/decision trail is purged after 90 days while the wallet ledger is kept forever
 - **Severity / Priority / Category:** LOW · P3 · DESIGN WEAKNESS
@@ -192,7 +192,7 @@
 - **Fix:** integer minor units (Toman / USD-cents) or `Decimal` with `ROUND_HALF_UP`; make `final_price` numeric and move the free text to a separate field.
 - **Regression test required:** yes — property test over 10 000 random (price, pct) pairs.
 - **Dependencies / risks:** large refactor across `core_plans`, `core_referrals`, `core_discounts`, `core_payments`, `db`; best done together with FIN-001 and FIN-006.
-- **Status:** OPEN
+- **Status:** **DEFERRED (2026-10-20, PH-01)** — مبالغ همچنان REAL با گردکردنِ half-even هستند. تغییر به واحدِ کوچک/Decimal یک بازآراییِ بزرگ است و به فازِ بعدی موکول شد (اصلاحِ interim = FIN-006 که انجام شد).
 
 ## FIN-016 — `next_plan_id` / `next_plan_days` are never written: the documented "chained plan" is not implemented
 - **Severity / Priority / Category:** LOW · P3 · DOCUMENTATION MISMATCH
@@ -202,7 +202,7 @@
 - **Fix:** implement the chain (applied at expiry by `scheduler._plan_notifications`) or remove the columns, the flag and the docstring.
 - **Regression test required:** only if implemented.
 - **Dependencies / risks:** natural home for FIN-003.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — دک‌استرینگِ ``assign_plan`` اصلاح شد: «زنجیرهٔ پلن» صریحاً پیاده‌نشده اعلام شد (ستون‌ها و پرچمِ ``queued`` بی‌استفاده‌اند).
 
 ## FIN-017 — The daily-usage CAS insert path bypasses the cap
 - **Severity / Priority / Category:** LOW · P3 · CONFIRMED BUG
@@ -232,7 +232,7 @@
 - **Fix:** re-evaluate the quote inside the approval transaction and reject if the kind/payable no longer matches `final_price`; document the rate-based rule.
 - **Regression test required:** yes — change the tariff after the receipt, then approve.
 - **Dependencies / risks:** depends on FIN-002's re-quote design.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — قاعدهٔ نزول در زمانِ تأیید دوباره ارزیابی می‌شود ⇒ تأییدِ نزولِ تازه متوقف می‌شود.
 
 ## FIN-020 — `s:plan_free` clears `is_free` on **all** plans before re-marking one
 - **Severity / Priority / Category:** LOW · P3 · DESIGN WEAKNESS
@@ -252,7 +252,7 @@
 - **Fix:** add `pay_requests.notified_at`, set it only after a successful DM, and re-send from `scheduler._recover_state`.
 - **Regression test required:** yes — simulate a failing `send_message` and assert the retry path.
 - **Dependencies / risks:** low.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — ستونِ ``notified_at`` + ``pay_mark_notified`` + ``pay_unnotified`` و تلاشِ دوباره در هر تیکِ زمان‌بندی (``_renotify_payments``).
 
 ## FIN-022 — `recover_stuck_payments` mixes timestamp formats in a string comparison, and is effectively dead code on SQLite
 - **Severity / Priority / Category:** LOW · P3 · DESIGN WEAKNESS
@@ -273,7 +273,7 @@
 - **Regression test required:** no.
 - **Dependencies / risks:** none.
 - **Owner decision (2026-10-20, Q-3a):** the reward stays **per purchase at the same rate** — this is a *product* decision, not a defect. The knob and its test are removed and the super-admin panel wording is corrected so no operator believes a per-referrer **count** cap exists.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — ``REFERRAL_MAX_PER_USER`` از config حذف شد؛ README و ``.env.example`` و تستِ ``final_verification`` هم‌راستا شدند.
 
 ## FIN-024 — Missing regression coverage for the monetary boundary/precision cases and ledger reconciliation
 - **Severity / Priority / Category:** MEDIUM · P2 · MISSING TEST / UNKNOWN BEHAVIOR
@@ -715,7 +715,7 @@
 - **Regression test required:** yes.
 - **Dependencies / risks:** changing the seeded plan changes the public offer — needs an owner decision.
 - **Owner decision (2026-10-20, Q-4c):** the free text and the negotiable model are **kept**; a plan with no numeric tariff for the user's language becomes **not online-purchasable** — the plan page states that the price is negotiable and points to support, and the receipt prompt can never appear without a numeric amount. The seeded offer itself is **not** changed.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — پلنِ بدونِ تعرفهٔ عددی آنلاین خریداری نمی‌شود: پیامِ «قیمت توافقی» + دکمهٔ خرید حذف می‌شود (Q-4c).
 
 ## UI-024 — `/lang` destroys an in-progress form and offers no way out of the language picker
 - **Severity / Priority / Category:** LOW · P2 · DESIGN WEAKNESS
@@ -1210,7 +1210,7 @@
 - **Impact:** exactly the class of bug that erodes trust in the credit balance; FIN-001/FIN-002/FIN-006 are all invisible to CI.
 - **Fix:** add a property-style test: perform N randomised wallet movements (referral trigger + plan change + zero-delta + cap-partial) for M users, then assert `SELECT COALESCE(SUM(delta),0) FROM credit_log WHERE user_id=? == users.credit` for every user and that `balance_after` is monotone.
 - **Regression test required:** yes.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-20, PH-01)** — تستِ تسویهٔ دفترِ کیف پول اضافه شد (جمعِ رسیدها == موجودی، و ``balance_after`` == مقدارِ ذخیره‌شده).
 
 ## TEST-006 — The D1 business payment path `_pay_approve_d1` has zero test coverage
 - **Severity / Priority / Category:** HIGH · P1 · MISSING TEST / UNKNOWN BEHAVIOR
@@ -1276,7 +1276,7 @@
 - **Impact:** the three tables together cannot be reconciled into a per-transaction money story. Disputes ("I paid and got nothing") are unanswerable; the 90-day purge destroys the primary document while keeping the derived ledger.
 - **Fix:** add `pay_requests.decided_by`, `pay_requests.currency`, `pay_requests.paid_amount_num`; make `credit_log.ref` a stable external id (`pay:<rid>`); align the retention of `pay_requests` with the ledger; add a "money ledger" view to the super-admin panel.
 - **Regression test required:** yes (with TEST-005).
-- **Status:** OPEN
+- **Status:** **FIXED_UNVERIFIED (2026-10-20, PH-01)** — بخشِ «اتصالِ حرکتِ کیف پول به پرداخت» رفع شد (``credit_log.ref``/``plan_changes.ref`` = ``pay:<id>`` و ``pay_requests.decided_by``/``cur``)؛ **هم‌ترازیِ نگه‌داریِ داده (۹۰ روز) هنوز باقی است** و به PH-09 موکول شد.
 
 ## OBS-011 — `notify_super` failures are logged and dropped; there is no delivery guarantee
 - **Severity / Priority / Category:** HIGH · P1 · DESIGN WEAKNESS
@@ -1340,7 +1340,33 @@
 
 ---
 
-# 12. DOCUMENTATION INTEGRITY (`DOC-001`)
+# 11b. یافته‌های تازهٔ PH-01
+
+
+
+## OPS-032 — jobِ استقرار روی محیطِ «production» اجرا می‌شود ولی قاعدهٔ محیط هنوز در تنظیمات ساخته نشده
+- **Severity / Priority / Category:** LOW · P2 · CONFIRMED CONFIGURATION DEFECT
+- **Evidence:** `.github/workflows/deploy-vps.yml:environment: production`, `tests/test_deploy_gate.py`
+- **Fix applied:** PR #21: کلیدِ `environment: production` اضافه و با تست نگهبانی شد. تا وقتی قاعدهٔ «Required reviewers» در تنظیمات ساخته نشود، GitHub محیط را بدونِ محافظت می‌سازد ⇒ استقرار هنوز خودکار است.
+- **Status:** OPEN
+
+
+---
+
+# 11b. یافته‌های تازهٔ PH-01
+
+## FIN-025 — موجودیِ منتقل‌شده به سطلِ «legacy» تا اجرای اسکریپتِ تخصیصِ دستی قابل خرج نیست
+- **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
+- **Evidence:** `newsbot/db.py:_migrate_legacy_credit`, `newsbot/core_wallet.py:CUR_LEGACY`
+- **Fix applied:** PH-01: موجودیِ قدیمی در سطلِ «legacy» منجمد شد (نه تبدیل، نه خرج). تخصیصِ دستیِ آن یک اسکریپتِ جداگانه و صریحاً مجاز است که هنوز نوشته نشده.
+- **Status:** OPEN
+
+## DB-012 — ستونِ `users.credit` بازنشسته شد ولی حذف نشده (مهاجرت افزایشی)
+- **Severity / Priority / Category:** INFO · P3 · IMPROVEMENT OPPORTUNITY
+- **Evidence:** `newsbot/db.py:SCHEMA (users.credit)`, `newsbot/db.py:_migrate_legacy_credit`
+- **Fix applied:** PH-01: دیگر خوانده/نوشته نمی‌شود ولی حذف نشده (اصلاحِ افزایشی) — حذفِ ستون یک فازِ جداگانه با بکاپ لازم دارد.
+- **Status:** OPEN
+
 
 ## DOC-001 — Six references point to a `ROADMAP.md` that is not tracked in the repository
 - **Severity / Priority / Category:** LOW · P2 · DOCUMENTATION MISMATCH (repository integrity)
@@ -1492,4 +1518,4 @@ receipt-notification loss chain (UI-006, UI-009, OBS-013), and the loss-of-obser
 commit SHA, the systemd unit, the `.env` permissions, the backup contents and the health-gate behaviour
 must be read on the host (phase `PH-00` — **blocked in this environment**, see §13.1).
 
-**End of register — 181 findings: 175 OPEN, 4 DEFERRED, 2 VERIFIED_FIXED.**
+**End of register — 184 findings: 158 OPEN, 5 DEFERRED, 1 FIXED_UNVERIFIED, 20 VERIFIED_FIXED.**

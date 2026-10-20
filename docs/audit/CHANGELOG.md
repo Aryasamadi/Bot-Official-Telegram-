@@ -53,6 +53,86 @@ No finding changed status. The six questions moved from *open* to *answered*; th
 
 ---
 
+## 2026-10-20 — PH-01 Financial correctness and money-path integrity — **IMPLEMENTED (awaiting merge)**
+
+**Authorisation:** owner instruction «در PH-01، مشکلات مالی ثبت‌شده را واقعاً در کد اصلاح کن، تست‌های رگرسیون اضافه کن و مهاجرت دیتابیس را افزایشی، idempotent و قابل‌آزمایش روی کپی دیتابیس طراحی و پیاده‌سازی کن.»
+**Branch:** `feature/ph-01-money-integrity` (from the audit branch) · **PR:** #22 · **not merged, not deployed**
+**Owner decisions applied:** Q-1 → (c) · Q-2 → (a) · Q-3 → (a) · Q-4 → (c)
+
+### What changed
+
+| Area | Change |
+|---|---|
+| **Schema (v7 → v8)** | new table `wallet(user_id, cur, amount, updated_at)`; `credit_log.cur`; `referrals.credit_cur`; `pay_requests.cur/decided_by/notified_at`; `plan_changes.ref` — **all additive**, no column dropped |
+| **New module** | `newsbot/core_wallet.py` — the only place that reads/writes a wallet balance; every movement writes its receipt in the same transaction; an overdraft raises instead of silently clamping |
+| **Currency (Q-1c)** | `tariff(p, lang)` returns `(amount, currency)`; a reward is credited in the currency actually paid and is **only spendable against a tariff of the same currency**; the pre-existing balance is moved **once** into a frozen `legacy` bucket (never converted, never spendable) |
+| **Approval (Q-2a)** | the cash price stays frozen; only the wallet share is re-derived; a material difference (`PAY_QUOTE_TOLERANCE_PCT`, default 0) raises `PayQuoteStale` and stops the approval; the discount is re-validated at approval (`PayDiscountInvalid`); the referral reward is granted **inside the same transaction** |
+| **Ledger** | the stored balance is rounded and the receipt records exactly the stored value; a purchase always writes a `plan_changes` row; `credit_log.ref`/`plan_changes.ref` = `pay:<id>`; `refund_payment()` added |
+| **Referral (Q-3a)** | the per-purchase reward and its rate are unchanged; the cap is now **per currency** and atomic; the dead `REFERRAL_MAX_PER_USER` knob is removed (config, README, `.env.example`, `final_verification.py`) |
+| **Negotiable plans (Q-4c)** | a plan with no numeric tariff is **not sold online**: the plan page says the price is negotiable and no receipt can be created without an amount |
+| **Recoveries** | `recover_stuck_payments` uses the canonical timestamp format and never returns an **already applied** payment to `pending` (it closes it as `approved`) |
+| **Notifications** | `notified_at` + `pay_mark_notified` + `pay_unnotified` + a per-tick re-notify in the scheduler |
+
+### Migration — additive, idempotent, rehearsed on a copy
+
+`tests/test_ph01_migration.py` builds a real database, **reverts it to the v7 shape** (drops the
+`wallet` table and the new columns, restores the old trigger, `schema_version=7`), copies it, and runs the
+migration **on the copy**. It proves: the new columns/table appear; the old columns and their data are
+intact; the legacy balance lands in the frozen `legacy` bucket; a **second run changes nothing** (the
+migration *sets* rather than adds, so it is idempotent by construction, not only by the `meta` guard); and
+the **source file is byte-identical afterwards** (SHA-256).
+
+### Files changed
+
+`newsbot/core_wallet.py` (new) · `newsbot/db.py` · `newsbot/core_plans.py` · `newsbot/core_payments.py` ·
+`newsbot/core_referrals.py` · `newsbot/core_discounts.py` · `newsbot/ui_views_user.py` ·
+`newsbot/ui_views_super.py` · `newsbot/ui_inputs.py` · `newsbot/ui_i18n.py` · `newsbot/scheduler.py` ·
+`newsbot/config.py` · `newsbot/__init__.py` · `tools/final_verification.py` · `README.md` · `.env.example` ·
+`tests/test_ph01_money.py` (new, 18 tests) · `tests/test_ph01_migration.py` (new, 4 tests) ·
+`tests/test_payment_atomicity.py` · `tests/test_phase1_fixes.py` · `tests/test_phase10_db_quality.py` ·
+`tests/test_phase12_config_docs.py` · `tests/test_phase13_business_isolation.py` ·
+`tests/test_phase13_tech_debt.py` · `tests/test_phase14_payment_ui.py` · `tests/test_business_logic.py` ·
+`docs/audit/*` (register updated)
+
+### Tests executed
+
+| Check | Result |
+|---|---|
+| Full suite | **481 passed**, 0 failed, 0 skipped (455 before + 26 new) |
+| `pyflakes newsbot tools run.py tests` | **0 undefined names** |
+| `tools/final_verification.py` | **17/17** |
+| `run.py --check` (read-only) | ✅ configuration healthy |
+| Negative control — reward forced into one bucket (pre-fix behaviour) | **2 tests fail** (FIN-001, FIN-010) ⇒ the new tests really detect the defect |
+| Negative control — migration re-run with `ADD` instead of `SET` | idempotency test **fails** ⇒ the guard is real |
+| Negative control — `environment:` key removed / CI workflow renamed | the 2 deploy-gate tests fail (PR #21) |
+
+### Findings closed
+
+**20 → VERIFIED_FIXED**: FIN-001, FIN-002, FIN-003, FIN-004, FIN-005, FIN-006, FIN-007, FIN-008, FIN-009,
+FIN-010, FIN-012, FIN-013, FIN-016, FIN-019, FIN-021, FIN-023, UI-017, TEST-005, OPS-028, DOC-001.
+**1 → FIXED_UNVERIFIED**: OBS-007 (the join is fixed; the retention alignment stays in PH-09).
+**1 → DEFERRED**: FIN-015 (integer minor units — a large refactor, deferred).
+**3 new findings**: FIN-025 (the frozen legacy bucket needs a separate authorised allocation script),
+DB-012 (the retired `users.credit` column is kept — additive migration), OPS-032 (the environment rule
+still has to be created in the repository settings).
+
+### Deployment status
+
+**None.** No production system was contacted; no migration was run against a production database; nothing
+was deployed or merged.
+
+### Remaining risks in this phase
+
+- The **legacy balance** is deliberately unusable until a separate, explicitly authorised allocation
+  script is run (FIN-025). Any customer with a non-zero balance is affected.
+- The D1 approval path is **not** covered by the re-quote/refusal logic (FIN-011 stays open — D1 is
+  officially unsupported).
+- `FIN-015` (integer minor units) and `OBS-007`'s retention half remain open.
+- The production database has **not** been migrated; the migration must be rehearsed on a copy of the
+  real file (the PH-00 read) before it is applied.
+
+---
+
 ## 2026-10-20 — PH-00 Production verification (read-only) — **PARTIAL: production read BLOCKED, repository side COMPLETE**
 
 **Phase:** `PH-00` — Production verification (read-only) + audit-document validation + confirmed

@@ -41,10 +41,11 @@ CREATE TABLE IF NOT EXISTS dedup(channel_id INTEGER, fp TEXT, ts TEXT, PRIMARY K
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS support(user_id INTEGER PRIMARY KEY, open INTEGER DEFAULT 0, opened_at TEXT);
 CREATE TABLE IF NOT EXISTS support_map(msg_id INTEGER PRIMARY KEY, user_id INTEGER, ts TEXT);
-CREATE TABLE IF NOT EXISTS plan_changes(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, from_plan INTEGER, kind TEXT, credit_used REAL DEFAULT 0, surplus REAL DEFAULT 0, paid REAL, rem_days REAL, ts TEXT);
-CREATE TABLE IF NOT EXISTS pay_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, status TEXT DEFAULT 'pending', created_at TEXT, receipt_chat INTEGER, receipt_msg INTEGER, note TEXT, decided_at TEXT, discount TEXT, final_price TEXT);
-CREATE TABLE IF NOT EXISTS referrals(id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER, referred_id INTEGER UNIQUE, created_at TEXT, credited INTEGER DEFAULT 0, credit_amount REAL DEFAULT 0, note TEXT DEFAULT '');
-CREATE TABLE IF NOT EXISTS credit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, delta REAL, balance_after REAL, reason TEXT, ref TEXT, ts TEXT);
+CREATE TABLE IF NOT EXISTS plan_changes(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, from_plan INTEGER, kind TEXT, credit_used REAL DEFAULT 0, surplus REAL DEFAULT 0, paid REAL, rem_days REAL, ref TEXT, ts TEXT);
+CREATE TABLE IF NOT EXISTS pay_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, status TEXT DEFAULT 'pending', created_at TEXT, receipt_chat INTEGER, receipt_msg INTEGER, note TEXT, decided_at TEXT, discount TEXT, final_price TEXT, cur TEXT DEFAULT '', decided_by INTEGER, notified_at TEXT);
+CREATE TABLE IF NOT EXISTS referrals(id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER, referred_id INTEGER UNIQUE, created_at TEXT, credited INTEGER DEFAULT 0, credit_amount REAL DEFAULT 0, note TEXT DEFAULT '', credit_cur TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS credit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, delta REAL, balance_after REAL, reason TEXT, ref TEXT, ts TEXT, cur TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS wallet(user_id INTEGER, cur TEXT, amount REAL DEFAULT 0, updated_at TEXT, PRIMARY KEY(user_id, cur));
 CREATE TABLE IF NOT EXISTS rate_limits(key TEXT PRIMARY KEY, ts REAL);
 CREATE INDEX IF NOT EXISTS idx_art_ch_status ON articles(channel_id, status);
 CREATE INDEX IF NOT EXISTS idx_art_created ON articles(created_at);
@@ -76,20 +77,27 @@ UNIQUE_INDEXES = [
      "CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_channel_url ON sources(channel_id,url)"),
 ]
 
-# trigger اتمیک (v6 — فاز ۱۳/BIZ-09): شارژ کیف پول معرف در *یک* دستور SQL همراه با به‌روزرسانی ردیف
+# trigger اتمیک (v8 — PH-01/Q-1c): شارژ کیف پولِ معرف در *یک* دستور SQL همراه با به‌روزرسانی ردیف
 # ارجاع؛ با «پاداش هر خرید» سازگار است (delta افزایش credit_amount، نه فقط گذار credited ۰→۱).
-# علاوه بر آن، هر شارژ یک «رسید» در credit_log ثبت می‌کند (اتمیک و در همان تراکنش؛ ts هم‌قالب now_iso).
+# علاوه بر آن، هر شارژ یک «رسید» در credit_log ثبت می‌کند (اتمیک و در همان تراکنش).
+# v8: مقصدِ شارژ جدولِ wallet است (به‌ازای users.credit) و واحدِ پول در referrals.credit_cur
+# نگه‌داری می‌شود ⇒ پاداشِ یک واحد با واحدِ دیگر قابل خرج نیست (FIN-001).
 REFERRAL_CREDIT_TRIGGER = """
 CREATE TRIGGER IF NOT EXISTS trg_referral_credit_wallet
 AFTER UPDATE OF credit_amount ON referrals
 FOR EACH ROW
 WHEN NEW.credit_amount > COALESCE(OLD.credit_amount, 0)
 BEGIN
-    UPDATE users SET credit=COALESCE(credit,0)+(NEW.credit_amount-COALESCE(OLD.credit_amount,0)) WHERE id=NEW.referrer_id;
-    INSERT INTO credit_log(user_id,delta,balance_after,reason,ref,ts)
+    INSERT INTO wallet(user_id,cur,amount,updated_at)
+        VALUES(NEW.referrer_id, NEW.credit_cur, 0, strftime('%Y-%m-%dT%H:%M:%f000+00:00','now'))
+        ON CONFLICT(user_id,cur) DO NOTHING;
+    UPDATE wallet SET amount=ROUND(COALESCE(amount,0)+(NEW.credit_amount-COALESCE(OLD.credit_amount,0)),2),
+                     updated_at=strftime('%Y-%m-%dT%H:%M:%f000+00:00','now')
+      WHERE user_id=NEW.referrer_id AND cur=NEW.credit_cur;
+    INSERT INTO credit_log(user_id,delta,balance_after,reason,ref,cur,ts)
     VALUES(NEW.referrer_id, NEW.credit_amount-COALESCE(OLD.credit_amount,0),
-           (SELECT COALESCE(credit,0) FROM users WHERE id=NEW.referrer_id), 'referral',
-           CAST(NEW.referred_id AS TEXT), strftime('%Y-%m-%dT%H:%M:%f000+00:00','now'));
+           (SELECT amount FROM wallet WHERE user_id=NEW.referrer_id AND cur=NEW.credit_cur), 'referral',
+           CAST(NEW.referred_id AS TEXT), NEW.credit_cur, strftime('%Y-%m-%dT%H:%M:%f000+00:00','now'));
 END
 """
 
@@ -107,7 +115,14 @@ MIGRATIONS = [("users", "next_plan_id", "INTEGER"), ("users", "next_plan_days", 
               ("pay_requests", "claimed_at", "TEXT"),   # NEW v4: بازیابی پرداخت‌های گیرکرده در 'processing'
               ("pay_requests", "applied_at", "TEXT"),   # phase 4: لحظهٔ اعمال پلن/کیف‌پول — idempotency بازیابی (PAY-3)
               ("usage", "ai", "INTEGER DEFAULT 0"),     # phase 5: سقف روزانهٔ AI (BIZ-01)
-              ("plans", "price_num_fa", "REAL DEFAULT 0")]  # phase 14/v7: تعرفهٔ عددی تومان (fa) — price_num برای en ($)
+              ("plans", "price_num_fa", "REAL DEFAULT 0"),  # phase 14/v7: تعرفهٔ عددی تومان (fa) — price_num برای en ($)
+              # ── v8 / PH-01 (Q-1c): کیف پولِ واحد‌دار ──────────────────────────────────────────
+              ("credit_log", "cur", "TEXT DEFAULT ''"),        # واحدِ حرکتِ کیف پول
+              ("referrals", "credit_cur", "TEXT DEFAULT ''"),  # واحدِ پاداشِ ارجاع
+              ("pay_requests", "cur", "TEXT DEFAULT ''"),      # واحدِ مبلغِ پرداخت
+              ("pay_requests", "decided_by", "INTEGER"),       # چه کسی پرداخت را تأیید کرد
+              ("pay_requests", "notified_at", "TEXT"),        # اعلامِ نتیجه به مشتری انجام شد؟
+              ("plan_changes", "ref", "TEXT")]                  # شناسهٔ پرداختِ مرتبط (pay:<id>)
 
 def _table_cols(conn, tbl):
     """نام ستون‌های جدول — با pragma_table_info (سازگار با sqlite و D1) و fallback به PRAGMA."""
@@ -310,6 +325,46 @@ def normalize_iso_columns(conn):
     if changed: log.info("ISO canonicalization: %d value(s) rewritten", changed)
     return changed
 
+def _migrate_legacy_credit(conn):
+    """PH-01/Q-1c — یک‌بار برای همیشه: موجودیِ قدیمیِ ``users.credit`` (بدون واحد) به سطلِ
+    «legacy» منتقل می‌شود.
+
+    * **افزایشی**: فقط یک سطر به ``wallet`` اضافه می‌شود؛ ستونِ ``users.credit`` حذف نمی‌شود
+      (خواندن/نوشتنش متوقف می‌شود ولی دادهٔ خام برای بازگشت/ممیزی باقی می‌ماند).
+    * **idempotent**: با کلیدِ ``meta.legacy_wallet_v1`` یک‌بار اجرا می‌شود.
+    * **بدون تبدیل**: موجودی به «legacy» می‌رود؛ در برابرِ هیچ تعرفه‌ای قابل خرج نیست تا
+      تخصیصِ دستیِ آن انجام شود (اسکریپتِ جداگانه و صریحاً مجاز).
+    """
+    try:
+        if conn.execute("SELECT value FROM meta WHERE key='legacy_wallet_v1'").fetchone():
+            return 0
+    except sqlite3.Error:
+        return 0
+    n = 0
+    try:
+        rows = conn.execute("SELECT id, COALESCE(credit,0) AS c FROM users WHERE COALESCE(credit,0) <> 0").fetchall()
+    except sqlite3.Error:
+        rows = []
+    for r in rows:
+        try:
+            amt = round(float(r["c"] or 0), 2)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if not amt:
+            continue
+        # «ست» می‌شود نه «افزوده» ⇒ اجرای دوباره هم بی‌اثر است (idempotent به‌خودِ‌خود،
+        # نه فقط به‌خاطرِ کلیدِ meta). چون users.credit دیگر نوشته نمی‌شود، مقدارِ آن
+        # هیچ‌وقت از مقدارِ منتقل‌شده تازه‌تر نمی‌شود.
+        conn.execute("INSERT INTO wallet(user_id,cur,amount,updated_at) VALUES(?,?,?,?) "
+                     "ON CONFLICT(user_id,cur) DO UPDATE SET amount=excluded.amount, updated_at=excluded.updated_at",
+                     (r["id"], "legacy", amt, now_iso()))
+        n += 1
+    conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('legacy_wallet_v1',?)", (str(n),))
+    if n:
+        log.info("PH-01: %d legacy wallet balance(s) moved to the frozen 'legacy' bucket", n)
+    return n
+
+
 def _ensure_schema(conn):
     """اسکیمای پایه + مایگریشن idempotent + ثبت نسخهٔ اسکیما — یک‌بار در هر پروسه.
     DB-24: روی SQLite کل مراحل داخل یک تراکنش اجرا می‌شود؛ هر خطا ⇒ rollback کامل (بدون نیمه‌اسکیما)."""
@@ -336,9 +391,11 @@ def _ensure_schema(conn):
                     conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
                     have[tbl].add(col)
             normalize_iso_columns(conn)   # DB-14 — پیش از هر مقایسهٔ رشته‌ایِ زمان
-            # v6: تعریف trigger عوض شده (رسید credit_log)؛ نسخه‌های قدیمی (credited ۰→۱ و v5) جایگزین می‌شوند
+            # v8: trigger عوض شده (شارژ کیف پولِ واحد‌دار + رسید)؛ نسخه‌های قدیمی جایگزین می‌شوند
             conn.execute("DROP TRIGGER IF EXISTS trg_referral_credit_wallet")
             conn.execute(REFERRAL_CREDIT_TRIGGER)
+            # v8/PH-01: موجودیِ قدیمیِ بدونِ واحد ⇒ سطلِ منجمدِ «legacy» (یک‌بار، idempotent)
+            _migrate_legacy_credit(conn)
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
             # ژورنال انتشار از جدول عمومی settings به جدول اختصاصی منتقل می‌شود (مایگریشن افزایشی و غیرمخرب)
             conn.execute("INSERT OR REPLACE INTO pub_journal(article_id,journal,updated_at) SELECT CAST(substr(key,6) AS INTEGER), value, ? FROM settings WHERE key LIKE 'pubj:%'", (now_iso(),))

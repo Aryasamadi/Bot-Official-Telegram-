@@ -80,8 +80,10 @@ def test_ref_command_registered_and_no_home_button():
 
 def test_referral_reward_message_exists_for_both_langs():
     from newsbot.ui_i18n import tr
-    assert tr("fa", "ref_reward", amount="100") == "🎉 پاداش دعوت: 100 به کیف پول شما اضافه شد"
-    assert tr("en", "ref_reward", amount="100") == "🎉 Referral reward: 100 added to your wallet"
+    assert tr("fa", "ref_reward", amount="100") == (
+        "🎉 پاداش دعوت: 100 به کیف پول شما اضافه شد؛ در خرید یا ارتقای بعدی خودکار کسر می‌شود.")
+    assert tr("en", "ref_reward", amount="100") == (
+        "🎉 Referral reward: 100 added to your wallet; it's applied automatically to your next purchase or upgrade.")
     assert tr("fa", "ref_joined")
     assert tr("en", "ref_joined")
 

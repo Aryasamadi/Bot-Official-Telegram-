@@ -128,8 +128,9 @@ def test_spharse_is_bilingual_and_keys_match():
 
 def test_plans_ref_line_and_referral_howto():
     from newsbot.ui_i18n import tr
-    assert "/ref" in tr("fa", "plans_ref") and "رایگان" in tr("fa", "plans_ref")
-    assert "/ref" in tr("en", "plans_ref")
+    # متنِ خطِ دعوت عوض شد: به‌جای «رایگان» حالا اعتبارِ کیف پول از دعوتِ دوستان گفته می‌شود
+    assert "/ref" in tr("fa", "plans_ref") and "دعوت" in tr("fa", "plans_ref")
+    assert "/ref" in tr("en", "plans_ref") and "credit" in tr("en", "plans_ref").lower()
     how = tr("fa", "ref_how", p="10")
     assert "کیف پول" in how and "10" in how, "توضیح /ref باید مکانیزم هر خرید را بگوید"
     assert "wallet" in tr("en", "ref_how", p="10").lower()

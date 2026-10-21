@@ -297,31 +297,58 @@ _ISO_COLS = [("users", "created_at"), ("users", "last_seen"), ("users", "plan_ex
              ("support_map", "ts"), ("pay_requests", "created_at"), ("pay_requests", "decided_at"),
              ("pay_requests", "claimed_at"), ("referrals", "created_at"), ("pub_journal", "updated_at")]
 
-def normalize_iso_columns(conn):
+def normalize_iso_columns(conn, chunk=2000):
     """DB-14: یکسان‌سازی یک‌بارهٔ قالب زمانی ستون‌های مقایسه‌ای (UTC + کسر ثانیهٔ ثابت).
     ردیف‌های legacy با آفست غیر-UTC یا بدون کسر ثانیه، مقایسهٔ رشته‌ای را غلط می‌کردند؛
     مثل channel_posts_today که پس از DB-13 مستقیماً با posted_at مقایسهٔ رشته‌ای می‌کند.
-    idempotent: با کلید meta.iso_norm_v1 فقط یک‌بار در عمر دیتابیس اجرا می‌شود."""
+
+    PHASE-04 (رخداد تولید 2026-10-21) — این تابع منشأ «حلقهٔ ری‌استارت با ۱۰۰٪ CPU» بود:
+      * نسخهٔ قبل کلِ جدول را با ``fetchall()`` در حافظه می‌آورد (OOM روی دیتابیسِ بزرگ)،
+        سطر‌به‌سطر به‌روزرسانی می‌کرد، همه را **داخلِ تراکنشِ اسکیما** انجام می‌داد و پرچمِ
+        «انجام شد» را **فقط در انتها** می‌نوشت ⇒ اگر پروسه کشته شود، کلِ کار از صفر تکرار می‌شود،
+        استارتاپ هرگز کامل نمی‌شود، ``TimeoutStartSec`` آن را می‌کشد و ``Restart=always``
+        دوباره بلندش می‌کند.
+
+    حالا: کار در **بسته‌های با اندازهٔ محدود** (مصرف حافظهٔ کران‌دار)، **checkpoint برای هر
+    ستون** (``meta.iso_norm_v1:<table>.<col>``) تا ری‌استارت **ادامه دهد** نه اینکه از صفر
+    شروع کند، و پرچمِ نهایی در پایان همهٔ ستون‌ها نوشته می‌شود."""
     try:
         if conn.execute("SELECT value FROM meta WHERE key='iso_norm_v1'").fetchone(): return 0
     except sqlite3.Error:
         return 0
     changed = 0
     for tbl, col in _ISO_COLS:
+        marker = f"iso_norm_v1:{tbl}.{col}"
         try:
-            rows = conn.execute(f"SELECT rowid AS _rid, {col} AS _v FROM {tbl} WHERE {col} IS NOT NULL").fetchall()
+            if conn.execute("SELECT value FROM meta WHERE key=?", (marker,)).fetchone():
+                continue                      # این ستون قبلاً کامل شده ⇒ ادامه بده، تکرار نکن
+            last = 0
+            while True:
+                rows = conn.execute(
+                    f"SELECT rowid AS _rid, {col} AS _v FROM {tbl} "
+                    f"WHERE {col} IS NOT NULL AND rowid > ? ORDER BY rowid LIMIT ?", (last, chunk)).fetchall()
+                if not rows: break
+                upd = []
+                for r in rows:
+                    try:
+                        v = r["_v"]; d = parse_dt(v)
+                        if not d: continue
+                        nv = iso_fixed(d)
+                        if nv != v: upd.append((nv, r["_rid"])); changed += 1
+                    except (TypeError, ValueError):
+                        continue
+                if upd:
+                    conn.executemany(f"UPDATE {tbl} SET {col}=? WHERE rowid=?", upd)
+                last = rows[-1]["_rid"]
+            # checkpoint این ستون ⇒ اگر پروسه کشته شود، همین ستون دوباره کار نمی‌شود
+            conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (marker, "1"))
+            try: conn.commit()
+            except sqlite3.Error: pass
         except sqlite3.Error:
             continue
-        for r in rows:
-            try:
-                v = r["_v"]; d = parse_dt(v)
-                if not d: continue
-                nv = iso_fixed(d)
-                if nv != v:
-                    conn.execute(f"UPDATE {tbl} SET {col}=? WHERE rowid=?", (nv, r["_rid"])); changed += 1
-            except sqlite3.Error:
-                continue
     conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('iso_norm_v1',?)", (str(changed),))
+    try: conn.commit()
+    except sqlite3.Error: pass
     if changed: log.info("ISO canonicalization: %d value(s) rewritten", changed)
     return changed
 
@@ -390,7 +417,7 @@ def _ensure_schema(conn):
                 if col not in have[tbl]:
                     conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
                     have[tbl].add(col)
-            normalize_iso_columns(conn)   # DB-14 — پیش از هر مقایسهٔ رشته‌ایِ زمان
+            # PHASE-04: کانُنیکال‌سازیِ زمان بیرون از تراکنشِ اسکیما اجرا می‌شود (پایینِ تابع)
             # v8: trigger عوض شده (شارژ کیف پولِ واحد‌دار + رسید)؛ نسخه‌های قدیمی جایگزین می‌شوند
             conn.execute("DROP TRIGGER IF EXISTS trg_referral_credit_wallet")
             conn.execute(REFERRAL_CREDIT_TRIGGER)
@@ -410,6 +437,14 @@ def _ensure_schema(conn):
                 try: conn.rollback()
                 except Exception: pass
             raise
+        # PHASE-04 (رخداد تولید 2026-10-21): کانُنیکال‌سازیِ زمان **بیرون از تراکنشِ اسکیما**
+        # اجرا می‌شود و checkpoint هر ستون را جداگانه commit می‌کند ⇒ اگر پروسه وسطِ کار کشته
+        # شود، ری‌استارتِ بعدی **ادامه می‌دهد** نه اینکه کلِ اسکن را از صفر تکرار کند
+        # (که با TimeoutStartSec/Restart=always به حلقهٔ ۱۰۰٪ CPU تبدیل می‌شد).
+        try:
+            normalize_iso_columns(conn)
+        except Exception as e:
+            log.error("ISO canonicalisation failed (continues; resumes on next start): %s", e)
         _SCHEMA_READY = True
 
 def db():

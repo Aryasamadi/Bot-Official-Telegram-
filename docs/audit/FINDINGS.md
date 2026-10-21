@@ -1351,9 +1351,38 @@
 - **Status:** OPEN
 
 
----
 
-# 11b. یافته‌های تازهٔ PH-01
+
+## OPS-033 — The one-off timestamp migration could never finish ⇒ a 100 % CPU restart loop
+- **Severity / Priority / Category:** **CRITICAL** · P0 · CONFIRMED BUG (production incident, 2026-10-21)
+- **Evidence:** `newsbot/db.py` (pre-fix) — `normalize_iso_columns()` read the **whole table** with
+  `fetchall()`, updated it **row by row** inside the **schema transaction**, and wrote the "done" flag
+  (`meta.iso_norm_v1`) **only at the very end**. It ran on every start until it finished. The systemd
+  unit has `TimeoutStartSec=180` + `Restart=always` + `RestartSec=5`
+  (`docs/DEPLOY_RUNBOOK.md:180-199`, `deploy/systemd/10-restart-always.conf`).
+- **Actual vs Expected:** Actual — on a grown database the start can never complete (memory and/or
+  the 180 s timeout), systemd kills it, `Restart=always` starts it again, and the whole scan is redone
+  from zero. The service never comes up and the CPU stays at 100 % in a saw-tooth. Expected — a long
+  migration must be **bounded in memory** and **resumable**.
+- **Impact:** the bot is completely down and the host is pinned at 100 % CPU. This is the mechanism
+  that matches the observed symptom.
+- **Fix:** the migration now runs **in bounded chunks** (`chunk=2000`, every read is `LIMIT`ed), takes
+  a **per-column checkpoint** (`meta.iso_norm_v1:<table>.<col>`) that is **committed outside the
+  schema transaction**, and therefore **resumes** on the next start instead of repeating itself.
+  `deploy/systemd/10-restart-always.conf` now has `StartLimitIntervalSec=300` + `StartLimitBurst=5`, so
+  a service that keeps failing **stops burning CPU** and stays visibly `failed` instead of looping
+  forever.
+- **Regression test required:** yes — `tests/test_phase04_restart_loop.py` (5 tests): the read must be
+  `LIMIT`ed and paginated, each column must leave a checkpoint, the checkpoints must be committed, the
+  migration must run **outside** the schema transaction, the systemd drop-in must carry a non-zero start
+  limit, and the deploy health gate must detect a crash-looping service.
+- **Dependencies / risks:** the systemd change alters the deliberate "never stay down" policy
+  (`StartLimitIntervalSec=0` was introduced after an incident with 31 120 restarts). The new policy keeps
+  `Restart=always` but stops the loop after 5 failures in 5 minutes; the operator restarts with
+  `systemctl reset-failed <unit> && systemctl start <unit>`. **Reversible** — the drop-in is a text file
+  on the host and is not installed automatically by the deploy.
+- **Status:** OPEN — **the code fix is in PR #26**; the host still needs the systemd drop-in installed and
+  the migration to be resumed (see `MASTER_STATUS.md` → "رخداد تولید 2026-10-21").
 
 ## FIN-025 — موجودیِ منتقل‌شده به سطلِ «legacy» تا اجرای اسکریپتِ تخصیصِ دستی قابل خرج نیست
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS

@@ -28,7 +28,7 @@
   },
   "audit": {
     "status": "complete",
-    "last_updated": "2026-10-20T00:00:00Z",
+    "last_updated": "2026-10-21T00:00:00Z",
     "auditor_roles": [
       "Principal Architect",
       "Senior Python Engineer",
@@ -96,16 +96,29 @@
         "DOC-001 (project ROADMAP.md added to the repository verbatim)"
       ],
       "negative_control": "removing ROADMAP.md made 2 of the 3 new integrity tests fail as expected"
-    }
+    },
+    "incidents": [
+      {
+        "id": "INC-2026-10-21",
+        "title": "Production host pinned at 100% CPU, bot down",
+        "observed": "VPS panel (vyce.cloud): CPU 100% saw-tooth; the bot stopped working; the server was stopped ~4h before the screenshot and restarted ~51s before it.",
+        "ruled_out": [
+          "The audit/phase code: main is still 08bc876 and NONE of PRs #20-#25 are merged, so no phase code has ever reached the server.",
+          "The recent deploys: runs #42, #43 and #44 of 'Deploy to VPS' ALL failed in 12-15s, i.e. before any SSH/SCP step, so the server was never updated by them."
+        ],
+        "most_likely_cause": "OPS-033 - the one-off timestamp migration (normalize_iso_columns) could not finish on the grown database; systemd TimeoutStartSec=180 + Restart=always turned it into a 100% CPU restart loop.",
+        "status": "code fix in PR #26; the host still needs the systemd drop-in installed and the migration to be resumed"
+      }
+    ]
   },
   "summary": {
-    "critical": 1,
+    "critical": 2,
     "high": 26,
     "medium": 79,
     "low": 66,
     "informational": 12,
-    "total": 184,
-    "open": 133,
+    "total": 185,
+    "open": 134,
     "fixed_unverified": 3,
     "verified_fixed": 43,
     "blocked": 0,
@@ -1205,6 +1218,24 @@
         "tests/test_deploy_gate.py"
       ],
       "fix_applied": "PR #21: کلیدِ `environment: production` اضافه و با تست نگهبانی شد. تا وقتی قاعدهٔ «Required reviewers» در تنظیمات ساخته نشود، GitHub محیط را بدونِ محافظت می‌سازد ⇒ استقرار هنوز خودکار است."
+    },
+    {
+      "id": "OPS-033",
+      "title": "The one-off timestamp migration could never finish => a 100% CPU restart loop",
+      "severity": "CRITICAL",
+      "priority": "P0",
+      "category": "CONFIRMED BUG",
+      "verification": "REPRODUCED",
+      "status": "OPEN",
+      "phase": "PH-04",
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-033",
+      "evidence": [
+        "newsbot/db.py:normalize_iso_columns (pre-fix)",
+        "newsbot/db.py:_ensure_schema",
+        "deploy/systemd/10-restart-always.conf",
+        "docs/DEPLOY_RUNBOOK.md:180-199"
+      ],
+      "fix_applied": "PHASE-04: chunked + resumable + out-of-transaction migration, plus a systemd start limit. In PR #26."
     },
     {
       "id": "PERF-001",

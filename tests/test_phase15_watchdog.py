@@ -15,9 +15,19 @@ def _dropin(name):
 
 
 def test_restart_dropin_disables_start_limit_and_always_restarts():
+    """PHASE-04 (رخداد تولید 2026-10-21) — این تست **عمداً عوض شد**.
+
+    رفتارِ قبلی: ``StartLimitIntervalSec=0`` ⇒ یک سرویسِ خراب بی‌نهایت هر ۵ ثانیه ری‌استارت
+    می‌شد و CPU را ۱۰۰٪ نگه می‌داشت (همان چیزی که در رخداد دیده شد) و ربات بالا نمی‌آمد.
+    رفتارِ جدید: ``StartLimitIntervalSec=300`` + ``StartLimitBurst=5`` ⇒ بعد از ۵ شکست در ۵ دقیقه
+    systemd **دست از تلاش برمی‌آید**، یونیت در حالتِ failed می‌ماند (خطا دیدنی است) و پس از رفعِ
+    علت با ``systemctl reset-failed`` دوباره بالا می‌آید. سیاستِ «Restart=always» (هرگز خاموش نماند)
+    حفظ شده است."""
     text = _dropin("10-restart-always.conf")
     unit, service = text.split("[Service]", 1)
-    assert "StartLimitIntervalSec=0" in unit
+    assert "StartLimitIntervalSec=0" not in unit, "سقفِ صفر یعنی حلقهٔ بی‌پایانِ ری‌استارت (۱۰۰٪ CPU)"
+    assert "StartLimitIntervalSec=300" in unit
+    assert "StartLimitBurst=5" in unit
     assert "Restart=always" in service
     assert "RestartSec=5" in service
     assert "ExecStopPost=" in service

@@ -5,6 +5,43 @@ executed and observed, the commit, the deployment status and the verification st
 
 ---
 
+## 2026-10-21 — PRODUCTION INCIDENT: 100 % CPU, bot down — **CODE FIX IN PR #26 (not merged)**
+
+**Severity:** CRITICAL · **Finding:** OPS-033 (new) · **Phase:** PHASE-04
+
+### Observed
+VPS panel (vyce.cloud): CPU pinned at 100 % in a saw-tooth; the bot stopped working; the server had been
+stopped ~4 h before the screenshot and restarted ~51 s before it.
+
+### What was ruled out (facts, not guesses)
+- **Not the audit/phase code.** `main` is still `08bc876` and **none** of PRs #20–#25 are merged, so no phase
+  code has ever reached the server.
+- **Not the recent deploys.** Runs #42, #43 and #44 of "Deploy to VPS" **all failed in 12–15 s**, i.e. before
+  any SSH/SCP step — the server was never updated by them.
+
+### Most likely cause (OPS-033)
+The one-off timestamp migration `normalize_iso_columns()` read the **whole table** into memory with
+`fetchall()`, updated it row by row **inside the schema transaction**, and wrote its "done" flag only at the
+very end. On a grown database the start can never complete -> systemd's `TimeoutStartSec=180` kills it ->
+`Restart=always` starts it again -> the whole scan is redone from zero -> **100 % CPU in a loop, the bot never
+comes up**. The saw-tooth in the panel is the signature of that loop.
+
+> **Honesty note:** the audit had already seen this code path and filed it as **PERF-005 — LOW / P3**
+> ("a one-time full scan of 18 tables dominates init_core"). That rating was wrong: it is an availability
+> defect, not a performance note. PERF-005 is now re-rated to FIXED and OPS-033 is filed as CRITICAL.
+
+### Fix (PR #26)
+- The migration now runs in **bounded chunks** (`chunk=2000`, every read is `LIMIT`ed), takes a
+  **per-column checkpoint** (`meta.iso_norm_v1:<table>.<col>`) that is **committed outside the schema
+  transaction**, and therefore **resumes** on the next start instead of repeating itself.
+- `deploy/systemd/10-restart-always.conf` now has `StartLimitIntervalSec=300` + `StartLimitBurst=5`: a
+  service that keeps failing **stops burning CPU** and stays visibly `failed` instead of looping forever.
+  `Restart=always` is kept; after fixing the cause: `systemctl reset-failed <unit> && systemctl start <unit>`.
+- 5 new regression tests in `tests/test_phase04_restart_loop.py`; the pre-existing watchdog test was updated
+  deliberately to the new drop-in policy.
+
+---
+
 ## 2026-10-20 — OWNER DECISIONS (Q-1 … Q-6) — **RECORDED**
 
 **Authorisation:** owner instruction «تصمیم‌های پیشنهادی مالک: Q-1: گزینه c · Q-2: گزینه a … این تصمیم‌ها را در اسناد ممیزی ثبت کن و اثرشان را بر طراحی PH-01 مشخص کن. هنوز PH-01 را اجرا نکن.»

@@ -46,6 +46,15 @@ def operation_checkpoint():
 
 
 def clear_interaction(context, keep=()):
+    """پاک‌سازیِ وضعیتِ تعاملیِ کاربر.
+
+    PH-03/UI-009: فرمِ «رسیدِ پرداخت» **نباید** با یک ضربهٔ دکمهٔ دیگر پاک شود؛
+    پیش از این، state فقط در ``user_data["await"]`` بود و هر عملیاتِ دیگر آن را پاک
+    می‌کرد ⇒ مشتری رسید را می‌فرستاد و ربات آن را «نشناخته» رد می‌کرد (پولِ گم‌شده).
+    لغوِ صریح (/cancel یا دکمهٔ کنسل) فرم را می‌بندد — چون مستقیماً state را pop می‌کند."""
+    st = context.user_data.get("await") or {}
+    if st.get("kind") == "receipt" and "await" not in keep:
+        keep = tuple(keep) + ("await",)
     for key in ("await", "notice", "disc", "bc_src", "qs", "qs_channel", "status_message_id"):
         if key not in keep:
             context.user_data.pop(key, None)

@@ -191,7 +191,21 @@ def hard_html(text, limit):
     """نسخهٔ «سقف سخت»: هرگز از limit رد نمی‌شود (برای کپشن/پیام تلگرام که عبور از حد = خطای ارسال).
     اگر quoted باشد، ابتدا تلاش می‌کند quote را داخل سقف نگه دارد؛ در غیر این‌صورت برشِ سادهٔ امن."""
     if len(text) <= limit: return text
-    return split_post_html(text, limit, hard_ceiling=limit)[0]
+    head = split_post_html(text, limit, hard_ceiling=limit)[0]
+    if len(head) <= limit: return head
+    # PH-03/UI-006: بستنِ تگ‌های باز (sanitize_html) و escape کردن چند کاراکتر اضافه می‌کند
+    # ⇒ نتیجه از سقف رد می‌شد (مثلاً ۱۰۲۹ برای سقفِ ۱۰۲۴) ⇒ تلگرام کپشن را رد می‌کرد.
+    # حالا سقف **واقعاً** سخت است: تا جایی که ممکن است با حفظِ ساختار، و در بدترین حالت
+    # بدونِ تگ (که قطعاً در سقف جا می‌شود).
+    ELL = " …"
+    body = head[:-len(ELL)] if head.endswith(ELL) else head
+    for _ in range(8):
+        cand = sanitize_html(body).rstrip() + ELL
+        if len(cand) <= limit: return cand
+        deficit = len(cand) - limit
+        body = re.sub(r"<[^>]*$", "", body[:max(0, len(body) - deficit)]).rstrip()
+    plain = re.sub(r"<[^>]*>", "", body).strip()
+    return plain[:max(0, limit - len(ELL))].rstrip() + ELL
 
 def fit_html(text, limit):
     """(متن بریده, آیا بریده شد؟) — سقفِ سخت رعایت می‌شود: خروجی هرگز از limit رد نمی‌شود."""

@@ -469,6 +469,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await popup(update, context, operation_text(L(update), "cancelled"))
             return await dispatch(update, context, back)
         clear_interaction(context, keep=keep)
+        # PH-03/UI-009: فرمِ رسیدِ پرداخت باز می‌ماند ⇒ مشتری باید بداند هنوز می‌تواند
+        # رسید را بفرستد (پیش از این، فرم بی‌صدا می‌پرید و عکسِ رسید «ناشناخته» رد می‌شد).
+        if (context.user_data.get("await") or {}).get("kind") == "receipt":
+            await popup(update, context, tr(L(update), "receipt_still_pending"))
         return await dispatch(update, context, data)
     # فاز انتظار: اگر عملیات اصلی کاربر (تست/چرخه/انتشار) در حال اجراست، بهجای جانشینی
     # که کاربر را از وسط کار پرت میکند، یک پیام بزرگ میگوییم صبر کند یا /cancel بزند.

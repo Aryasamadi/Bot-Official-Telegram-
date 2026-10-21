@@ -529,7 +529,7 @@
 - **Fix:** purge the referral markers (they are only needed inside the payment idempotency window) and `ch_tokens` in the existing cleanup.
 - **Regression test required:** yes — assert the row counts do not grow across repeated cleanup passes.
 - **Dependencies / risks:** purging markers too early re-opens the FIN-009 replay window.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-03)** — پاک‌سازیِ دوره‌ای حالا نشانگرهای idempotencyِ ارجاعِ یتیم (``refpaid:pay:<id>`` که پرداختشان حذف شده)، توکن‌های منقضی/مصرف‌شدهٔ کانال، آمارِ روزانهٔ AI و اعلان‌های تحویل‌شده را پاک می‌کند. نشانگرِ پرداختِ زنده **نگه داشته می‌شود** (پنجرهٔ replay باز نمی‌شود). دفترِ مالی (``credit_log``/``plan_changes``) عمداً پاک نمی‌شود.
 
 ## DB-009 — `journal_mode=WAL` is set on every new connection and its failure is silently ignored
 - **Severity / Priority / Category:** LOW · P3 · DESIGN WEAKNESS
@@ -626,7 +626,7 @@
 - **Fix:** truncate the *fields* (cap the note at ~300 chars) and build the caption with `fit_html`; or send the receipt as a photo with a short caption plus a second message; on failure, notify the user and mark the request as un-notified.
 - **Regression test required:** yes — a 400-char note must yield valid HTML <= 1024, and the failure path must notify the user.
 - **Dependencies / risks:** coupled with OBS-013 (no re-notification for pending payments).
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-03)** — کپشنِ رسید دیگر با برشِ ساده ساخته نمی‌شود: یادداشت در سطحِ فیلد به ۳۰۰ کاراکتر کوتاه، بقیه escape و متن با ``fit_html`` بسته می‌شود ⇒ **HTML معتبر و ≤۱۰۲۴**. ریشهٔ لایهٔ فرمت هم اصلاح شد (``hard_html`` سقفِ سخت را واقعاً رعایت می‌کند — بستنِ تگ‌ها متن را بلندتر می‌کرد و از سقف رد می‌شد). اگر هیچ مدیری نرسید ⇒ سطر «اعلام‌نشده» می‌ماند و مشتری صادقانه مطلع می‌شود.
 
 ## UI-007 — Unbounded inline keyboards (source list, category list) exceed Telegram's limits
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS (latent CONFIRMED BUG)
@@ -656,7 +656,7 @@
 - **Fix:** keep `"await"` for the `receipt` kind across navigation and re-assert the payment prompt instead of the home panel when a receipt-kind state was dropped.
 - **Regression test required:** yes.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-03)** — فرمِ «رسید» دیگر با یک ضربهٔ دکمهٔ دیگر پاک نمی‌شود (``clear_interaction`` آن را نگه می‌دارد) و مشتری یادآوری می‌گیرد که فرم باز است (``receipt_still_pending``). لغوِ صریح همچنان فرم را می‌بندد.
 
 ## UI-010 — In-progress input forms are discarded silently when the user taps another button
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -873,7 +873,7 @@
 - **Fix:** delete the journal row once the article is in a terminal state (`failed/delivery_unknown`) or mark it terminal and exclude it from the recovery scan.
 - **Regression test required:** yes — the `pub_journal` row count must not grow across repeated recovery passes.
 - **Dependencies / risks:** deleting the row must not re-enable republication — `soft_window_candidate` already refuses `delivery_unknown` articles (`newsbot/core_articles.py:189`).
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-03)** — بازیابیِ ژورنال، سطرِ ``unsettled`` را دیگر در هر چرخه بازنویسی نمی‌کند؛ اگر مقاله در حالتِ پایانی باشد (failed/delivery_unknown) سطر حذف می‌شود. انتشارِ تکراری ممکن نیست (``soft_window_candidate`` این مقاله‌ها را رد می‌کند).
 
 ### PIPE-005, PIPE-008 … PIPE-010, PIPE-012, PIPE-015, PIPE-019, PIPE-020, PIPE-022 — remaining pipeline findings
 
@@ -1285,7 +1285,7 @@
 - **Impact:** a classic monitoring dead-end; the operator can be told nothing at the moment they most need to know.
 - **Fix:** persist undelivered super-notifications to a `notifications` table with `attempts`/`next_attempt_at`/`delivered_at`; retry from the scheduler; expose `undelivered_count` in `/health`; fall back to the journal at ERROR level if Telegram itself is down.
 - **Regression test required:** yes — queue overflow must land in a dead-letter table, not vanish.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-03)** — اعلانِ نرسیدهٔ مدیر کلان **حذف نمی‌شود**: در جدولِ جدیدِ ``notifications`` ذخیره می‌شود (dead-letter)، زمان‌بند با فاصلهٔ نمایی دوباره می‌فرستد، و اگر از سقفِ تلاش گذشت سطر «مرده» می‌شود (نه حذف) تا در بخشِ سلامت دیده شود. سرریزِ صف هم به‌جای دراپ، به همین جدول می‌رود.
 
 ## OBS-013 — If the receipt notification to super-admins fails, the payment request is orphaned
 - **Severity / Priority / Category:** HIGH · P1 · DESIGN WEAKNESS
@@ -1294,7 +1294,7 @@
 - **Impact:** direct revenue loss: the customer uploaded a receipt and paid, the plan is never granted because nobody approves it, and the only evidence is a log line. The super-admin payments list (`view_s_pays`) does surface pending rows, but only if an operator happens to open that screen — there is no push. Combined with OBS-011 (the same path is lossy), this is the highest-value money-observability gap. It compounds UI-006 (caption truncation) and UI-009 (form loss).
 - **Fix:** add `notified_at`/`notify_attempts` on `pay_requests`; re-notify un-notified pending rows from `scheduler_tick`; alert if any is older than N minutes; expose the count in `/health`.
 - **Regression test required:** yes.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-03)** — رسیدهایی که هیچ مدیر کلانی ندیده، دوباره اعلام می‌شوند: ستونِ ``super_notified_at`` + ``notify_attempts`` (افزایشی) و سرویسِ ``_renotify_payments`` در هر تیک. شمارِ «اعلام‌نشده به مدیر» در بخشِ سلامت نمایش داده می‌شود.
 
 ### OBS-001, OBS-003, OBS-006 … OBS-010, OBS-012, OBS-014 … OBS-016 — remaining observability findings
 

@@ -90,7 +90,7 @@ safe fix. Each phase is **self-contained** and ends in a mergeable, revertable s
 | **Required tests** | New: a 400-character receipt note yields valid HTML <= 1024 and reaches the super admin; a failing `copy_message` marks the request un-notified and the scheduler re-notifies it; a receipt-kind `await` state survives an unrelated button press; a failed user notification is retried; a full super-notification queue lands in a dead-letter table rather than being dropped. |
 | **Acceptance criteria** | (1) No receipt can be lost to a caption-length or formatting error. (2) Every `pay_requests` row reaches an administrator, or is visible as pending-un-notified in `/health`. (3) Tapping another button cannot discard an in-flight receipt form. (4) A failed customer notification is retried and observable. (5) The super-notification queue is durable with a dead-letter state. |
 | **Rollback strategy** | Additive columns (`notified_at`, `notify_attempts`) and one new table. Reverting the code leaves the columns unused; no data is rewritten. |
-| **Status** | `OPEN` |
+| **Status** | `IMPLEMENTED_AWAITING_MERGE` (2026-10-21) — branch `feature/ph-03-payment-durability`, PR #28. 592 tests green, 20 new. UI-006 · UI-009 · OBS-011 · OBS-013 · DB-008 · PIPE-021 addressed; schema v9 (additive). **Not merged.** |
 | **Owner approval required** | **YES** |
 
 ---

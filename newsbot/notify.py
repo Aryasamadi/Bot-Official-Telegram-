@@ -54,23 +54,41 @@ async def _send_super_with_retry(text, kb):
     return False
 
 
+def _persist(text, kb, err):
+    """PH-03/OBS-011: اعلانِ نرسیده durable می‌شود (dead-letter) تا بعداً برود، نه اینکه گم شود."""
+    try:
+        from newsbot.core_alerts import alert_enqueue
+        nid = alert_enqueue(text, kb)
+        log.error("notify super: اعلان ذخیره شد برای تلاشِ بعدی (id=%s): %s", nid, err)
+        return nid
+    except Exception as e:
+        log.error("notify super: ذخیرهٔ اعلان هم ناموفق بود: %s", e)
+        return None
+
+
 async def _super_loop():
     q = _queue()
     while True:
         text, kb = await q.get()
         try:
-            await _send_super_with_retry(text, kb)
+            ok = await _send_super_with_retry(text, kb)
+            if not ok: _persist(text, kb, "delivery failed")
         except asyncio.CancelledError:
             raise
         except Exception as e:
             log.warning(f"notify super worker: {e}")
+            _persist(text, kb, e)
         finally:
             q.task_done()
 
 
 async def notify_super(text, kb=None):
     """ارسال پیام به همه‌ی مدیران کلان؛ متن پیش از ارسال redact می‌شود (نشت راز ممنوع).
-    با worker فعال ⇒ صف + ری‌ترای (ARCH-09)؛ بدون worker ⇒ تلاش مستقیم تک‌شات (سازگاری)."""
+    با worker فعال ⇒ صف + ری‌ترای (ARCH-09)؛ بدون worker ⇒ تلاش مستقیم تک‌شات (سازگاری).
+
+    PH-03/OBS-011: اگر ارسال ناموفق بود یا صف پر بود ⇒ پیام **حذف نمی‌شود**؛ در جدولِ
+    ``notifications`` ذخیره می‌شود تا زمان‌بند دوباره بفرستد (و اگر تلاش‌ها تمام شد،
+    به‌صورت dead-letter در بخشِ سلامت دیده می‌شود)."""
     if not runtime.NOTIFY_SUPER:
         return
     body = redact(text)
@@ -78,12 +96,14 @@ async def notify_super(text, kb=None):
         try:
             _queue().put_nowait((body, kb))
         except asyncio.QueueFull:
-            log.warning("notify super: صف پر است؛ پیام دراپ شد")
+            log.warning("notify super: صف پر است؛ پیام به dead-letter منتقل شد")
+            _persist(body, kb, "queue full")
         return
     try:
         await runtime.NOTIFY_SUPER(body, kb)
     except Exception as e:
         log.warning(f"notify super: {e}")
+        _persist(body, kb, e)
 
 
 async def drain_super_queue(timeout=10.0):

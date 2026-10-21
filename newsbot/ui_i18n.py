@@ -280,6 +280,9 @@ TXT = {
     "sup_open": ("💬 <b>پشتیبانی</b>\nپیام خود را بفرستید؛ مستقیم به پشتیبانی می‌رسد و پاسخ همین‌جا ارسال می‌شود.", "💬 <b>Support</b>\nAny message goes straight to the admin; replies arrive here."), "sup_close": ("❌ پایان گفتگو", "❌ End chat"), "sup_closed": ("✅ گفتگو پایان یافت", "✅ Chat ended"),
     "sup_reply_head": ("💬 <b>پاسخ پشتیبانی:</b>\n", "💬 <b>Support reply:</b>\n"), "sup_sent": ("✅ ارسال شد", "✅ Sent"), "sup_fail": ("❌ ارسال نشد؛ کمی بعد دوباره تلاش کنید.", "❌ Couldn't send; please try again shortly."), "sup_received": ("✅", "✅"),
     "dl_notfound": ("🔎 متأسفانه نسخهٔ کامل این مطلب پیدا نشد؛ ممکن است حذف شده باشد. لطفاً پست را از خود کانال باز کنید یا چند دقیقه بعد دوباره تلاش کنید.", "🔎 Sorry, this full version could not be found — it may have been removed. Please open the post in the channel or try again later."), "dl_source": ("🔗 منبع", "🔗 Source"),
+    # ---- PH-03 (UI-006 · UI-009 · OBS-013): پایداریِ رسیدِ پرداخت
+    "pay_notify_delayed": ("✅ رسید شما ثبت شد. اعلامِ آن به مدیر با کمی تأخیر انجام می‌شود؛ لطفاً تا اعلامِ نهایی صبر کنید.", "✅ Your receipt is saved. The administrator will be notified shortly — please wait for the final confirmation."),
+    "receipt_still_pending": ("ℹ️ فرمِ پرداختِ شما هنوز باز است — تصویرِ رسید را همین‌جا بفرستید.", "ℹ️ Your payment form is still open — send the receipt image here."),
 }
 
 def tr(lang, key, /, **kw):

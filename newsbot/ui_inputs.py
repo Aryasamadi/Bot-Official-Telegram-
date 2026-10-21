@@ -29,7 +29,8 @@ from newsbot.core_sources import add_source, get_source, set_source_api, set_sou
 from newsbot.core_articles import article_update, get_article
 from newsbot.core_plans import create_plan, get_plan, plan_txt
 from newsbot.core_discounts import disc_valid, disc_create
-from newsbot.core_payments import pay_pending_for, pay_create
+from newsbot.core_payments import (pay_pending_for, pay_create, pay_mark_super_notified,
+                                     pay_mark_super_failed, pay_receipt_caption)
 from newsbot.ai_models import add_model, get_model, update_model, test_model, ai_err_text, err_code, hostname
 from newsbot.discover import probe_source, _api_discover
 from newsbot.publish import bot_can_post
@@ -452,18 +453,32 @@ async def handle_input(update, context, st):
             rid = pay_create(uid, pid, msg.chat_id, msg.message_id, text, st.get("disc"), st.get("final"),
                              st.get("pc"), (st.get("pc") or {}).get("cur", ""))
         done(); ud.get("disc", {}).pop(str(pid), None)
-        disc = f"\n🎟 {esc(st['disc'])}" if st.get("disc") else ""; note = f"\n📝 {esc(text[:400])}" if text else ""
-        price_txt = esc(st.get("display") or st.get("final") or p["price"])
+        # PH-03/UI-006: کپشن توسطِ pay_receipt_caption ساخته می‌شود — یادداشت در سطحِ
+        # فیلد کوتاه و متن با fit_html بسته می‌شود ⇒ HTML معتبر و ≤۱۰۲۴ کاراکتر.
+        # پیش از این، برشِ header[:1000] داخلِ تگ می‌افتاد ⇒ تلگرام کپشن را رد می‌کرد ⇒
+        # رسید به هیچ مدیری نمی‌رسید و مشتری «رسید دریافت شد» می‌دید (پولِ گم‌شده).
+        price_txt = st.get("display") or st.get("final") or p["price"]
         kb = InlineKeyboardMarkup([[B("✅ تأیید / Approve", f"s:pay_ok:{rid}"), B("❌ رد / Reject", f"s:pay_no:{rid}")]])
+        delivered = 0
         for sid in config.SUPER_ADMIN_IDS:
             # فاز ۱۴: هر سوپرادمین پیام را به زبان خودش می‌گیرد (قبلاً همیشه fa) + قیمت پلن در پیام دیده می‌شود
             sl = user_lang(sid) or "fa"
-            header = tr(sl, "s_pay_new", id=rid, who=esc(uname(u)), uid=uid, plan=esc(plan_txt(p, "name", sl)),
-                        plan_price=esc(plan_txt(p, "price", sl) or "—"), price=price_txt, disc=disc, note=note)
+            header = pay_receipt_caption(rid, uname(u), uid, plan_txt(p, "name", sl),
+                                         plan_txt(p, "price", sl) or "—", price_txt,
+                                         st.get("disc"), text, sl)
             try:
-                if msg.photo or msg.document: await context.bot.copy_message(sid, msg.chat_id, msg.message_id, caption=header[:1000], parse_mode="HTML", reply_markup=kb)
+                if msg.photo or msg.document: await context.bot.copy_message(sid, msg.chat_id, msg.message_id, caption=header, parse_mode="HTML", reply_markup=kb)
                 else: await context.bot.send_message(sid, header, parse_mode="HTML", reply_markup=kb)
+                delivered += 1
             except Exception as e: log.warning(f"pay notify {sid}: {e}")
+        # PH-03/OBS-013: اگر هیچ مدیری نرسید ⇒ سطر «اعلام‌نشده» می‌ماند و زمان‌بند دوباره
+        # اعلام می‌کند؛ مشتری هم صادقانه مطلع می‌شود (قبلاً «رسید دریافت شد» می‌دید).
+        if config.SUPER_ADMIN_IDS and delivered == 0:
+            pay_mark_super_failed(rid)
+            log_event("ERROR", f"رسید #{rid} به هیچ مدیر کلانی نرسید — اعلامِ دوباره انجام می‌شود", uid)
+            await popup(update, context, tr(lang, "pay_notify_delayed"))
+        elif delivered:
+            pay_mark_super_notified(rid)
         log_event("INFO", f"درخواست پرداخت #{rid} برای پلن {p['name']}", uid); return await view_receipt_ok(update, context)
     # ---- مدیر کلان
     if kind == "mand_field":

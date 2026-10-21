@@ -16,7 +16,8 @@ from newsbot.core_channels import list_channels, mandatory_cfg
 from newsbot.core_sources import count_sources
 from newsbot.core_articles import count_articles
 from newsbot.core_payments import (pay_pending, pay_get, pay_set, pay_approve_atomic, pay_mark_notified,
-                                   pay_unnotified, pay_approved_recent, PayError)
+                                    pay_unnotified, pay_approved_recent, PayError,
+                                    pay_super_unnotified_count)
 from newsbot.core_referrals import referral_cfg
 from newsbot.secret_store import decrypt as decrypt_key   # SEC-09: نمایش ماسک‌شدهٔ کلید رمزنگاری‌شده
 from newsbot.ai_models import list_models, get_model
@@ -46,6 +47,14 @@ async def view_health(update, context):
     except Exception: pending = 0
     try: unnot = len(pay_unnotified(50))         # PH-01/OBS-014: پرداخت‌های تأییدشدهٔ اعلام‌نشده
     except Exception: unnot = 0
+    # PH-03/OBS-013 · OBS-011: رسیدهایی که هیچ مدیری ندیده + صفِ اعلانِ نرسیده
+    try: superunnot = pay_super_unnotified_count()
+    except Exception: superunnot = 0
+    try:
+        from newsbot.core_alerts import alert_counts
+        alert_pending_n, alert_dead_n = alert_counts()
+    except Exception:
+        alert_pending_n = alert_dead_n = 0
     chans = q("SELECT COUNT(*) c FROM channels", one=True)["c"]; ready = q("SELECT COUNT(*) c FROM articles WHERE status='ready'", one=True)["c"]
     head = "🩺 <b>System health</b>" if not fa else "🩺 <b>سلامت سیستم</b>"
     # چیدمان مینیمال: هر سنجه یک خط، با فاصله بین گروه‌های مرتبط
@@ -61,6 +70,8 @@ async def view_health(update, context):
         f"\n📥 موارد آماده در صف: {ready}"
         f"\n📌 موارد معلق ژورنال: {pending}"
         f"\n🧾 پرداخت‌های تأییدشدهٔ اعلام‌نشده: {unnot}"
+        f"\n📨 رسیدهای اعلام‌نشده به مدیر: {superunnot}"
+        f"\n🔔 اعلان‌های نرسیده: {alert_pending_n} (مرده: {alert_dead_n})"
         f"\n\n🤖 وضعیت مدل‌های هوش مصنوعی: {ok}/{len(models)} سالم"
         f"\n\n💾 حجم دیتابیس: {size:.1f} MB"
         f"\n🧠 مصرف حافظهٔ فرایند: {rss_mb():.0f} MB"
@@ -75,6 +86,9 @@ async def view_health(update, context):
         f"\n\n📡 Registered channels: {chans}"
         f"\n📥 Ready in queue: {ready}"
         f"\n📌 Pending journals: {pending}"
+        f"\n🧾 Unnotified approved payments: {unnot}"
+        f"\n📨 Receipts not seen by an admin: {superunnot}"
+        f"\n🔔 Undelivered alerts: {alert_pending_n} (dead: {alert_dead_n})"
         f"\n\n🤖 AI models healthy: {ok}/{len(models)}"
         f"\n\n💾 Database size: {size:.1f} MB"
         f"\n🧠 Process memory: {rss_mb():.0f} MB"

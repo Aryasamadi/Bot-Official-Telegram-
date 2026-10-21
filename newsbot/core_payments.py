@@ -226,6 +226,53 @@ def pay_unnotified(limit=50):
              "ORDER BY id LIMIT ?", (int(limit or 50),))
 
 
+# ── PH-03/OBS-013: اعلامِ رسید به *مدیر کلان* ──────────────────────────────────────
+def pay_mark_super_notified(rid):
+    """رسید به دستِ حداقل یک مدیر کلان رسید."""
+    q("UPDATE pay_requests SET super_notified_at=? WHERE id=? AND super_notified_at IS NULL",
+      (now_iso(), rid), commit=True)
+
+
+def pay_mark_super_failed(rid, err=""):
+    """اعلام ناموفق بود ⇒ شمارشِ تلاش؛ سطر «اعلام‌نشده» می‌ماند تا زمان‌بند دوباره بفرستد."""
+    q("UPDATE pay_requests SET notify_attempts=notify_attempts+1 WHERE id=?", (rid,), commit=True)
+
+
+def pay_unnotified_super(limit=20):
+    """رسیدهایی که هنوز هیچ مدیر کلانی ندیده (OBS-013) — زمان‌بند دوباره اعلام می‌کند."""
+    return q("SELECT * FROM pay_requests WHERE status='pending' AND super_notified_at IS NULL "
+             "ORDER BY id LIMIT ?", (int(limit or 20),))
+
+
+def pay_super_unnotified_count():
+    """شمارِ رسیدهای «اعلام‌نشده به مدیر» — در بخشِ سلامت (OBS-013)."""
+    try:
+        return int(q("SELECT COUNT(*) c FROM pay_requests WHERE status='pending' AND super_notified_at IS NULL",
+                     one=True)["c"] or 0)
+    except Exception:
+        return 0
+
+
+def pay_receipt_caption(rid, who, uid, plan_name, plan_price, price, disc_code, note_text, lang):
+    """PH-03/UI-006 — کپشنِ رسید: HTML معتبر و **همیشه** ≤ ۱۰۲۴ کاراکتر.
+
+    پیش از این، متنِ ساخته‌شده با ``header[:1000]`` بریده می‌شد و برش **داخلِ تگ**
+    (<b>، <code>) اتفاق می‌افتاد ⇒ تلگرام کپشن را رد می‌کرد ⇒ رسید به هیچ مدیری نمی‌رسید
+    و مشتری هم «رسید دریافت شد» می‌دید.
+
+    حالا: یادداشتِ مشتری **در سطحِ فیلد** به ۳۰۰ کاراکتر کوتاه می‌شود، بقیهٔ فیلدها
+    escape می‌شوند و خودِ متن با ``fit_html`` بسته می‌شود (برشِ امن، تگ‌ها بسته می‌شوند)."""
+    import html as _html
+    from newsbot.text_format import fit_html
+    from newsbot.ui_i18n import tr
+    disc = f"\n🎟 {_html.escape(str(disc_code))}" if disc_code else ""
+    note = f"\n📝 {_html.escape(str(note_text)[:300])}" if note_text else ""
+    header = tr(lang, "s_pay_new", id=rid, who=_html.escape(str(who or "")), uid=uid,
+                plan=_html.escape(str(plan_name or "")), plan_price=_html.escape(str(plan_price or "—")),
+                price=_html.escape(str(price or "")), disc=disc, note=note)
+    return fit_html(header, 1024)[0]
+
+
 def refund_payment(rid, amount=None, reason="refund"):
     """PH-01/FIN-013 — بازگرداندنِ مبلغ به کیف پولِ مشتری، با رسیدِ رسمی.
 

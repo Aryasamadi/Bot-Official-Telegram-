@@ -42,7 +42,10 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS support(user_id INTEGER PRIMARY KEY, open INTEGER DEFAULT 0, opened_at TEXT);
 CREATE TABLE IF NOT EXISTS support_map(msg_id INTEGER PRIMARY KEY, user_id INTEGER, ts TEXT);
 CREATE TABLE IF NOT EXISTS plan_changes(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, from_plan INTEGER, kind TEXT, credit_used REAL DEFAULT 0, surplus REAL DEFAULT 0, paid REAL, rem_days REAL, ref TEXT, ts TEXT);
-CREATE TABLE IF NOT EXISTS pay_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, status TEXT DEFAULT 'pending', created_at TEXT, receipt_chat INTEGER, receipt_msg INTEGER, note TEXT, decided_at TEXT, discount TEXT, final_price TEXT, cur TEXT DEFAULT '', decided_by INTEGER, notified_at TEXT);
+CREATE TABLE IF NOT EXISTS pay_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, status TEXT DEFAULT 'pending', created_at TEXT, receipt_chat INTEGER, receipt_msg INTEGER, note TEXT, decided_at TEXT, discount TEXT, final_price TEXT, cur TEXT DEFAULT '', decided_by INTEGER, notified_at TEXT, super_notified_at TEXT, notify_attempts INTEGER DEFAULT 0);
+-- PH-03/OBS-011: صفِ پایدارِ اعلان‌های مدیر کلان. پیامی که تحویل نشد اینجا می‌ماند،
+-- زمان‌بند دوباره تلاش می‌کند و اگر از سقفِ تلاش گذشت به «dead-letter» می‌رود (نه حذف).
+CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT DEFAULT 'super', text TEXT, payload TEXT, attempts INTEGER DEFAULT 0, next_attempt_at REAL DEFAULT 0, delivered_at TEXT, dead INTEGER DEFAULT 0, last_error TEXT DEFAULT '', created_at TEXT);
 CREATE TABLE IF NOT EXISTS referrals(id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER, referred_id INTEGER UNIQUE, created_at TEXT, credited INTEGER DEFAULT 0, credit_amount REAL DEFAULT 0, note TEXT DEFAULT '', credit_cur TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS credit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, delta REAL, balance_after REAL, reason TEXT, ref TEXT, ts TEXT, cur TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS wallet(user_id INTEGER, cur TEXT, amount REAL DEFAULT 0, updated_at TEXT, PRIMARY KEY(user_id, cur));
@@ -60,6 +63,8 @@ CREATE INDEX IF NOT EXISTS idx_users_plan_exp ON users(plan_expires);
 CREATE INDEX IF NOT EXISTS idx_chtok_ch ON ch_tokens(channel_id, used_at);
 CREATE INDEX IF NOT EXISTS idx_posted_ch_at ON posted(channel_id, posted_at);
 CREATE INDEX IF NOT EXISTS idx_deeplinks_created ON deeplinks(created_at);
+CREATE INDEX IF NOT EXISTS idx_notif_pending ON notifications(delivered_at, dead, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_pay_superunnot ON pay_requests(status, super_notified_at);
 CREATE INDEX IF NOT EXISTS idx_kvcache_cached ON kv_cache(cached_at);
 CREATE INDEX IF NOT EXISTS idx_ai_cache_created ON ai_cache(created_at);
 CREATE INDEX IF NOT EXISTS idx_ref_referrer ON referrals(referrer_id);
@@ -123,6 +128,11 @@ MIGRATIONS = [("users", "next_plan_id", "INTEGER"), ("users", "next_plan_days", 
               ("pay_requests", "decided_by", "INTEGER"),       # چه کسی پرداخت را تأیید کرد
               ("pay_requests", "notified_at", "TEXT"),        # اعلامِ نتیجه به مشتری انجام شد؟
               ("plan_changes", "ref", "TEXT")]                  # شناسهٔ پرداختِ مرتبط (pay:<id>)
+# ── v9 / PH-03 (OBS-011 · OBS-013): پایداریِ اعلان ────────────────────────────────
+# super_notified_at: اعلامِ رسید به مدیر کلان انجام شد؟ (نه ⇒ زمان‌بند دوباره اعلام می‌کند)
+# notify_attempts: چند بار اعلام ناموفق بود (سقفِ تلاش ⇒ دیگر کوشش نمی‌شود)
+MIGRATIONS += [("pay_requests", "super_notified_at", "TEXT"),
+               ("pay_requests", "notify_attempts", "INTEGER DEFAULT 0")]
 
 # ── خواندنِ اسکیما: باید روی SQLite *و* Cloudflare D1 درست کار کند ────────────────────
 # DB-27 (رخداد تولید ۲۰۲۶-۱۰-۲۱): تشخیصِ ستون‌های موجود روی D1 خالی برمی‌گشت و

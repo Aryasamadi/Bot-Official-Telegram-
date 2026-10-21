@@ -113,6 +113,8 @@ def test_migration_on_a_copy_is_additive_and_preserves_data(legacy_copy):
         assert "cur" in cols, "ستونِ واحد باید اضافه شده باشد"
         cols = {r[1] for r in conn.execute("PRAGMA table_info(pay_requests)")}
         assert {"cur", "decided_by", "notified_at"} <= cols
+        # PH-03: پایداریِ اعلامِ رسید به مدیر کلان (افزایشی)
+        assert {"super_notified_at", "notify_attempts"} <= cols
         cols = {r[1] for r in conn.execute("PRAGMA table_info(referrals)")}
         assert "credit_cur" in cols
         cols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
@@ -121,7 +123,7 @@ def test_migration_on_a_copy_is_additive_and_preserves_data(legacy_copy):
         assert "wallet" in tables
         # نسخهٔ اسکیما بالا رفته
         ver = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-        assert ver == "8"
+        assert ver == "9"
         # دادهٔ موجود سالم است
         n_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         assert n_users >= 0

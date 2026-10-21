@@ -270,6 +270,6 @@ def test_readme_reflects_phase12_claims():
     assert re.search(r"AI_MAX_MODEL_ATTEMPTS` \| `6`", readme), "ردیف AI_MAX_MODEL_ATTEMPTS باید ۶ باشد (D1)"
 
 
-def test_schema_version_bumped_to_v8():
+def test_schema_version_bumped_to_v9():
     import newsbot
-    assert newsbot.SCHEMA_VERSION == 8
+    assert newsbot.SCHEMA_VERSION == 9

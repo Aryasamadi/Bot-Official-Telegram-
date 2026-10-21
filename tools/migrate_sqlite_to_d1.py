@@ -92,12 +92,19 @@ async def d1_table_cols(client, tbl):
 
 
 async def ensure_schema(client):
-    stmts = [s.strip() for s in (SCHEMA + "\n" + DB_INDEXES).split(";") if s.strip()]
+    """اسکیمای D1 را می‌سازد/به‌روز می‌کند — با ترتیبِ درست (DB-27).
+
+    ترتیب: ۱) جدول‌ها، ۲) ستون‌های افزایشی، ۳) ایندکس‌ها.
+    ``CREATE TABLE IF NOT EXISTS`` روی جدولِ موجود ستون اضافه نمی‌کند ⇒ اگر ایندکس‌ها
+    قبل از افزودنِ ستون‌ها ساخته شوند، دستورِ ``CREATE INDEX … ON pay_requests(status,
+    super_notified_at)`` با «no such column» می‌میرد و کلِ batch رول‌بک می‌شود."""
+    table_stmts = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    idx_stmts = [s.strip() for s in DB_INDEXES.split(";") if s.strip()]
     # PR1-08: meta در SCHEMA نیست (db._ensure_schema می‌سازدش)؛ بدون این، copy جدول meta شکست می‌خورد
-    stmts.append("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+    table_stmts.append("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
     # همگام‌سازی trigger اتمیک اعتبار ارجاع با اسکیمای اپلیکیشن (داخل همان batch اتمیک)
-    stmts.append(REFERRAL_CREDIT_TRIGGER)
-    await d1_batch(client, [(s, ()) for s in stmts])
+    table_stmts.append(REFERRAL_CREDIT_TRIGGER)
+    await d1_batch(client, [(s, ()) for s in table_stmts])
     have = {}
     for tbl, col, decl in MIGRATIONS:
         if tbl not in have: have[tbl] = await d1_table_cols(client, tbl)
@@ -111,6 +118,8 @@ async def ensure_schema(client):
                 have[tbl].add(col); continue
             raise
         have[tbl].add(col)
+    # DB-27: ایندکس‌ها **بعد** از مهاجرتِ ستون‌ها ⇒ هر ستونِ وابسته حالا وجود دارد.
+    await d1_batch(client, [(s, ()) for s in idx_stmts])
 
 
 async def ensure_unique_indexes(client):

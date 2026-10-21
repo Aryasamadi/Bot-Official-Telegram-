@@ -21,7 +21,7 @@ import asyncio, hashlib, json, os, sqlite3, sys, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import httpx
 from newsbot import config
-from newsbot.db import SCHEMA, DB_INDEXES, MIGRATIONS, REFERRAL_CREDIT_TRIGGER, UNIQUE_INDEXES, SCHEMA_VERSION
+from newsbot.db import SCHEMA, DB_INDEXES, MIGRATIONS, REFERRAL_CREDIT_TRIGGER, UNIQUE_INDEXES, SCHEMA_VERSION, _create_sql_cols
 from newsbot.timeutils import now_iso, parse_dt
 
 TABLES = ["users", "plans", "discounts", "channels", "sources", "usage", "articles", "posted",
@@ -62,6 +62,35 @@ async def d1_batch(client, stmts):
     return j.get("result") or []
 
 
+async def d1_table_cols(client, tbl):
+    """ستون‌های موجودِ جدول روی D1 — با سه راهِ به‌ترتیب (DB-27).
+
+    راهِ اول: ``PRAGMA table_info`` که روی D1 پشتیبانی و **واقعاً** اجرا می‌شود؛
+    راهِ دوم: تابعِ table-valued با لفظ؛ راهِ سوم: تعریفِ CREATE TABLE از sqlite_master.
+    خطای واقعی پنهان نمی‌شود: اگر جدول وجود داشته باشد ولی خوانده نشود ⇒ RuntimeError."""
+    errs = []
+    for sql, params in ((f"PRAGMA table_info({tbl})", ()),
+                        ("SELECT name FROM pragma_table_info('%s')" % tbl.replace("'", "''"), ()),
+                        ("SELECT name FROM pragma_table_info(?)", (tbl,))):
+        try:
+            res = await d1(client, sql, params)
+            rows = res.get("results") or []
+            if rows: return {r["name"] for r in rows}
+            errs.append(f"{sql} -> no rows")
+        except Exception as e:
+            errs.append(f"{sql} -> {e}")
+    try:
+        res = await d1(client, "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (tbl,))
+        rows = res.get("results") or []
+    except Exception as e:
+        raise RuntimeError(f"cannot read the schema of table {tbl!r}: " + " | ".join(errs + [str(e)]))
+    if not rows:
+        return set()          # چنین جدولی وجود ندارد ⇒ مجموعهٔ خالی درست است
+    cols = _create_sql_cols(rows[0].get("sql"))
+    if cols: return cols
+    raise RuntimeError(f"cannot read the schema of table {tbl!r}: " + " | ".join(errs + ["CREATE TABLE could not be parsed"]))
+
+
 async def ensure_schema(client):
     stmts = [s.strip() for s in (SCHEMA + "\n" + DB_INDEXES).split(";") if s.strip()]
     # PR1-08: meta در SCHEMA نیست (db._ensure_schema می‌سازدش)؛ بدون این، copy جدول meta شکست می‌خورد
@@ -69,11 +98,19 @@ async def ensure_schema(client):
     # همگام‌سازی trigger اتمیک اعتبار ارجاع با اسکیمای اپلیکیشن (داخل همان batch اتمیک)
     stmts.append(REFERRAL_CREDIT_TRIGGER)
     await d1_batch(client, [(s, ()) for s in stmts])
+    have = {}
     for tbl, col, decl in MIGRATIONS:
-        res = await d1(client, "SELECT name FROM pragma_table_info(?)", (tbl,))
-        cols = {row["name"] for row in (res.get("results") or [])}
-        if col not in cols:
+        if tbl not in have: have[tbl] = await d1_table_cols(client, tbl)
+        if col in have[tbl]: continue
+        try:
             await d1(client, f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
+        except Exception as e:
+            # DB-27: ستون از قبل هست (هم‌زمانی یا بررسیِ کهنه) ⇒ ادامه، نه شکستِ ابزار
+            if "duplicate column name" in str(e).lower():
+                print(f"  ! {tbl}.{col} از قبل هست — نادیده گرفته شد")
+                have[tbl].add(col); continue
+            raise
+        have[tbl].add(col)
 
 
 async def ensure_unique_indexes(client):

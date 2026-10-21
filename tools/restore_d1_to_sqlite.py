@@ -65,7 +65,11 @@ async def main():
         if tbl not in have:
             have[tbl] = {r["name"] for r in con.execute(f"PRAGMA table_info({tbl})")}
         if col not in have[tbl]:
-            con.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
+            try:
+                con.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
+            except sqlite3.OperationalError as e:
+                # DB-27: ستون از قبل هست ⇒ ادامه (بدون حذفِ داده)
+                if "duplicate column name" not in str(e).lower(): raise
             have[tbl].add(col)
     # بخیه‌های اسکیمای اپلیکیشن که داخل SCHEMA نیستند:
     con.execute(REFERRAL_CREDIT_TRIGGER)        # اعتبار ارجاع اتمیک + رسید credit_log (v6)

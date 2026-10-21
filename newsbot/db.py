@@ -6,7 +6,7 @@
 ARCH-01 (فاز ۸): مسیرهای async هیچ کوئری‌ای را روی حلقهٔ رویداد اجرا نمی‌کنند؛
 تابع همزمان با arun() به استخر تردهای اختصاصی دیتابیس سپرده می‌شود.
 """
-import asyncio, contextvars, functools, json, os, sqlite3, threading
+import asyncio, contextvars, functools, json, os, re, sqlite3, threading
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 from newsbot import config, SCHEMA_VERSION   # DB-25: تک‌منبعِ نسخه — newsbot/__init__.py
@@ -124,12 +124,159 @@ MIGRATIONS = [("users", "next_plan_id", "INTEGER"), ("users", "next_plan_days", 
               ("pay_requests", "notified_at", "TEXT"),        # اعلامِ نتیجه به مشتری انجام شد؟
               ("plan_changes", "ref", "TEXT")]                  # شناسهٔ پرداختِ مرتبط (pay:<id>)
 
+# ── خواندنِ اسکیما: باید روی SQLite *و* Cloudflare D1 درست کار کند ────────────────────
+# DB-27 (رخداد تولید ۲۰۲۶-۱۰-۲۱): تشخیصِ ستون‌های موجود روی D1 خالی برمی‌گشت و
+# migration ستونِ موجود را دوباره اضافه می‌کرد ⇒ «D1 HTTP 400: duplicate column name:
+# next_plan_id» ⇒ برنامه در استارتاپ می‌افتاد ⇒ با Restart=always یعنی حلقهٔ ری‌استارت
+# و ۱۰۰٪ CPU. ریشه: (۱) PRAGMA روی D1 «بدون اجرا» no-op می‌شد و (۲) خطای واقعیِ
+# خواندنِ schema پنهان و به «مجموعهٔ خالی» تبدیل می‌شد ⇒ «ستون وجود ندارد» اشتباه گرفته شد.
+
+_D1_READONLY_PRAGMAS = ("table_info", "table_xinfo", "index_list", "index_info",
+                        "foreign_key_list", "database_list", "table_list")
+
+def _d1_readonly_pragma(sql):
+    """آیا این PRAGMA از دستهٔ فقط‌خواندنی و پشتیبانی‌شدهٔ D1 است؟
+
+    PRAGMAهای نوشتنی (journal_mode، synchronous، busy_timeout، cache_size، …) را D1
+    پس می‌زند ⇒ همان‌ها no-op می‌مانند؛ ولی PRAGMAهای فقط‌خواندنی باید **واقعاً** اجرا
+    شوند تا ستون‌های جدول را بشناسیم."""
+    u = sql.strip().upper()
+    if not u.startswith("PRAGMA "): return False
+    rest = u[7:].strip()
+    if not rest: return False
+    return re.split(r"[\s(]", rest, maxsplit=1)[0].strip().lower() in _D1_READONLY_PRAGMAS
+
+_TBL_CONSTRAINT_KW = ("CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN")
+
+def _split_top_level(s):
+    """تقسیمِ متن روی کاماهای سطح‌اول (کاماهای داخل پرانتز/کوتیشن نادیده گرفته می‌شوند)."""
+    parts = []; buf = []; depth = 0; quote = None
+    for ch in s:
+        if quote:
+            buf.append(ch)
+            if ch == quote: quote = None
+            continue
+        if ch in "'\"`": quote = ch; buf.append(ch); continue
+        if ch == "[": quote = "]"; buf.append(ch); continue
+        if ch == "(": depth += 1; buf.append(ch); continue
+        if ch == ")": depth -= 1; buf.append(ch); continue
+        if ch == "," and depth == 0:
+            parts.append("".join(buf)); buf = []; continue
+        buf.append(ch)
+    if buf: parts.append("".join(buf))
+    return parts
+
+def _col_name(part):
+    """نامِ ستون از یک تکهٔ تعریفِ ستون؛ None برای قیدِ سطحِ جدول (PRIMARY/UNIQUE/...)."""
+    part = part.strip()
+    if not part: return None
+    if part[0] in "\"'`":
+        q = part[0]; end = part.find(q, 1)
+        if end < 0: return None
+        name = part[1:end]
+    elif part[0] == "[":
+        end = part.find("]", 1)
+        if end < 0: return None
+        name = part[1:end]
+    else:
+        m = re.match(r"[^\s(,]+", part)
+        if not m: return None
+        name = m.group(0)
+    if name.upper() in _TBL_CONSTRAINT_KW: return None
+    return name
+
+def _create_sql_cols(sql):
+    """نامِ ستون‌ها را از متنِ CREATE TABLE درمی‌آورد (پشتیبانِ portable از sqlite_master)."""
+    if not sql: return set()
+    start = sql.find("(")
+    if start < 0: return set()
+    depth = 0; quote = None; end = -1
+    for i in range(start, len(sql)):
+        ch = sql[i]
+        if quote:
+            if ch == quote: quote = None
+            continue
+        if ch in "'\"`": quote = ch; continue
+        if ch == "[": quote = "]"; continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0: end = i; break
+    if end < 0: return set()
+    cols = set()
+    for part in _split_top_level(sql[start + 1:end]):
+        nm = _col_name(part)
+        if nm: cols.add(nm)
+    return cols
+
 def _table_cols(conn, tbl):
-    """نام ستون‌های جدول — با pragma_table_info (سازگار با sqlite و D1) و fallback به PRAGMA."""
-    try: return {r["name"] for r in conn.execute("SELECT name FROM pragma_table_info(?)", (tbl,))}
-    except Exception:
-        try: return {r["name"] for r in conn.execute(f"PRAGMA table_info({tbl})")}
-        except Exception: return set()
+    """نامِ ستون‌های جدول — قابل‌اعتماد روی SQLite و Cloudflare D1.
+
+    DB-27: نسخهٔ قبلی با ``SELECT name FROM pragma_table_info(?)`` شروع می‌کرد؛ روی D1 این
+    کوئری خطا می‌داد، fallbackِ ``PRAGMA table_info`` هم no-op بود ⇒ مجموعهٔ **خالی**
+    برمی‌گشت و خطای واقعی هم پنهان می‌شد ⇒ migration ستونِ موجود را دوباره اضافه می‌کرد.
+
+    حالا سه راهِ به‌ترتیب: (۱) ``PRAGMA table_info`` که روی D1 واقعاً اجرا می‌شود،
+    (۲) تابعِ table-valued (پارامتردار و لفظی)، (۳) تعریفِ CREATE TABLE از sqlite_master.
+    اگر جدول اصلاً وجود نداشته باشد ⇒ مجموعهٔ خالی (درست). اگر وجود داشته باشد ولی خوانده
+    نشود ⇒ **خطا** (نه مجموعهٔ خالی) تا مهاجرت دوباره ستون اضافه نکند."""
+    errs = []
+    # ۱) PRAGMA table_info — روی D1 فقط‌خواندنی و پشتیبانی‌شده ⇒ واقعاً اجرا می‌شود
+    try:
+        rows = conn.execute(f"PRAGMA table_info({tbl})").fetchall()
+        if rows: return {r["name"] for r in rows}
+        errs.append("PRAGMA table_info returned no rows")
+    except Exception as e:
+        errs.append(f"PRAGMA table_info: {e}")
+    # ۲) تابعِ table-valued — با پارامتر (SQLite) و لفظی (D1 ممکن است پارامتر را نپذیرد)
+    for sql, params in (("SELECT name FROM pragma_table_info(?)", (tbl,)),
+                        ("SELECT name FROM pragma_table_info('%s')" % tbl.replace("'", "''"), ())):
+        try:
+            rows = conn.execute(sql, params).fetchall()
+            if rows: return {r["name"] for r in rows}
+            errs.append("pragma_table_info returned no rows")
+        except Exception as e:
+            errs.append(f"pragma_table_info: {e}")
+    # ۳) تعریفِ جدول از sqlite_master (روی هر دو بک‌اند کار می‌کند)
+    row = None; master_ok = True
+    try:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (tbl,)).fetchone()
+    except Exception as e:
+        master_ok = False; errs.append(f"sqlite_master: {e}")
+    if master_ok:
+        if row is None:
+            return set()          # چنین جدولی وجود ندارد ⇒ مجموعهٔ خالی درست است
+        try: sql = row["sql"]
+        except Exception: sql = None
+        cols = _create_sql_cols(sql)
+        if cols: return cols
+        errs.append("CREATE TABLE could not be parsed")
+    raise RuntimeError(f"cannot read the schema of table {tbl!r}: " + " | ".join(errs))
+
+def _is_dup_col_error(e):
+    """«ستون از قبل هست» — متنِ SQLite و متنِ JSON-شدهٔ D1 را هر دو می‌شناسد."""
+    return "duplicate column name" in str(e).lower()
+
+def _apply_migrations(conn):
+    """افزودنِ ستون‌های جاافتاده — در برابرِ ستونِ موجود و خطای هم‌زمان مقاوم (DB-27).
+
+    دو لایهٔ دفاع، بدون حذفِ داده و بدون تغییرِ مخربِ دیتابیس:
+      ۱) تشخیصِ درستِ ستون‌های موجود (_table_cols) ⇒ ADD COLUMN تکراری اصلاً صادر نمی‌شود؛
+      ۲) اگر باز هم «duplicate column name» برسد (دو نمونهٔ هم‌زمان، یا بررسیِ کهنه)
+         ⇒ آن ستون «موجود» فرض می‌شود و مهاجرت ادامه می‌یابد."""
+    have = {}
+    for tbl, col, decl in MIGRATIONS:
+        if tbl not in have: have[tbl] = _table_cols(conn, tbl)
+        if col in have[tbl]: continue
+        try:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
+            have[tbl].add(col)
+        except Exception as e:
+            if _is_dup_col_error(e):
+                log.warning("migration: column %s.%s already exists — skipped (%s)", tbl, col, e)
+                have[tbl].add(col); continue
+            raise
 
 # ── شیم بک‌اند Cloudflare D1 (REST) — همان اینترفیس sqlite3 تا بقیه‌ی کد دست‌نخورده بماند ──
 _d1_http = None
@@ -204,7 +351,10 @@ class D1Conn:
         s = sql.strip()
         u = s.upper()
         if u.startswith(("BEGIN", "COMMIT", "ROLLBACK")): return D1Cur([], 0, None)
-        if u.startswith("PRAGMA"): return D1Cur([], 0, None)
+        if u.startswith("PRAGMA"):
+            # DB-27: PRAGMAهای فقط‌خواندنی (table_info و ...) روی D1 **پشتیبانی می‌شوند**
+            # ⇒ واقعاً اجرا می‌شوند؛ بقیه (نوشتنی‌ها) D1 پسشان می‌زند ⇒ no-op می‌مانند.
+            if not _d1_readonly_pragma(s): return D1Cur([], 0, None)
         r = _d1_client().post(_d1_url(), json={"sql": s, "params": list(params)}, headers=_d1_headers())
         if r.status_code >= 400: raise sqlite3.OperationalError(f"D1 HTTP {r.status_code}: {r.text[:200]}")
         j = r.json()
@@ -237,7 +387,10 @@ class D1BatchConn:
     def execute(self, sql, params=()):
         s = sql.strip(); u = s.upper()
         if u.startswith(("BEGIN", "COMMIT", "ROLLBACK")): return D1Cur([], 0, None)
-        if u.startswith("PRAGMA"): return D1Cur([], 0, None)
+        if u.startswith("PRAGMA"):
+            # DB-27: مثل بالا — فقط‌خواندنی‌ها واقعاً اجرا می‌شوند (خواندن، بی‌اثرِ جانبی)
+            if not _d1_readonly_pragma(s): return D1Cur([], 0, None)
+            return self._base.execute(sql, params)
         if u.startswith(("SELECT", "WITH")):
             return self._base.execute(sql, params)   # خواندن فوری (بدون اثر جانبی)
         self._stmts.append((s, params))
@@ -411,12 +564,7 @@ def _ensure_schema(conn):
             if _sv.isdigit() and int(_sv) > SCHEMA_VERSION:   # اجرای بیلد قدیمی روی دیتابیس جدیدتر ممنوع
                 log.error("DB schema_version=%s newer than code schema_version=%s — downgrade refused", _sv, SCHEMA_VERSION)
                 raise SystemExit(f"database schema_version {_sv} is newer than this build ({SCHEMA_VERSION}); run the newer build or restore a backup")
-            have = {}
-            for tbl, col, decl in MIGRATIONS:
-                if tbl not in have: have[tbl] = _table_cols(conn, tbl)
-                if col not in have[tbl]:
-                    conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
-                    have[tbl].add(col)
+            _apply_migrations(conn)          # DB-27: مقاوم در برابر ستونِ موجود و خطای هم‌زمان
             # PHASE-04: کانُنیکال‌سازیِ زمان بیرون از تراکنشِ اسکیما اجرا می‌شود (پایینِ تابع)
             # v8: trigger عوض شده (شارژ کیف پولِ واحد‌دار + رسید)؛ نسخه‌های قدیمی جایگزین می‌شوند
             conn.execute("DROP TRIGGER IF EXISTS trg_referral_credit_wallet")

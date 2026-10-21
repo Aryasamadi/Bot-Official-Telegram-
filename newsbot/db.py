@@ -567,7 +567,16 @@ def _ensure_schema(conn):
         atomic = config.DB_BACKEND != "d1"
         if atomic: conn.execute("BEGIN IMMEDIATE")
         try:
-            _exec_schema(conn, SCHEMA + "\n" + DB_INDEXES)
+            # DB-27 (رخداد تولید ۲۰۲۶-۱۰-۲۱): **ترتیب حیاتی است** —
+            #   ۱) جدول‌ها، ۲) مهاجرتِ افزایشیِ ستون‌ها، ۳) ایندکس‌ها.
+            # ``CREATE TABLE IF NOT EXISTS`` روی جدولِ موجود ستون اضافه نمی‌کند، پس روی یک
+            # دیتابیسِ قدیمی (مثلاً D1ِ تولید) ستونِ ``super_notified_at`` فقط با migration
+            # ساخته می‌شود. اگر ایندکس‌ها *قبل* از migration ساخته شوند، دستورِ
+            # ``CREATE INDEX … ON pay_requests(status, super_notified_at)`` با «no such
+            # column» می‌میرد (روی D1 کل batch رول‌بک می‌شود) ⇒ ``init_core()`` می‌افتد ⇒
+            # سرویس بالا نمی‌آید. این ترتیب همچنین «مهاجرت افزایشی» را تضمین می‌کند:
+            # هیچ داده‌ای حذف یا بازنشانی نمی‌شود و اجرای دوباره بی‌اثر است.
+            _exec_schema(conn, SCHEMA)
             conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
             _sv = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
             _sv = str(_sv["value"]).strip() if _sv else ""
@@ -575,6 +584,7 @@ def _ensure_schema(conn):
                 log.error("DB schema_version=%s newer than code schema_version=%s — downgrade refused", _sv, SCHEMA_VERSION)
                 raise SystemExit(f"database schema_version {_sv} is newer than this build ({SCHEMA_VERSION}); run the newer build or restore a backup")
             _apply_migrations(conn)          # DB-27: مقاوم در برابر ستونِ موجود و خطای هم‌زمان
+            _exec_schema(conn, DB_INDEXES)   # ← بعد از مهاجرت: هر ستونِ وابسته حالا وجود دارد
             # PHASE-04: کانُنیکال‌سازیِ زمان بیرون از تراکنشِ اسکیما اجرا می‌شود (پایینِ تابع)
             # v8: trigger عوض شده (شارژ کیف پولِ واحد‌دار + رسید)؛ نسخه‌های قدیمی جایگزین می‌شوند
             conn.execute("DROP TRIGGER IF EXISTS trg_referral_credit_wallet")

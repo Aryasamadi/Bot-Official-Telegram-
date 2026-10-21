@@ -30,7 +30,7 @@ from newsbot.core_sources import add_source, set_source_api
 from newsbot.core_articles import article_insert
 from newsbot.core_plans import create_plan, assign_plan
 from newsbot.core_discounts import disc_create
-from newsbot.ai_models import add_model
+from newsbot.ai_models import add_model, get_model
 from newsbot.ui_i18n import tr
 
 
@@ -376,6 +376,46 @@ def test_mtest_rate_limit_personal_and_super_exempt(monkeypatch):
     asyncio.run(ui_widgets.run_model_test(up3, ctx3, super_mid, personal=True))
     asyncio.run(ui_widgets.run_model_test(up3, ctx3, super_mid, personal=True))
     assert calls["n"] == 3                              # super از سقف نرخ معاف است
+
+
+# ── SEC-015: حذفِ مدلِ شخصی فقط توسطِ مالک ──
+
+def test_personal_model_delete_never_crosses_ownership_even_for_super_admin():
+    from newsbot.ui_dispatch import dispatch
+    owner = _mk_user(430110, role="admin", lang="fa")
+    other = _mk_user(430111, role="admin", lang="fa")
+    mid_owner = add_model("https://api.example.com/v1", "k-own", "gpt-own", owner_id=owner)
+    mid_foreign = add_model("https://api.example.com/v1", "k-foreign", "gpt-foreign", owner_id=owner)
+    mid_public = add_model("https://api.example.com/v1", "k-public", "gpt-public", owner_id=None)
+
+    up_other, ctx_other = _mk_update(other)
+    asyncio.run(dispatch(up_other, ctx_other, f"a:myai_d2:{mid_foreign}"))
+    assert get_model(mid_foreign), "کاربرِ دیگر نباید مدلِ شخصیِ مالک را حذف کند"
+    assert tr("fa", "notfound") in _texts(up_other, ctx_other)
+
+    up_super, ctx_super = _mk_super_update()
+    asyncio.run(dispatch(up_super, ctx_super, f"a:myai_d2:{mid_foreign}"))
+    assert get_model(mid_foreign), "سوپرادمین هم نباید مدلِ شخصیِ دیگران را از مسیرِ شخصی حذف کند"
+    assert tr("fa", "notfound") in _texts(up_super, ctx_super)
+
+    asyncio.run(dispatch(up_super, ctx_super, f"a:myai_d2:{mid_public}"))
+    assert get_model(mid_public), "مدلِ عمومی باید فقط از مسیرِ مدیریتی حذف شود"
+
+    up_owner, ctx_owner = _mk_update(owner)
+    asyncio.run(dispatch(up_owner, ctx_owner, f"a:myai_d2:{mid_owner}"))
+    assert not get_model(mid_owner), "مالک باید بتواند مدلِ شخصیِ خودش را حذف کند"
+
+
+def test_super_model_delete_route_is_limited_to_public_models():
+    from newsbot.ui_dispatch import dispatch
+    owner = _mk_user(430112, role="admin", lang="fa")
+    mid_personal = add_model("https://api.example.com/v1", "k-p", "gpt-p", owner_id=owner)
+    mid_public = add_model("https://api.example.com/v1", "k-g", "gpt-g", owner_id=None)
+    up, ctx = _mk_super_update()
+    asyncio.run(dispatch(up, ctx, f"s:model_d2:{mid_personal}"))
+    assert get_model(mid_personal), "مسیرِ مدیریتی نیز نباید مدلِ شخصی را حذف کند"
+    asyncio.run(dispatch(up, ctx, f"s:model_d2:{mid_public}"))
+    assert not get_model(mid_public), "مسیرِ مدیریتی باید مدلِ عمومی را حذف کند"
 
 
 # ── UISEC-03: ماسک/غیبت کلید API ──

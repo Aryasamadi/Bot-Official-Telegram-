@@ -16,6 +16,7 @@
 import inspect
 import pathlib
 import re
+from html.parser import HTMLParser
 
 import pytest
 
@@ -148,6 +149,80 @@ def test_split_html_property_over_many_lengths():
         for c in chunks:
             assert c.strip(), f"تکهٔ خالی برای طولِ {n}"
             assert len(c) <= limit, f"تکه {len(c)} > {limit} برای طولِ {n}"
+
+
+class _TagBalance(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.stack, self.errors = [], []
+
+    def handle_starttag(self, tag, attrs):
+        self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        if self.stack and self.stack[-1] == tag:
+            self.stack.pop()
+        else:
+            self.errors.append(tag)
+
+    @property
+    def balanced(self):
+        return not self.errors and not self.stack
+
+
+def _visible(source):
+    from newsbot.text_format import sanitize_html, strip_tags
+    return re.sub(r"\s+", "", strip_tags(sanitize_html(source)))
+
+
+def _visible_chunks(chunks):
+    from newsbot.text_format import strip_tags
+    return re.sub(r"\s+", "", strip_tags("".join(chunks)))
+
+
+def _assert_complete_and_valid(text, limit):
+    from newsbot.text_format import split_html
+    chunks = split_html(text, limit)
+    assert chunks, f"هیچ تکه‌ای برای ورودیِ {len(text)} کاراکتری تولید نشد"
+    for c in chunks:
+        assert c.strip(), "تکهٔ خالی تولید شد"
+        assert len(c) <= limit, f"تکه {len(c)} > {limit}"
+        parser = _TagBalance()
+        parser.feed(c)
+        parser.close()
+        assert parser.balanced, f"HTMLِ تکه نامعتبر است: {c[:80]!r}"
+    assert _visible_chunks(chunks) == _visible(text), "محتوای ورودی در بازسازی گم شد"
+
+
+def test_split_html_preserves_content_when_escaping_expands_past_the_limit():
+    """UI-005: وقتی escape طول را از سقف رد می‌کرد، دنبالهٔ rest دور ریخته می‌شد."""
+    from newsbot.text_format import _hard_split
+    limit = 4096
+    text = "&" * 3000
+    chunks = _hard_split(text, limit)
+    assert all(len(c) <= limit for c in chunks)
+    assert _visible_chunks(chunks) == _visible(text)
+
+    mixed = "A" * 4095 + "&" * 3000
+    _assert_complete_and_valid(mixed, limit)
+
+
+@pytest.mark.parametrize("limit", [50, 512, 4096])
+def test_split_html_preserves_plain_escaped_html_and_boundary_content(limit):
+    samples = [
+        "A" * (limit - 1),
+        "A" * limit,
+        "A" * (limit + 1),
+        "A" * (limit * 3),
+        "<&>" * (limit * 2),
+        "&amp;" * limit,
+        "<b>" + "x" * (limit + 3) + "</b>",
+        "<b><i>" + "متن " * limit + "</i></b>",
+        "خطِ اول " * limit + "\n" + "خطِ دوم " * limit,
+        '<a href="https://example.com/' + "p" * 300 + '">' + "y" * (limit * 2) + "</a>",
+    ]
+    for text in samples:
+        _assert_complete_and_valid(text, limit)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════

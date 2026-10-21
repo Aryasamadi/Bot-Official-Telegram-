@@ -275,30 +275,65 @@ def finish_ok(t):
     if re.search(r"[\w؀-ۿ،,؛:\u200c\u200d]$", e): return t.rstrip() + " …"
     return t
 
+_SPLIT_TAG = re.compile(r"(<[^>]*>)")
+_SPLIT_TAG_FULL = re.compile(r"<(/?)([a-zA-Z-]+)([^>]*)>")
+_SPLIT_UNIT = re.compile(r"&(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]*);|.", re.S)
+
 def _hard_split(text, limit):
     """یک تکهٔ خیلی بلند را به تکه‌های معتبر می‌شکند (UI-005).
 
     هر تکه HTML معتبر و ≤ limit است و **محتوا حذف نمی‌شود** (برخلافِ یک برشِ ساده)."""
-    out = []
-    rest = text or ""
-    step = limit
-    guard = 0
-    while rest and guard < 4000:
-        guard += 1
-        if len(rest) <= limit:
-            s = sanitize_html(rest)
-            if len(s) <= limit:
-                out.append(s); break
-            # escape کردن طول را زیاد کرد ⇒ تکه را کوچک‌تر می‌کنیم و دوباره می‌سنجیم
-            rest = rest[:max(1, int(len(rest) * limit / len(s) * 0.9))]
-            continue
-        if step > limit: step = limit
-        s = sanitize_html(rest[:step])
-        if len(s) > limit:
-            step = max(1, int(step * limit / len(s) * 0.9))   # گامِ کوچک‌تر **باید بماند**
-            continue
-        out.append(s); rest = rest[step:]
-    return [c for c in out if c.strip()]
+    limit = max(1, int(limit))
+    clean = sanitize_html(text)
+    if not clean: return []
+    if len(clean) <= limit: return [clean]
+    chunks, cur, stack = [], [], []
+    cur_len = content_len = 0
+
+    def suffix_len():
+        return sum(len(name) + 3 for _, name in stack)
+
+    def reopen():
+        return "".join(tag for tag, _ in stack)
+
+    def flush():
+        nonlocal cur, cur_len, content_len
+        if content_len:
+            out = "".join(cur) + "".join("</%s>" % name for _, name in reversed(stack))
+            if strip_tags(out).strip(): chunks.append(out)
+        cur = [reopen()] if stack else []
+        cur_len = len(reopen())
+        content_len = 0
+
+    for token in _SPLIT_TAG.split(clean):
+        if not token: continue
+        m = _SPLIT_TAG_FULL.fullmatch(token)
+        if m:
+            closing, name = m.group(1), m.group(2).lower()
+            if not closing:
+                if cur_len + len(token) + suffix_len() + len(name) + 3 > limit:
+                    flush()
+                if cur_len + len(token) + suffix_len() + len(name) + 3 <= limit:
+                    cur.append(token); cur_len += len(token); stack.append((token, name))
+            elif any(n == name for _, n in stack):
+                extra = len(token) - (len(name) + 3)
+                if cur_len + extra + suffix_len() > limit:
+                    flush()
+                if cur_len + extra + suffix_len() <= limit:
+                    cur.append(token); cur_len += len(token)
+                    while stack:
+                        _, n = stack.pop()
+                        if n == name: break
+        else:
+            for unit in _SPLIT_UNIT.findall(token):
+                if cur_len + len(unit) + suffix_len() > limit:
+                    flush()
+                if cur_len + len(unit) + suffix_len() > limit and stack:
+                    stack.clear(); cur = []; cur_len = content_len = 0
+                if cur_len + len(unit) + suffix_len() <= limit:
+                    cur.append(unit); cur_len += len(unit); content_len += len(unit)
+    if content_len: flush()
+    return [c for c in chunks if c.strip()]
 
 
 def split_html(text, limit=None):

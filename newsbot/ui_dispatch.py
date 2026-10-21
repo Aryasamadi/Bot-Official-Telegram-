@@ -132,7 +132,7 @@ async def _dispatch(update, context, data):
                 # هست (سوپرادمین هم اجازهٔ حذفِ مدلِ شخصیِ دیگران را ندارد؛ حذفِ مدلِ
                 # عمومی از مسیرِ s:model_d2 انجام می‌شود).
                 m = get_model(mid)
-                if m and m.get("owner_id") not in (None, uid) and not is_super(uid):
+                if not m or m["owner_id"] != uid:
                     await popup(update, context, tr(lang, "notfound")); return await view_my_ai(update, context)
                 delete_model(mid)
                 log_event("WARN", f"مدلِ شخصی حذف شد: model={mid}", uid)     # PH-05/UI-011
@@ -456,7 +456,9 @@ async def _dispatch(update, context, data):
             if not m: await popup(update, context, tr(lang, "notfound")); return await view_s_models(update, context)
             return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(m["name"])), f"s:model_d2:{c}", f"s:model:{c}")
         if b == "model_d2":
-            mid = int(c)
+            mid = int(c); m = get_model(mid)
+            if not m or m["owner_id"] is not None:
+                await popup(update, context, tr(lang, "notfound")); return await view_s_models(update, context)
             if gget("test_model_id") == mid: gset("test_model_id", None)
             delete_model(mid)
             log_event("WARN", f"مدلِ عمومی حذف شد: model={mid}", uid)                # PH-05/UI-011

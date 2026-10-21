@@ -28,7 +28,9 @@ def _mk_user(uid):
 
 
 def _wallet(uid):
-    return round(float(q("SELECT credit FROM users WHERE id=?", (uid,), one=True)["credit"] or 0), 2)
+    """موجودیِ قابل‌خرجِ کیف پول (PH-01: جدولِ wallet به تفکیکِ واحدِ پول)."""
+    from newsbot.core_wallet import wallet_total
+    return wallet_total(uid)
 
 
 # ════════════════════════════ QA-05 — مرزهای اعتبارسنجی ورودی ════════════════════════════
@@ -84,8 +86,9 @@ def test_upgrade_quote_expired_plan_is_fresh_with_wallet():
     pid_old = create_plan(name="q13-old", days=30, price_num=60, daily_posts=1, daily_tests=1, max_sources=1, max_channels=1)
     pid_new = create_plan(name="q13-new", days=30, price_num=100, daily_posts=1, daily_tests=1, max_sources=1, max_channels=1)
     assign_plan(uid, pid_old)
-    q("UPDATE users SET plan_expires=?, credit=10 WHERE id=?", ("2020-01-01T00:00:00+00:00", uid), commit=True)
-    qt = upgrade_quote(uid, get_plan(pid_new), get_plan(pid_old))
+    q("UPDATE users SET plan_expires=? WHERE id=?", ("2020-01-01T00:00:00+00:00", uid), commit=True)
+    from newsbot.core_wallet import wallet_credit; wallet_credit(uid, "usd", 10, "test", None)
+    qt = upgrade_quote(uid, get_plan(pid_new), get_plan(pid_old), lang="en")
     assert qt["kind"] == "fresh" and qt["rem_days"] == 0.0
     assert qt["new_cost"] == 100.0 and qt["used_balance"] == 10.0 and qt["payable"] == 90.0
     assert qt["keep_expiry"] is False
@@ -147,22 +150,24 @@ def test_plan_change_writes_receipt_and_skips_zero_delta():
     from newsbot.core_plans import apply_plan_change, create_plan
     uid = 88303; _mk_user(uid)
     pid = create_plan(name="recv13-p", days=30, daily_posts=1, daily_tests=1, max_sources=1, max_channels=1)
-    q("UPDATE users SET credit=20 WHERE id=?", (uid,), commit=True)
+    from newsbot.core_wallet import wallet_credit; wallet_credit(uid, "usd", 20, "test", None)
     q("DELETE FROM credit_log WHERE user_id=?", (uid,), commit=True)
 
-    apply_plan_change(uid, pid, {"kind": "upgrade", "from_plan": None, "used_balance": 5, "surplus": 0, "payable": 1, "rem_days": 1})
+    apply_plan_change(uid, pid, {"kind": "upgrade", "from_plan": None, "used_balance": 5, "surplus": 0, "payable": 1, "rem_days": 1, "cur": "usd"})
     assert _wallet(uid) == 15.0
     row = q("SELECT * FROM credit_log WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,), one=True)
     assert (row["delta"], row["balance_after"], row["reason"], row["ref"]) == (-5.0, 15.0, "plan_change", str(pid))
 
-    apply_plan_change(uid, pid, {"kind": "downgrade", "from_plan": None, "used_balance": 0, "surplus": 25, "payable": 0, "rem_days": 1})
+    apply_plan_change(uid, pid, {"kind": "downgrade", "from_plan": None, "used_balance": 0, "surplus": 25, "payable": 0, "rem_days": 1, "cur": "usd"})
     assert _wallet(uid) == 40.0
     row2 = q("SELECT * FROM credit_log WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,), one=True)
     assert (row2["delta"], row2["balance_after"]) == (25.0, 40.0)
 
     n = q("SELECT COUNT(*) c FROM credit_log WHERE user_id=?", (uid,), one=True)["c"]
-    apply_plan_change(uid, pid, {"kind": "noop", "from_plan": None, "used_balance": 0, "surplus": 0})
+    apply_plan_change(uid, pid, {"kind": "noop", "from_plan": None, "used_balance": 0, "surplus": 0, "cur": "usd"})
     assert q("SELECT COUNT(*) c FROM credit_log WHERE user_id=?", (uid,), one=True)["c"] == n, "دلتای صفر نباید رسید بسازد"
+    # FIN-007: سابقهٔ تغییر پلن همیشه ثبت می‌شود (حتی بدونِ حرکتِ کیف پول)
+    assert q("SELECT COUNT(*) c FROM plan_changes WHERE user_id=?", (uid,), one=True)["c"] >= 3
 
 
 def test_v6_schema_surface_and_migration():
@@ -171,7 +176,7 @@ def test_v6_schema_surface_and_migration():
     import newsbot
     from newsbot.db import REFERRAL_CREDIT_TRIGGER
     from tools.migrate_sqlite_to_d1 import TABLES
-    assert newsbot.SCHEMA_VERSION == 7, "فاز ۱۴: تعرفهٔ تومانی price_num_fa ⇒ نسخه ۷"
+    assert newsbot.SCHEMA_VERSION == 8, "PH-01: کیف پولِ واحد‌دار ⇒ نسخه ۸"
     assert "INSERT INTO credit_log" in REFERRAL_CREDIT_TRIGGER and "'referral'" in REFERRAL_CREDIT_TRIGGER
     assert "AFTER UPDATE OF credit_amount ON referrals" in REFERRAL_CREDIT_TRIGGER   # سازگاری v5⇒v6
     assert "DROP TRIGGER IF EXISTS trg_referral_credit_wallet" in _src("newsbot/db.py")

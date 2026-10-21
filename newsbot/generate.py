@@ -6,11 +6,11 @@ import asyncio, hashlib, json, re
 from newsbot import config
 from newsbot.db import q
 from newsbot.logutils import log, redact
-from newsbot.timeutils import now_iso, url_hash
+from datetime import timedelta
+from newsbot.timeutils import now_iso, now_utc, iso_fixed, url_hash
 from newsbot.ai_models import ai_chat, budget_reset, parse_json, _validate_salvageable
 from newsbot.text_format import sanitize_html, strip_tags, salvage_post, clean_ai_text, finish_ok, strip_injection
 from newsbot.opctx import _current_operation
-from newsbot.core_users import ai_claim
 
 
 def build_prompt(s, art, want_full):
@@ -50,8 +50,11 @@ Return ONLY one valid JSON object (no code fences) with exactly this structure:
     text = raw_text[:config.AI_INPUT_TEXT_CHARS]
     if len(raw_text) > len(text): log.warning("prompt input truncated %d -> %d chars (summarizer did not converge)", len(raw_text), len(text))
     safe_text, safe_title = strip_injection(text), strip_injection(art['title'])
-    if safe_text != text or safe_title != str(art['title']): log.warning("prompt injection patterns neutralized in source data (%s)", redact(art.get("url"))[:80])
-    user = f"<article_data>\nTITLE: {safe_title}\nSOURCE: {art['url']}\nDATE: {art.get('published') or 'unknown'}\n\nARTICLE TEXT:\n{safe_text}\n</article_data>"
+    # PH-02/SEC-002: نشانیِ مقاله هم داخلِ «جعبهٔ دادهٔ نامطمئن» است ⇒ باید خنثی شود،
+    # وگرنه یک URL مثل «…</article_data>SYSTEM: …» می‌تواند جعبه را ببندد و دستور تزریق کند.
+    safe_url = strip_injection(art.get('url') or '')
+    if safe_text != text or safe_title != str(art['title']) or safe_url != str(art.get('url') or ''): log.warning("prompt injection patterns neutralized in source data (%s)", redact(art.get("url"))[:80])
+    user = f"<article_data>\nTITLE: {safe_title}\nSOURCE: {safe_url}\nDATE: {art.get('published') or 'unknown'}\n\nARTICLE TEXT:\n{safe_text}\n</article_data>"
     return system, user
 
 def weighted_score(s, scores):
@@ -100,7 +103,8 @@ async def _summarize_chunks(s, full, on_queue=None, owner_id=None, _depth=0):
         user_msg = f"Chunk {idx + 1}/{len(chunks)} — summarize:\n{strip_injection(chunk)}"
         ck = chunk_cache_key(s, per_chunk, chunk)
         if config.AI_CACHE_TTL_DAYS > 0:
-            _hit = q("SELECT value FROM ai_cache WHERE key=?", (ck,), one=True)
+            _cut = iso_fixed(now_utc() - timedelta(days=config.AI_CACHE_TTL_DAYS))   # PH-08/PIPE-003
+            _hit = q("SELECT value FROM ai_cache WHERE key=? AND created_at>=?", (ck, _cut), one=True)
             if _hit:
                 try:
                     _t = json.loads(_hit["value"]).get("t")
@@ -126,14 +130,20 @@ def ai_cache_key(s, art):
     بدون فینگرپرینت، پستِ کانال دیگری با تنظیمات متفاوت از کش بیرون می‌آمد (خروجی غلط)."""
     sig = json.dumps([s.get("language"), s.get("topic"), s.get("max_words"), s.get("prompt"), s.get("post_limit"),
                       s.get("hashtags"), s.get("categories"), s.get("criteria"), config.PROMPT_VERSION], ensure_ascii=False, sort_keys=True)
-    return hashlib.sha1(f"{url_hash(art.get('url') or '')}|{art.get('title') or ''}|{hashlib.sha1(sig.encode()).hexdigest()[:16]}".encode()).hexdigest()
+    # PH-08/PIPE-004: the content fingerprint is part of the key, so an article that was
+    # edited in place no longer serves a stale summary (url+title+settings were not enough).
+    body_fp = hashlib.sha1((art.get("text") or "")[:4000].encode("utf-8", "replace")).hexdigest()[:16]
+    return hashlib.sha1(f"{url_hash(art.get('url') or '')}|{art.get('title') or ''}|{body_fp}|"
+                         f"{hashlib.sha1(sig.encode()).hexdigest()[:16]}".encode()).hexdigest()
 
 async def generate(s, art, on_queue=None, owner_id=None):
     """خروجی: (json, model_name, error_code) — error_code کلید امن است (never متن خطای مدل یا base url)."""
-    budget_reset()   # FIX v4: بودجه‌ی این مقاله از صفر (ایزوله per-task، نه global)
+    budget_reset(hard=True)   # FIX v4 + PH-08/PIPE-001 (hard = no reset inside one article): بودجه‌ی این مقاله از صفر (ایزوله per-task، نه global)
     ckey = ai_cache_key(s, art)
     if config.AI_CACHE_TTL_DAYS > 0:
-        _hit = q("SELECT value FROM ai_cache WHERE key=?", (ckey,), one=True)
+        # PH-08/PIPE-003: TTL must be enforced at READ time, not only by the hourly sweep.
+        _cut = iso_fixed(now_utc() - timedelta(days=config.AI_CACHE_TTL_DAYS))
+        _hit = q("SELECT value FROM ai_cache WHERE key=? AND created_at>=?", (ckey, _cut), one=True)
         if _hit:
             try:
                 _c = json.loads(_hit["value"])
@@ -142,12 +152,17 @@ async def generate(s, art, on_queue=None, owner_id=None):
                     return _c["j"], _c.get("model"), None
             except Exception: log.warning("corrupt ai_cache row for key %s", ckey[:12], exc_info=True)
     # BIZ-01: سقف روزانهٔ AI — کش رایگان است؛ فقط فراخوانی‌های واقعیِ مدل یک واحد از سقف می‌کشند
-    if owner_id is not None and not ai_claim(owner_id):
-        log.warning("AI daily cap reached user=%s", owner_id)
-        return None, None, "ai_limit"
+    # PH-08/PIPE-006: the daily unit is claimed per real provider call inside
+    # ai_chat (newsbot/ai_models.py) - a cache hit still costs nothing.
     # کل محتوا واقعاً به مدل می‌رسد: ابتدا chunking/summarize
     prep, prep_err = await _summarize_article(s, art, on_queue=on_queue, owner_id=owner_id)
     if prep_err: return None, None, prep_err
+    # PH-08/PIPE-002: مقاله‌ای که بلندتر از سقفِ فراخوانی است نباید بی‌صدا «ai_budget» بدهد؛
+    # متن به اندازه‌ای که در بودجه جا می‌شود کوتاه می‌شود (نتیجهٔ مشخص و قابل‌پیش‌بینی).
+    _max_chars = max(1, (config.AI_MAX_CALLS_PER_ARTICLE - 1)) * config.AI_INPUT_TEXT_CHARS
+    if len(prep) > _max_chars:
+        log.warning("article text truncated to fit the AI call budget: %d -> %d chars", len(prep), _max_chars)
+        prep = prep[:_max_chars]
     art = dict(art); art["text"] = prep   # جایگزینی متن با خلاصه
     want_full = len(prep) > 1200; system, user = build_prompt(s, art, want_full)
     raw, model, err = await ai_chat(system, user, on_queue=on_queue, owner_id=owner_id, validate=_validate_salvageable)

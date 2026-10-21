@@ -26,7 +26,9 @@ _TRACK_PARAMS = ("utm_", "fbclid", "gclid", "dclid", "gbraid", "wbraid", "msclki
 
 def clean_url(u):
     """canonical‌سازی آدرس (PLB-08): حذف پارامترهای tracking، پیشوند www.، پورت پیش‌فرض، fragment
-    و پسوند مسیر /amp — تا URLهای مختلفِ یک مقاله یک hash/Dedup واحد بدهند."""
+    و پسوند مسیر /amp — تا URLهای مختلفِ یک مقاله یک hash/Dedup واحد بدهند.
+    PH-02/SEC-002: نویسه‌هایِ زاویه‌ای از آدرس حذف می‌شوند (در نشانیِ ذخیره‌شده جایی ندارند
+    ولی می‌توانستند مرزِ «جعبهٔ دادهٔ نامطمئن» را در prompt ببندند)."""
     try:
         p = urlparse(str(u).strip())
         qs = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if not k.lower().startswith(_TRACK_PARAMS)]
@@ -42,6 +44,7 @@ def clean_url(u):
                 netloc = cred + host + (f":{port}" if keep else "")
         except Exception: pass
         path = re.sub(r"/amp/?$", "", p.path, flags=re.I) or "/"
+        path = path.replace("<", "%3C").replace(">", "%3E")
         return normalize_url(urlunparse(p._replace(scheme=p.scheme.lower(), netloc=netloc, path=path, params="", query=urlencode(qs), fragment="")))
     except Exception: return normalize_url(u)
 

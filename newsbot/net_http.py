@@ -40,7 +40,8 @@ _PRIVATE_HOSTS = ("localhost", "metadata.google.internal")
 def _parse_ip_alt(h):
     """ARCH-08 (فاز ۳): قالب‌های جایگزین IP — دهدهی یکپارچه (2130706433)، هجدهی/شانزدهی نقطه‌دار
     (0177.0.0.1 / 0x7f.0.0.1)، هجدهی/شانزدهی بدون‌نقطه (017700000001 / 0x7f000001) و فرم کوتاه
-    (127.1) — قاعدهٔ کلاسیک inet_aton. خروجی: ip_address یا None اگر IP نیست."""
+    (127.1) — قاعدهٔ کلاسیک inet_aton. خروجی: ip_address یا None اگر IP نیست.
+    PH-02/NET-004: فرمِ کوتاه درست پیاده شد (جزء اول می‌تواند چندبایتی باشد، مثل inet_aton)."""
     parts = h.split(".")
     if not 1 <= len(parts) <= 4 or any(not p for p in parts): return None
     vals = []
@@ -54,37 +55,99 @@ def _parse_ip_alt(h):
             return None
         if v < 0: return None
         vals.append(v)
-    if len(vals) == 4:
+    n = len(vals)
+    if n == 4:
         if any(v > 255 for v in vals): return None
-        acc = 0
-        for v in vals: acc = (acc << 8) | v
-        try: return ipaddress.ip_address(acc)
-        except ValueError: return None
-    # فرم کوتاه: جزء آخر بقیهٔ بایت‌ها را می‌پُشد (127.1 ⇒ 127.0.0.1)
-    *head, last = vals
-    if any(v > 255 for v in head) or last >= 256 ** (4 - len(vals) + 1): return None
+    else:
+        # inet_aton: جزء اول byte است و جزء آخر بقیهٔ بایت‌ها را می‌گیرد
+        if any(v > 255 for v in vals[:-1]): return None
+        if vals[-1] >= (1 << (8 * (5 - n))): return None
     acc = 0
-    for v in head: acc = (acc << 8) | v
-    acc = (acc << (8 * (4 - len(vals)))) + last
-    try: return ipaddress.ip_address(acc)
+    for v in vals[:-1]: acc = (acc << 8) | v
+    acc = (acc << (8 * (5 - n))) + vals[-1]
+    try: return ipaddress.ip_address(acc & 0xFFFFFFFF)
     except ValueError: return None
 
 def is_private_host(host):
     """FIX v4: بررسی مشترک میزبان خصوصی/داخلی برای همهٔ URLهای کاربری.
     شامل: localhost، ::1، 0.0.0.0، دامنه‌های .local/.internal، RFC1918، loopback،
     link-local (169.254.x = metadata endpoints)، و هر IP غیرعمومی.
-    FIX v5 (ARCH-08): قالب‌های جایگزین IP (دهدهی/هجدهی/شانزدهی/کوتاه) هم گرفته می‌شوند."""
+    FIX v5 (ARCH-08): قالب‌های جایگزین IP (دهدهی/هجدهی/شانزدهی/کوتاه) هم گرفته می‌شوند.
+    PH-02/NET-004: علاوه بر ``is_global``، حالت‌های multicast / reserved / unspecified
+    هم رد می‌شوند (پایتون multicast را «global» گزارش می‌کند)."""
     h = (host or "").strip("[]").lower().rstrip(".")
     if not h: return True
     if h in _PRIVATE_HOSTS or h in ("::1", "0.0.0.0") or h.endswith((".local", ".internal", ".localhost")): return True
     if re.match(r"^(127\.|10\.|192\.168\.|169\.254\.|0\.|172\.(1[6-9]|2\d|3[01])\.)", h): return True
     try:
-        return not ipaddress.ip_address(h).is_global
+        return not _ip_is_public(ipaddress.ip_address(h))
     except ValueError:
         pass
     alt = _parse_ip_alt(h)
-    if alt is not None: return not alt.is_global
+    if alt is not None: return not _ip_is_public(alt)
+    # PH-02: اگر میزبان شبیهِ یک IP دَهی است ولی به IP معتبر تبدیل نمی‌شود
+    # (مثل «0x7fffff.1» که inet_aton هم آن را رد می‌کند) ⇒ fail-closed: خصوصی فرض می‌شود.
+    if re.fullmatch(r"[0-9a-fx.]+", h) and "." in h: return True
     return False
+
+def _ip_is_public(ip):
+    """«عمومی» یعنی: global و نه multicast / reserved / unspecified / loopback / link-local."""
+    try:
+        return bool(ip.is_global and not ip.is_multicast and not ip.is_reserved
+                    and not ip.is_unspecified and not ip.is_loopback and not ip.is_link_local)
+    except Exception:
+        return False
+
+
+# ── PH-02: فهرستِ سفیدِ میزبانِ خصوصی (پروایدرهای محلی مثل Ollama / LM Studio) ────
+def private_host_allowed(url):
+    """آیا این مقصدِ خصوصی در فهرستِ سفیدِ اپراتور هست؟
+
+    ``ALLOW_PRIVATE_MODEL_HOSTS`` یک فهرستِ ``host:port`` است (جداشده با کاما)؛
+    مقدارِ ``all`` یعنی «همهٔ میزبان‌های خصوصی مجاز» (پذیرشِ آگاهانهٔ ریسک).
+    مقدارِ خالی یعنی هیچ میزبانِ خصوصی مجاز نیست (پیش‌فرضِ امن)."""
+    allow = (config.ALLOW_PRIVATE_MODEL_HOSTS or "").strip()
+    if not allow: return False
+    if allow.lower() == "all": return True
+    try: p = urlparse(str(url))
+    except Exception: return False
+    host = (p.hostname or "").lower().rstrip(".")
+    if not host: return False
+    try: port = p.port or (443 if p.scheme == "https" else 80)
+    except Exception: return False
+    for e in allow.split(","):
+        e = e.strip().lower()
+        if not e: continue
+        if ":" in e:
+            h, _, pt = e.rpartition(":")
+            try: pt = int(pt)
+            except ValueError: continue
+        else:
+            h, pt = e, None
+        if h == host and (pt is None or pt == port): return True
+    return False
+
+
+def egress_url_ok(url):
+    """آیا این URL برای خروجیِ برنامه (به‌ویژه پروایدرِ AI) مجاز است؟
+
+    میزبانِ خصوصی **فقط** اگر در فهرستِ سفیدِ ``ALLOW_PRIVATE_MODEL_HOSTS`` باشد.
+    این فهرست تنها دروازهٔ دسترسی به میزبانِ خصوصی است (PH-02/Q-5)."""
+    try: p = urlparse(str(url))
+    except Exception: return False
+    if p.scheme not in ("http", "https") or not p.hostname: return False
+    if is_private_host(p.hostname):
+        return private_host_allowed(url)
+    return True
+
+
+async def egress_url_strict(url):
+    """همان ``public_url_strict``، ولی میزبانِ خصوصی فقط در صورتِ فهرستِ سفید پذیرفته می‌شود."""
+    if not egress_url_ok(url): return False
+    try: host = urlparse(str(url)).hostname or ""
+    except Exception: return False
+    if is_private_host(host): return True          # در فهرستِ سفید ⇒ رزولوشن لازم نیست
+    return await asyncio.to_thread(public_url_strict, url)
 
 def public_url(u):
     """آدرس بیرونی و امن است؟ DNS ناموفق یا هر IP غیرعمومی ⇒ رد می‌شود (SSRF fail-closed)."""
@@ -122,6 +185,46 @@ def public_url_strict(u):
 class FetchError(RuntimeError):
     """خطای HTTP با کد وضعیت؛ برای پیام اختصاصی ۴۰۳ هنگام افزودن منبع."""
     def __init__(self, status, url=""): super().__init__(f"HTTP {status}"); self.status = int(status); self.url = url
+
+# هدرهایی که «هویت» دارند و نباید به میزبانِ دیگری نشت کنند
+CREDENTIAL_HEADERS = frozenset({"authorization", "x-api-key", "apikey", "cookie", "proxy-authorization"})
+
+
+async def fetch_post(url, *, headers=None, timeout=None, max_redirects=5, **kw):
+    """POST امن به یک میزبانِ **کاربر-پیکربندی‌شده** (پروایدرهای AI).
+
+    PH-02/SEC-001 · NET-001 · NET-002: مسیرِ provider پیش‌تر هیچ اعتبارسنجی‌ای نداشت و
+    ``follow_redirects=True`` داشت ⇒ یک ``base_url`` دلخواه می‌توانست به میزبانِ داخلی
+    (مثلاً metadata سرور) برسد و کلیدِ API هم همراهِ redirect منتقل می‌شد.
+
+    اینجا: هر مقصد (و هر redirect) دوباره با ``egress_url_strict`` اعتبارسنجی می‌شود — و
+    میزبانِ خصوصی **فقط** اگر در فهرستِ سفیدِ ``ALLOW_PRIVATE_MODEL_HOSTS`` باشد — و
+    هدرهایِ اعتبار روی تغییرِ میزبان حذف می‌شوند."""
+    current = str(url)
+    headers = dict(headers or {})
+    timeout = timeout if timeout is not None else httpx.Timeout(60, connect=10)
+    req_kw = dict(kw); req_kw.pop("follow_redirects", None)
+    for _ in range(max(1, int(max_redirects))):
+        if not await egress_url_strict(current):
+            raise FetchError(403, current)
+        previous_host = (urlparse(current).hostname or "").lower().rstrip(".")
+        try:
+            async with asyncio.timeout(config.FETCH_TOTAL_SEC):
+                r = await http().post(current, headers=headers, timeout=timeout, follow_redirects=False, **req_kw)
+        except TimeoutError as e:
+            raise FetchError(504, current) from e
+        if r.status_code in (301, 302, 303, 307, 308):
+            location = r.headers.get("location")
+            if not location: return r
+            nxt = urljoin(current, location)
+            if not await egress_url_strict(nxt): raise FetchError(403, nxt)
+            next_host = (urlparse(nxt).hostname or "").lower().rstrip(".")
+            if previous_host != next_host:
+                headers = {k: v for k, v in headers.items() if k.lower() not in CREDENTIAL_HEADERS}
+            current = nxt
+            continue
+        return r
+    raise FetchError(310, current)
 
 def retry_after_seconds(value):
     """ARCH-02/PLB-10 (فاز ۷): هدر Retry-After (ثانیه یا HTTP-date) → ثانیه؛ خالی/نامعتبر/گذشته ⇒ None.

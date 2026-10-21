@@ -40,7 +40,7 @@ def test_referral_race_and_cap_credit_wallet_exactly_once():
         q("INSERT OR IGNORE INTO users(id,username,name,role,created_at,last_seen) VALUES(?,?,?,?,?,?)",
           (uid, name.lower(), name, "user", now_iso(), now_iso()), commit=True)
     q("DELETE FROM referrals WHERE referred_id IN (?,?,?)", (a, b, 88104), commit=True)
-    q("UPDATE users SET credit=0 WHERE id=?", (referrer,), commit=True)
+    q("DELETE FROM wallet WHERE user_id=?", (referrer,), commit=True)   # PH-01: کیف پولِ واحد‌دار
 
     # انتساب‌ها (یکتا، قبلاً تست شده) — فقط برای ساختِ ردیف‌های credited=0
     assert record_referral(referrer, a) is True
@@ -59,8 +59,8 @@ def test_referral_race_and_cap_credit_wallet_exactly_once():
         rid, amt = credited[0]
         assert rid == referrer and amt == expected
 
-        wallet = q("SELECT credit FROM users WHERE id=?", (referrer,), one=True)
-        assert round(float(wallet["credit"] or 0), 2) == expected, "کیف پول باید دقیقاً یک‌بار شارژ شده باشد"
+        wallet = q("SELECT amount FROM wallet WHERE user_id=? AND cur=?", (referrer, "toman"), one=True)
+        assert round(float(wallet["amount"] or 0), 2) == expected, "کیف پول باید دقیقاً یک‌بار شارژ شده باشد"
 
         rows = q("SELECT referred_id, credited, credit_amount FROM referrals WHERE referred_id IN (?,?)", (a, b))
         assert len(rows) == 2 and all(r["credited"] == 1 for r in rows)
@@ -69,21 +69,27 @@ def test_referral_race_and_cap_credit_wallet_exactly_once():
 
         # سقف مصرف شده: تأیید مجدد هیچ credit تازه‌ای نمی‌سازد
         assert credit_referral_on_payment(a, 100.0) is None
-        assert round(float(q("SELECT credit FROM users WHERE id=?", (referrer,), one=True)["credit"] or 0), 2) == expected
+        w2 = q("SELECT amount FROM wallet WHERE user_id=? AND cur=?", (referrer, "toman"), one=True)
+        assert round(float(w2["amount"] or 0), 2) == expected
     finally:
         set_referral_cfg(percent=p0, cap_amount=c0)
 
 
 def test_referral_increment_is_atomic_with_per_payment_lock():
-    """ساختار v5: افزایش درجای credit_amount + قفل idempotency هر پرداخت داخل همان _trx؛
-    شارژ کیف پول فقط با trigger اتمیک (هیچ UPDATE مستقیم روی users در این تابع)."""
+    """ساختار v8: افزایش درجای credit_amount + قفل idempotency هر پرداخت داخل همان _trx؛
+    شارژ کیف پول فقط با trigger اتمیک (هیچ UPDATE مستقیم روی users/wallet در این تابع).
+    PH-01: منطقِ اعطا به `_credit_in_tx` منتقل شد تا درونِ تراکنشِ تأییدِ پرداخت هم قابل
+    استفاده باشد (FIN-009) — و واحدِ پول صریح است."""
     import inspect
     from newsbot import core_referrals
-    src = inspect.getsource(core_referrals.credit_referral_on_payment)
+    src = inspect.getsource(core_referrals.credit_referral_on_payment) + \
+        inspect.getsource(core_referrals._credit_in_tx)
     assert "credit_amount=COALESCE(credit_amount,0)+?" in src          # افزایش، نه set دوباره
     assert "REF_PAID_PREFIX + str(ref_key)" in src                     # قفل idempotency هر پرداخت
     assert "_trx" in src                                               # کل مسیر در یک تراکنش
     assert "UPDATE users" not in src and "SET credit=" not in src      # کیف پول را فقط trigger شارژ می‌کند
+    assert "UPDATE wallet" not in src                                 # کیف پول را فقط trigger شارژ می‌کند
+    assert "credit_cur" in src                                        # واحدِ پول صریح ثبت می‌شود
 
 
 # ── PR1-07: کرسر D1 ──

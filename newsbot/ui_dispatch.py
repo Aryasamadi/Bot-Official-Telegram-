@@ -30,7 +30,7 @@ from newsbot.discover import probe_source
 from newsbot.publish import publish_article
 from newsbot.cycle import _pub_err
 from newsbot.scheduler import report_text
-from newsbot.logutils import log
+from newsbot.logutils import log, log_event
 from newsbot.text_format import fit_html, split_html, strip_tags
 from newsbot.ui_i18n import tr, TOGGLABLE, tz_city, FIELD_LABEL, SCHED_FIELDS
 from newsbot.ui_widgets import (B, pairs, esc, render, popup, ask, wiz_start, operation_status, onoff,
@@ -378,6 +378,19 @@ async def dispatch(update, context, data):
                     await popup(update, context, tr(lang, "s_pay_rc_err"))
             return await view_s_pays(update, context)
         if b == "pay_no": return await _confirm(update, context, lang, tr(lang, "confirm_pay_no_q"), f"s:pay_no2:{c}" + (f":{d}" if d else ""), "s:pays")
+        if b == "pay_refund":
+            # PH-01/FIN-013: بازگشتِ وجه به کیف پولِ مشتری (با رسید رسمی) — تأییدِ دومرحله‌ای
+            return await _confirm(update, context, lang, tr(lang, "confirm_pay_refund_q"),
+                                 f"s:pay_refund2:{c}", "s:pays")
+        if b == "pay_refund2":
+            from newsbot.core_payments import refund_payment
+            rid = int(c)
+            ok = False
+            try: ok = bool(refund_payment(rid))
+            except Exception: log.exception("refund failed rid=%s", rid)
+            await popup(update, context, tr(lang, "s_pay_refund_done" if ok else "notfound"))
+            if ok: log_event("WARN", f"بازگشت وجه برای پرداخت #{rid}", update.effective_user.id)
+            return await view_s_pays(update, context)
         if b in ("pay_ok", "pay_no2"): return await decide_pay(update, context, int(c), b == "pay_ok", d == "l")
         return await view_super_home(update, context)
     return await go_home_safe(update, context)

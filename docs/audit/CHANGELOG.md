@@ -1,0 +1,490 @@
+# CHANGELOG — Audit & Remediation Log
+
+Format: one entry per **authorised phase**. Every entry records the scope, the files changed, the tests
+executed and observed, the commit, the deployment status and the verification status.
+
+---
+
+## 2026-10-21 — PRODUCTION INCIDENT: 100 % CPU, bot down — **CODE FIX IN PR #26 (not merged)**
+
+**Severity:** CRITICAL · **Finding:** OPS-033 (new) · **Phase:** PHASE-04
+
+### Observed
+VPS panel (vyce.cloud): CPU pinned at 100 % in a saw-tooth; the bot stopped working; the server had been
+stopped ~4 h before the screenshot and restarted ~51 s before it.
+
+### What was ruled out (facts, not guesses)
+- **Not the audit/phase code.** `main` is still `08bc876` and **none** of PRs #20–#25 are merged, so no phase
+  code has ever reached the server.
+- **Not the recent deploys.** Runs #42, #43 and #44 of "Deploy to VPS" **all failed in 12–15 s**, i.e. before
+  any SSH/SCP step — the server was never updated by them.
+
+### Most likely cause (OPS-033)
+The one-off timestamp migration `normalize_iso_columns()` read the **whole table** into memory with
+`fetchall()`, updated it row by row **inside the schema transaction**, and wrote its "done" flag only at the
+very end. On a grown database the start can never complete -> systemd's `TimeoutStartSec=180` kills it ->
+`Restart=always` starts it again -> the whole scan is redone from zero -> **100 % CPU in a loop, the bot never
+comes up**. The saw-tooth in the panel is the signature of that loop.
+
+> **Honesty note:** the audit had already seen this code path and filed it as **PERF-005 — LOW / P3**
+> ("a one-time full scan of 18 tables dominates init_core"). That rating was wrong: it is an availability
+> defect, not a performance note. PERF-005 is now re-rated to FIXED and OPS-033 is filed as CRITICAL.
+
+### Fix (PR #26)
+- The migration now runs in **bounded chunks** (`chunk=2000`, every read is `LIMIT`ed), takes a
+  **per-column checkpoint** (`meta.iso_norm_v1:<table>.<col>`) that is **committed outside the schema
+  transaction**, and therefore **resumes** on the next start instead of repeating itself.
+- `deploy/systemd/10-restart-always.conf` now has `StartLimitIntervalSec=300` + `StartLimitBurst=5`: a
+  service that keeps failing **stops burning CPU** and stays visibly `failed` instead of looping forever.
+  `Restart=always` is kept; after fixing the cause: `systemctl reset-failed <unit> && systemctl start <unit>`.
+- 5 new regression tests in `tests/test_phase04_restart_loop.py`; the pre-existing watchdog test was updated
+  deliberately to the new drop-in policy.
+
+---
+
+## 2026-10-20 — OWNER DECISIONS (Q-1 … Q-6) — **RECORDED**
+
+**Authorisation:** owner instruction «تصمیم‌های پیشنهادی مالک: Q-1: گزینه c · Q-2: گزینه a … این تصمیم‌ها را در اسناد ممیزی ثبت کن و اثرشان را بر طراحی PH-01 مشخص کن. هنوز PH-01 را اجرا نکن.»
+**Scope:** documentation only — **no application logic, no schema, no production contact.**
+
+### Decisions recorded
+
+| # | Decision | Phase it shapes |
+|---|---|---|
+| Q-1 | **(c)** per-currency wallet balances, no conversion; existing balances frozen under `cur='legacy'`, never converted | PH-01 |
+| Q-2 | **(a)** refuse the approval on a material difference, **keeping the displayed cash amount**; only the wallet share is re-derived | PH-01 |
+| Q-3 | **(a)** the 20 % referral reward stays **per purchase** (no behavioural change) | PH-01 |
+| Q-4 | **(c)** keep the free-text price; a plan with no numeric tariff is **not online-purchasable** and says why | PH-01 |
+| Q-5 | **(c)** `ALLOW_PRIVATE_MODEL_HOSTS` becomes a `host:port` **allowlist, empty by default**, with a documented `=all` escape hatch | PH-02 |
+| Q-6 | **(c)** read the host first, then decide on the deployment identity | PH-04 |
+
+### Effect on the PH-01 design (recorded in `DECISIONS.md` §2b and `ROADMAP.md` PH-01)
+
+- **PH-01 is now a schema + money-path phase, not an arithmetic patch.** New `wallet(user_id, cur, amount)`
+  table; `credit_log` and `referrals` gain a currency; a currency companion to `plan_num()`; the referral cap
+  becomes per-currency and atomic; `users.credit` is retired by *not reading it* (the column stays — the
+  migration is additive and reversible).
+- **The approval contract changes**: the cash price stays frozen, the wallet share is re-derived, and a
+  material difference raises `PayQuoteStale` and offers a re-quote (new knob `PAY_QUOTE_TOLERANCE`).
+- **Scope additions**: FIN-010, FIN-023, UI-017 (moved from PH-05), OBS-014, and the new configuration knob.
+- **Phase risk rises** from *high* to *high, with an additive schema migration*; the safeguards (additive
+  only, idempotent, rehearsed on a **copy** of the production database, legacy allocation as a separate
+  authorised script) are written into the phase entry.
+- **Explicit non-goals** (from Q-3, Q-4, Q-6): PH-01 must not change the referral rate, the per-purchase
+  rule, or the existence of negotiable plans, and must not touch the deployment identity.
+
+### Files changed
+`docs/audit/DECISIONS.md` · `docs/audit/ROADMAP.md` · `docs/audit/MASTER_STATUS.md` ·
+`docs/audit/FINDINGS.md` (an "Owner decision" line on FIN-001, FIN-002, FIN-004, FIN-010, FIN-011, FIN-023,
+UI-017, SEC-007, OPS-001) · `docs/audit/status.json` · `docs/audit/CHANGELOG.md`
+
+### Tests executed
+The full suite and the audit-document validator were re-run after the edits (results in the next commit's
+message). No production system was contacted.
+
+### Deployment status
+**None.** No commit was pushed to `main`; no PR was merged; nothing was deployed.
+
+### Verification status
+No finding changed status. The six questions moved from *open* to *answered*; the design of PH-01 changed.
+
+---
+
+## 2026-10-20 — PH-01 Financial correctness and money-path integrity — **IMPLEMENTED (awaiting merge)**
+
+**Authorisation:** owner instruction «در PH-01، مشکلات مالی ثبت‌شده را واقعاً در کد اصلاح کن، تست‌های رگرسیون اضافه کن و مهاجرت دیتابیس را افزایشی، idempotent و قابل‌آزمایش روی کپی دیتابیس طراحی و پیاده‌سازی کن.»
+**Branch:** `feature/ph-01-money-integrity` (from the audit branch) · **PR:** #22 · **not merged, not deployed**
+**Owner decisions applied:** Q-1 → (c) · Q-2 → (a) · Q-3 → (a) · Q-4 → (c)
+
+### What changed
+
+| Area | Change |
+|---|---|
+| **Schema (v7 → v8)** | new table `wallet(user_id, cur, amount, updated_at)`; `credit_log.cur`; `referrals.credit_cur`; `pay_requests.cur/decided_by/notified_at`; `plan_changes.ref` — **all additive**, no column dropped |
+| **New module** | `newsbot/core_wallet.py` — the only place that reads/writes a wallet balance; every movement writes its receipt in the same transaction; an overdraft raises instead of silently clamping |
+| **Currency (Q-1c)** | `tariff(p, lang)` returns `(amount, currency)`; a reward is credited in the currency actually paid and is **only spendable against a tariff of the same currency**; the pre-existing balance is moved **once** into a frozen `legacy` bucket (never converted, never spendable) |
+| **Approval (Q-2a)** | the cash price stays frozen; only the wallet share is re-derived; a material difference (`PAY_QUOTE_TOLERANCE_PCT`, default 0) raises `PayQuoteStale` and stops the approval; the discount is re-validated at approval (`PayDiscountInvalid`); the referral reward is granted **inside the same transaction** |
+| **Ledger** | the stored balance is rounded and the receipt records exactly the stored value; a purchase always writes a `plan_changes` row; `credit_log.ref`/`plan_changes.ref` = `pay:<id>`; `refund_payment()` added |
+| **Referral (Q-3a)** | the per-purchase reward and its rate are unchanged; the cap is now **per currency** and atomic; the dead `REFERRAL_MAX_PER_USER` knob is removed (config, README, `.env.example`, `final_verification.py`) |
+| **Negotiable plans (Q-4c)** | a plan with no numeric tariff is **not sold online**: the plan page says the price is negotiable and no receipt can be created without an amount |
+| **Recoveries** | `recover_stuck_payments` uses the canonical timestamp format and never returns an **already applied** payment to `pending` (it closes it as `approved`) |
+| **Notifications** | `notified_at` + `pay_mark_notified` + `pay_unnotified` + a per-tick re-notify in the scheduler |
+
+### Migration — additive, idempotent, rehearsed on a copy
+
+`tests/test_ph01_migration.py` builds a real database, **reverts it to the v7 shape** (drops the
+`wallet` table and the new columns, restores the old trigger, `schema_version=7`), copies it, and runs the
+migration **on the copy**. It proves: the new columns/table appear; the old columns and their data are
+intact; the legacy balance lands in the frozen `legacy` bucket; a **second run changes nothing** (the
+migration *sets* rather than adds, so it is idempotent by construction, not only by the `meta` guard); and
+the **source file is byte-identical afterwards** (SHA-256).
+
+### Files changed
+
+`newsbot/core_wallet.py` (new) · `newsbot/db.py` · `newsbot/core_plans.py` · `newsbot/core_payments.py` ·
+`newsbot/core_referrals.py` · `newsbot/core_discounts.py` · `newsbot/ui_views_user.py` ·
+`newsbot/ui_views_super.py` · `newsbot/ui_inputs.py` · `newsbot/ui_i18n.py` · `newsbot/scheduler.py` ·
+`newsbot/config.py` · `newsbot/__init__.py` · `tools/final_verification.py` · `README.md` · `.env.example` ·
+`tests/test_ph01_money.py` (new, 18 tests) · `tests/test_ph01_migration.py` (new, 4 tests) ·
+`tests/test_payment_atomicity.py` · `tests/test_phase1_fixes.py` · `tests/test_phase10_db_quality.py` ·
+`tests/test_phase12_config_docs.py` · `tests/test_phase13_business_isolation.py` ·
+`tests/test_phase13_tech_debt.py` · `tests/test_phase14_payment_ui.py` · `tests/test_business_logic.py` ·
+`docs/audit/*` (register updated)
+
+### Tests executed
+
+| Check | Result |
+|---|---|
+| Full suite | **481 passed**, 0 failed, 0 skipped (455 before + 26 new) |
+| `pyflakes newsbot tools run.py tests` | **0 undefined names** |
+| `tools/final_verification.py` | **17/17** |
+| `run.py --check` (read-only) | ✅ configuration healthy |
+| Negative control — reward forced into one bucket (pre-fix behaviour) | **2 tests fail** (FIN-001, FIN-010) ⇒ the new tests really detect the defect |
+| Negative control — migration re-run with `ADD` instead of `SET` | idempotency test **fails** ⇒ the guard is real |
+| Negative control — `environment:` key removed / CI workflow renamed | the 2 deploy-gate tests fail (PR #21) |
+
+### Findings closed
+
+**20 → VERIFIED_FIXED**: FIN-001, FIN-002, FIN-003, FIN-004, FIN-005, FIN-006, FIN-007, FIN-008, FIN-009,
+FIN-010, FIN-012, FIN-013, FIN-016, FIN-019, FIN-021, FIN-023, UI-017, TEST-005, OPS-028, DOC-001.
+**1 → FIXED_UNVERIFIED**: OBS-007 (the join is fixed; the retention alignment stays in PH-09).
+**1 → DEFERRED**: FIN-015 (integer minor units — a large refactor, deferred).
+**3 new findings**: FIN-025 (the frozen legacy bucket needs a separate authorised allocation script),
+DB-012 (the retired `users.credit` column is kept — additive migration), OPS-032 (the environment rule
+still has to be created in the repository settings).
+
+### Deployment status
+
+**None.** No production system was contacted; no migration was run against a production database; nothing
+was deployed or merged.
+
+### CI incident (recorded, not hidden)
+
+The **first** push of PR #22 failed in CI — and **not** in the test suite: the static-guard step
+(`python -m pyflakes newsbot tools run.py tests`) reported **25 unused-import messages** introduced with
+the new module and the new tests. Locally they had been masked by a filter that only looked for the
+string `undefined name`, so the gate failure was invisible until CI ran it on Linux.
+
+Fix: every unused import was removed, and the two PH-01 helpers that had no caller were turned into live
+features instead of being deleted — `refund_payment()` is now reachable from the super-admin payments
+screen through a two-phase confirmation (`s:pay_refund` -> `s:pay_refund2`), and `pay_unnotified()` is
+surfaced in `/health` (OBS-014). Re-run: pyflakes exit 0, 482 passed, 17/17, `run.py --check` green, and
+**CI green** on `b3adb6b`.
+
+**Lesson recorded:** the local static check must be run *without* a filter. `tests/test_static_guard.py`
+already asserts "zero undefined names"; the *gate* is stricter — pyflakes must be completely silent.
+
+### Remaining risks in this phase
+
+- The **legacy balance** is deliberately unusable until a separate, explicitly authorised allocation
+  script is run (FIN-025). Any customer with a non-zero balance is affected.
+- The D1 approval path is **not** covered by the re-quote/refusal logic (FIN-011 stays open — D1 is
+  officially unsupported).
+- `FIN-015` (integer minor units) and `OBS-007`'s retention half remain open.
+- The production database has **not** been migrated; the migration must be rehearsed on a copy of the
+  real file (the PH-00 read) before it is applied.
+
+---
+
+## 2026-10-20 — PH-02 Untrusted egress closure — **IMPLEMENTED (awaiting merge)**
+
+**Branch:** `feature/ph-02-egress-closure` · **PR:** #23 · not merged, not deployed
+
+The AI-provider request path was the only outbound path with no host validation and `follow_redirects=True`.
+A `base_url` is user-supplied and role `admin` is granted automatically by any plan, so any Telegram user
+could aim the bot at an internal host. Now every destination and every redirect hop is re-validated
+(`egress_url_strict`), credential headers are dropped on a host change, `ALLOW_PRIVATE_MODEL_HOSTS` became an
+exact `host:port` allow-list (empty by default) enforced at request time, the article URL can no longer close
+the prompt's data fence, and `is_private_host` rejects multicast/reserved/malformed IP literals.
+
+**Closed:** SEC-001, SEC-002, SEC-007, SEC-010, NET-001, NET-002, NET-004. **NET-003 stays OPEN on purpose**
+(the rebinding window is narrower, not closed - closing it needs IP pinning).
+**Tests:** 39 new; 522 passed; pyflakes silent; 17/17.
+
+---
+
+## 2026-10-20 — PH-04 Deploy safety (host-independent half) — **PARTIALLY IMPLEMENTED (awaiting merge)**
+
+**Branch:** `feature/ph-04-deploy-safety` · **PR:** #24 · not merged, not deployed
+
+The health budget now matches `TimeoutStartSec` and waits for `READY=1` on `Type=notify`; the journal window
+is anchored to the restart and matches real crash markers instead of the word `traceback`; a failed
+`systemctl restart` triggers a real rollback; a rollback also restores the previous dependencies; every backup
+is verified before the deploy continues; the article-archive folder is included; a re-deploy of the current SHA
+still backs up and health-checks; the deploy script is now taken from `TARGET_SHA`; the manual path requires a
+CI-verified SHA; both migration tools support `--dry-run`.
+
+**Closed:** OPS-002/003/004/005/006/009/010/013/025/026. **Partial:** OPS-008 (detection only), OPS-030.
+**Still blocked on the production read:** OPS-001 (the service identity), OPS-021 (the base unit file) and
+OPS-019 (hash pinning).
+**Tests:** 20 new; 542 passed; 17/17.
+
+---
+
+## 2026-10-20 — PH-08 AI budget and cache correctness — **IMPLEMENTED (awaiting merge)**
+
+**Branch:** `feature/ph-08-ai-budget` · **PR:** #25 · not merged, not deployed
+
+The per-article call budget is now hard (it was reset mid-article, so it was not a cap); the daily quota is
+claimed per real provider call, so the cost is actually bounded; the personal-model test path is subject to the
+same gate; the cache TTL is enforced at read time; the cache key includes a fingerprint of the article text; and
+an over-long article is truncated to fit instead of failing silently.
+
+**Closed:** PIPE-001, PIPE-002, PIPE-003, PIPE-004, PIPE-006, PIPE-007. **Open:** PIPE-005, PIPE-008.
+**Tests:** 7 new; 549 passed; 17/17.
+
+---
+## 2026-10-20 — PH-00 Production verification (read-only) — **PARTIAL: production read BLOCKED, repository side COMPLETE**
+
+**Phase:** `PH-00` — Production verification (read-only) + audit-document validation + confirmed
+repository-infrastructure fixes
+**Authorisation:** owner instruction «مرحله PH-00 را در محیط کاری تمیز ممیزی اجرا کن… تست‌های پروژه را اجرا کن و هر ایراد تأییدشده در اسناد ممیزی یا زیرساخت مخزن را اصلاح کن… تغییرات موفق و تست‌شده را در صورت لازم کامیت و پوش کن.»
+**Baseline:** `main` @ `08bc87655dc910a98076acd749ddf8f3e6bdca2c`
+**Working directory:** `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (the clean audit clone)
+
+### 13.1 Production read — **BLOCKED (no access)**
+
+The PH-00 host checklist could **not** be executed. Verified absent in this environment:
+`~/.ssh` (does not exist — no keys, no `config`, no `known_hosts`), any ssh host entry, the `gh` CLI
+(not installed), and every VPS/SSH/host/deploy environment variable. The host address itself is only the
+GitHub secret `VPS_HOST` (`deploy-vps.yml:37`), whose value is not readable.
+
+→ **Unverified (unchanged):** the running commit SHA, the real systemd unit name and `WorkingDirectory`,
+the deployed Python version and dependency set, the `.env` owner/mode, the database path / journal mode /
+integrity, the backup inventory, and the service journal. The checklist is ready to run from any host with
+the key.
+
+**Repository-side verification completed instead (mechanical, not by eye):**
+
+| Check | Result |
+|---|---|
+| `deploy.sh` service identity | `APP_DIR=/opt/bot-ai-automatic`, `SERVICE=bot-ai-automatic` (`deploy/deploy.sh:17-19`) |
+| Occurrence counts (`git grep -c`) | `bot-ai-automatic` = **51** across **5** tracked files; `newsbot.service` = **0**; `bot-official-telegram` = **0** |
+| Additional evidence site found | `deploy/systemd/10-restart-always.conf:7` — the `ExecStopPost` logger tag also carries the old identity (**added to OPS-001**) |
+| `git ls-files -s deploy/deploy.sh` | `100644` — **not executable** (OPS-028) |
+| `git ls-files \| Select-String ROADMAP` | **no match** — 6 dangling references (DOC-001) |
+| Secret scan of the local `ROADMAP.md` (9 credential patterns) | **0 matches** |
+
+### 13.2 FIN-001 — STATIC → **REPRODUCED**
+
+Executed against an **isolated temporary SQLite database** using the real business functions
+(`record_referral` → `credit_referral_on_payment` → `upgrade_quote`). No repository or production file was
+touched. Observed:
+
+```
+plan U (en tariff) : price_num=5.0      price_num_fa=0.0
+plan T (fa tariff) : price_num=0.0      price_num_fa=600000.0
+credit_referral_on_payment -> (1001, 120000.0)          # 20% of 600000 Toman
+users.credit = 120000.0   (unitless)   credit_log: delta=120000.0 balance_after=120000.0 reason='referral'
+en referrer quotes the USD plan:  new_cost=5.0  balance=120000.0  used_balance=5.0  **payable=0.0**
+=> FIN-001 REPRODUCED: a USD plan is obtained for FREE from a Toman-denominated reward (24000x over-credit)
+MIRROR: fa referrer holding a USD reward of 1.0 -> used_balance=1.0, payable=599999.0 (worthless)
+```
+
+This confirms the CRITICAL classification and raises FIN-001 from `STATIC` to `REPRODUCED`.
+
+### 13.3 Tests executed
+
+| Command | Result |
+|---|---|
+| `python -m pytest -q -p no:cacheprovider` (full suite, before the changes) | **455 passed**, 0 failed, 0 skipped, 0 errors — 88.95 s (3 × `PTBDeprecationWarning`, unchanged) |
+| `python -m pytest -q -p no:cacheprovider tests/test_repo_integrity.py` (new file) | **3 passed** |
+| negative control — `ROADMAP.md` temporarily removed | **2 failed** (as intended — the guard is proven to detect the regression) |
+| `python -m pytest -q -p no:cacheprovider` (full suite, after the changes) | see §13.6 below |
+
+Environment: Windows 11, Python 3.13.14, **out-of-tree venv** with the pinned dependencies — nothing
+installed, `-p no:cacheprovider`, `PYTHONDONTWRITEBYTECODE=1`. The repository was left clean throughout
+(`git status --porcelain` shows only the intended changes).
+
+### 13.4 Audit-document validation
+
+A validator resolved every evidence reference in the register against the working tree:
+**516 references checked, 0 pointing past EOF, 0 severity mismatches** between the register headings and
+`status.json`, and the finding-ID sets of `FINDINGS.md` and `status.json` were **identical**.
+
+Two real defects in the audit documents were found and corrected:
+1. **Stale severity counts** in the `FINDINGS.md` header (`HIGH 25 / MEDIUM 68 / LOW 57 / INFO 29` instead of
+   the true `26 / 78 / 64 / 11`) and an **"all OPEN"** claim that ignored the 4 deferred findings.
+2. **OPS-001 was missing one evidence site** — `deploy/systemd/10-restart-always.conf:7`.
+
+### 13.5 Repository-infrastructure fixes applied
+
+| # | Fix | Files | Regression test | Finding |
+|---|---|---|---|---|
+| 1 | `deploy/deploy.sh` committed **executable** (git index `100644` → `100755`) | `deploy/deploy.sh` (mode only — content unchanged) | `tests/test_repo_integrity.py::test_deploy_script_is_executable_in_git_index` | **OPS-028** |
+| 2 | The project's own **`ROADMAP.md` added to the repository root**, resolving 6 dangling references (original text unchanged, plus a five-line status note under the title marking it as the historical phase plan and pointing to `docs/audit/ROADMAP.md`) | `ROADMAP.md` (new) | `::test_roadmap_document_is_tracked_and_contains_the_cited_sections` + `::test_referenced_repo_paths_exist` | **DOC-001** (new finding) |
+
+**Deliberately NOT changed:** the `bot-ai-automatic` service identity itself (OPS-001) — renaming it
+without reading the live host risks making a working service unstartable; it is blocked on the PH-00
+production read (DECISIONS.md D-13). No application logic, schema, dependency, workflow or deployment
+behaviour was modified.
+
+### 13.6 Deployment status
+
+**None.** Nothing was deployed, and no production system was contacted or modified.
+
+**Commit / push status**
+
+| Item | Value |
+|---|---|
+| Branch | `audit/ph-00-verification-and-repo-integrity` (from `main` @ `08bc876`) |
+| Commit | `3ebe34729c5f84b29bf16bb40cf40aabbb47714e` |
+| Pushed | yes — `origin/audit/ph-00-verification-and-repo-integrity` |
+| Pull request | **#20** — https://github.com/Aryasamadi/Bot-Official-Telegram-/pull/20 |
+| CI on the PR | **`test` → success**, **`docker-build` → success** (run 39443652653, completed 2026-10-20T14:56:08Z) |
+| Merge | **NOT merged** — merging is a separate action that was not authorised; the PR is green and ready |
+| Deployed to production | **no** |
+
+### 13.7 Verification status
+
+| Finding | Before | After |
+|---|---|---|
+| FIN-001 | OPEN · STATIC | **OPEN** · REPRODUCED (defect confirmed; the *fix* is PH-01) |
+| OPS-001 | OPEN · STATIC | **OPEN** · REPRODUCED (repository side) — *fix blocked on the PH-00 production read* |
+| OPS-028 | OPEN | **VERIFIED_FIXED** |
+| DOC-001 | (recorded only as a table row) | **VERIFIED_FIXED** (new tracked finding, LOW · P2) |
+
+### 13.8 Remaining risks handed on
+
+1. The production state is still **UNVERIFIED** — the PH-00 host checklist must be run from a machine with
+   the VPS key, or the owner must paste its outputs.
+2. `PH-01` cannot start until the owner answers **Q-1** (cross-currency reward denomination) and **Q-2**
+   (refuse vs. re-derive a changed wallet) in `DECISIONS.md`.
+3. `PH-04` must be merged before the first release that carries a PH-01…PH-03 fix.
+
+### 13.9 Next permitted action
+
+`AWAIT_OWNER_AUTHORIZATION` — the recommended next phase is **`PH-01`** (financial correctness), with
+**`PH-00` re-run from a host with VPS access** as its prerequisite.
+
+---
+
+## 2026-10-20 — AUDIT (read-only) — **COMPLETE**
+
+**Phase:** `AUDIT` (not a remediation phase; no application code was modified)
+**Authorisation:** the MASTER DIRECTIVE itself (audit only)
+**Baseline:** `main` @ `08bc87655dc910a98076acd749ddf8f3e6bdca2c` ("Fix referral invitation copy and fallback", 2026-10-19T20:03:08Z)
+
+### Scope
+Full engineering audit across all 20 audit domains (A–T): architecture and code quality; Python runtime and
+dependencies; database and data integrity; user data and account lifecycle; financial correctness; content
+discovery and source fetching; AI models and content generation; publishing and scheduling; Telegram UI/UX and
+user journeys; security and authorization; networking and external services; performance and latency; VPS,
+Linux and systemd; CI/CD, releases and recovery; testing and QA; observability and operations; documentation
+and configuration; business logic and cross-module integration; accessibility, clarity and product quality;
+remaining risks and future maintainability.
+
+### Files created (audit documentation only — no application file was touched)
+All under `docs/audit/` in the audit workspace
+`C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot`:
+
+| File | Size / content |
+|---|---|
+| `docs/audit/MASTER_STATUS.md` | Master state, counts, risks, limitations, next action |
+| `docs/audit/ROADMAP.md` | 12 phases (PH-00 … PH-11) with dependencies, risks, acceptance criteria and rollback strategies |
+| `docs/audit/FINDINGS.md` | The 180-finding register with evidence and verification status |
+| `docs/audit/status.json` | Machine-readable state: baseline, 180 findings, 12 phases, next permitted action |
+| `docs/audit/ARCHITECTURE.md` | Verified architecture, data flows, critical state transitions, external integrations |
+| `docs/audit/TEST_MATRIX.md` | Test inventory, execution status, 28-rule coverage matrix, required regression coverage |
+| `docs/audit/DECISIONS.md` | Existing project decisions, audit proposals, 6 open owner questions, 10 rejected approaches |
+| `docs/audit/CHANGELOG.md` | This file |
+
+**No application source file, schema, migration, dependency, workflow or deployment file was created, modified
+or deleted. No database was migrated. No service was restarted, stopped or reconfigured. Nothing was
+deployed, committed or pushed.**
+
+### Verification performed
+| Activity | Result |
+|---|---|
+| Repository baseline | Clean clone of `main` @ `08bc876`; 10 branches; 19 PRs (all closed/merged); 0 open PRs |
+| Test suite | `python -m pytest -q -p no:cacheprovider` → **455 passed, 0 failed, 0 skipped, 0 errors** (112.5 s) on Windows 11 / Python 3.13.14, out-of-tree venv, nothing installed |
+| Test order independence | Reverse alphabetical file order → **455 passed** (92.9 s) |
+| Repository hygiene after the runs | `git status --porcelain` empty; no `newsbot.db` in the repo root; no `.pytest_cache` |
+| Isolated DB probe | A throwaway temp database proved that all 10 statically-flagged `q()` write sites **do** pass `commit=True` — the suspected "uncommitted writes" defect was **disproved and not filed** |
+| Callback route map | AST diff of all 216 emitted `callback_data` strings against every handled route → **zero unmatched emitters** (no dead buttons) and **zero IDOR** |
+| i18n parity | 446 keys, 100 % structural fa/en parity; 6 keys referenced by code but **absent**; 4 templates with unsatisfied placeholders; 0 Persian/Arabic character mixing |
+| Git-history secret scan | All refs scanned → **no real secret committed**; only synthetic test fixtures and `.env.example` placeholders |
+| Environment reconciliation | 62/62 documented defaults match `newsbot/config.py`; 0 undocumented-but-used; 0 documented-but-unused |
+| Blocking-call analysis | 2 blocking calls in async paths (`db.q()`'s retry sleep, `subprocess.run("git rev-parse")`); ~40 `q()` calls still on the event loop |
+| Swallowed-exception census | 59 `except: pass/continue` sites; 25 hide business-meaningful failures |
+
+### Findings produced
+**180 findings, all OPEN** (176 OPEN, 4 DEFERRED) — CRITICAL 1 · HIGH 26 · MEDIUM 78 · LOW 64 · INFO 11.
+Distribution: FIN 24 · SEC 16 · DB 11 · UI 26 · PIPE 22 · NET 8 · PERF 7 · PUB 5 · OPS 31 · TEST 14 · OBS 16.
+
+### Deployment status
+**None.** Nothing was deployed. The production commit SHA remains **UNVERIFIED** (no VPS access).
+
+### Verification status
+The audit itself is **VERIFIED_FIXED** in the sense that every reported finding is backed by a file:line
+reference, and the eight reproduction/measurement claims are marked `REPRODUCED`. No remediation has been
+attempted, so no finding is `VERIFIED_FIXED`.
+
+### Residual risks handed to the owner
+1. The production state is **unverified** — the running commit, the real systemd unit, the deployed path, the
+   `.env` permissions and the backup contents were not inspected (phase `PH-00`).
+2. The deploy chain targets a **different project's** identity (`bot-ai-automatic`), and a failed restart
+   leaves new code on disk with the old code running (`OPS-001`, `OPS-026`).
+3. The wallet mixes two currencies (FIN-001, the only CRITICAL finding).
+4. Money can be lost silently through the receipt-notification chain (UI-006, UI-009, OBS-013).
+5. The AI-provider egress is unguarded (SEC-001 / NET-001) and reachable by any account holding role `admin`.
+
+### Next permitted action
+`AWAIT_OWNER_AUTHORIZATION`. The owner may:
+- issue `"continue the audit"` to resume any incomplete inspection work;
+- issue `"start phase PH-00"` to run the read-only production verification;
+- issue `"start phase PH-01"` to begin the financial-correctness remediation (after answering the six open
+  questions in `DECISIONS.md`).
+
+---
+
+## Template for future entries
+
+```
+## <date> — <PHASE-ID> <title> — <STATUS>
+
+**Phase:** PH-xx
+**Authorisation:** <owner instruction, verbatim>
+**Scope:** <finding IDs covered>
+
+### Files changed
+| File | Change | Risk |
+
+### Tests executed
+| Command | Result | Observed |
+|---|---|---|
+
+### Regression tests added
+| Test file | Test name | Covers |
+
+### Commit
+<sha> — <message> — <branch>
+
+### Deployment status
+<not deployed | deployed to <host> as <sha>>
+
+### Verification status
+<finding IDs>: OPEN -> VERIFIED_FIXED | FIXED_UNVERIFIED | BLOCKED
+
+### Remaining risks
+```
+
+---
+
+## Phase log (to be completed as phases are authorised)
+
+| Phase | Status | Started | Completed | Findings closed | Commit | Deployed | Verified |
+|---|---|---|---|---|---|---|---|
+| AUDIT | COMPLETE | 2026-10-20 | 2026-10-20 | 0 (181 produced) | `3ebe347` (docs only) | no | yes (report presented) |
+| PH-00 | COMPLETE (production read BLOCKED — no VPS access) | 2026-10-20 | 2026-10-20 | 2 (OPS-028, DOC-001) → VERIFIED_FIXED; FIN-001 and OPS-001 upgraded to REPRODUCED | `3ebe347` → PR #20, **CI green**, not merged | no | yes (repository side) |
+| PH-01 | OPEN | – | – | – | – | – | – |
+| PH-02 | OPEN | – | – | – | – | – | – |
+| PH-03 | OPEN | – | – | – | – | – | – |
+| PH-04 | OPEN | – | – | – | – | – | – |
+| PH-05 | OPEN | – | – | – | – | – | – |
+| PH-06 | OPEN | – | – | – | – | – | – |
+| PH-07 | OPEN | – | – | – | – | – | – |
+| PH-08 | OPEN | – | – | – | – | – | – |
+| PH-09 | OPEN | – | – | – | – | – | – |
+| PH-10 | OPEN | – | – | – | – | – | – |
+| PH-11 | OPEN | – | – | – | – | – | – |

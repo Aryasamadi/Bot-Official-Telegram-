@@ -74,6 +74,28 @@ def _recover_state():
     from newsbot.core_plans import rollback_expired_benefits
     rollback_expired_benefits()   # BIZ-03: نقش ادمینِ پلنِ منقضی پایین می‌آید
 
+
+async def _renotify_payments():
+    """PH-01/FIN-021 — پرداخت‌های تأییدشده‌ای که مشتری هنوز مطلع نشده، دوباره اعلام می‌شوند.
+
+    بدونِ این مسیر، یک خطای موقتِ تلگرام می‌توانست بگذارد مشتری پرداخت‌شده بی‌خبر بماند
+    (پول دریافت شده، پلن فعال، ولی هیچ اعلامی به مشتری نشده)."""
+    from newsbot.core_payments import pay_unnotified, pay_mark_notified
+    from newsbot.core_plans import get_plan, plan_txt
+    from newsbot.core_users import user_lang
+    from newsbot.ui_widgets import notify_user_fn
+    from newsbot.timeutils import fmt_date
+    rows = await arun(pay_unnotified, 20)
+    for r in rows:
+        try:
+            uid = r["user_id"]; lang = user_lang(uid) or "fa"
+            p = await arun(get_plan, r["plan_id"])
+            when = tr(lang, "pay_when_now", d=fmt_date(r["decided_at"], 0)) if r["decided_at"] else ""
+            await notify_user_fn(uid, tr(lang, "pay_approved", name=html.escape(plan_txt(p, "name", lang) if p else ""), when=when))
+            await arun(pay_mark_notified, r["id"])
+        except Exception as e:
+            log_event("WARN", f"payment re-notify failed rid={r['id']}: {type(e).__name__}: {e}")
+
 async def scheduler_tick(bot):
     if _tick_lock.locked(): return
     async with _tick_lock:
@@ -86,6 +108,8 @@ async def scheduler_tick(bot):
         except Exception as e: log_event("ERROR", f"publication recovery: {e}")
         try: await probe_down_models()
         except Exception as e: log_event("WARN", f"probe_down_models failed: {type(e).__name__}: {e}")
+        try: await _renotify_payments()
+        except Exception as e: log_event("ERROR", f"payment re-notify failed: {e}")
         try: await _plan_notifications()
         except Exception as e: log_event("ERROR", f"plan notifications: {e}")
         if not await arun(gget, "automation_enabled", True): return

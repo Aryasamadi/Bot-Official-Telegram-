@@ -50,11 +50,17 @@ def h4():
     return not bad, f"{len(cases)-len(bad)}/{len(cases)} فرم پاک شد"
 check("H4/H16/H17", "دیکشنری امتیاز در همهٔ فرم‌ها/ارقام پاک می‌شود", h4)
 
-# ── H6: REFERRAL_MAX_PER_USER ──
+# ── H6: سقفِ «تعدادِ» ارجاع باید حذف شده باشد (PH-01/FIN-023 · Q-3a) ──
 def h6():
+    """سقفِ «تعداد» هرگز اجرا نمی‌شد و فقط یک تصورِ نادرست می‌ساخت؛ حذف شد.
+
+    سقفِ واقعی فقط **مبلغی** است و به تفکیکِ واحدِ پول اعمال می‌شود."""
     from newsbot import config
-    return isinstance(config.REFERRAL_MAX_PER_USER, int), f"={config.REFERRAL_MAX_PER_USER}"
-check("H6", "REFERRAL_MAX_PER_USER تعریف شده", h6)
+    gone = not hasattr(config, "REFERRAL_MAX_PER_USER")
+    src = open(os.path.join(ROOT, "newsbot/core_referrals.py"), encoding="utf-8").read()
+    unused = "REFERRAL_MAX_PER_USER" not in src
+    return (gone and unused), ("حذف شد" if gone else "هنوز هست") + (" و استفاده نمی‌شود" if unused else "")
+check("H6", "سقفِ «تعداد»ِ ارجاع حذف شده است", h6)
 
 # ── H7: publish.py 're' import ──
 def h7():

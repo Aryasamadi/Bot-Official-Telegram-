@@ -37,6 +37,26 @@ def disc_use(code):
         db().commit()
         return n == 1
 
+def disc_use_tx(conn, code):
+    """مصرفِ تخفیف **درونِ تراکنشِ** تأییدِ پرداخت، با اعتبارسنجیِ کامل.
+
+    PH-01/FIN-008: در زمانِ تأیید، کد دوباره بررسی می‌شود — اگر بین درخواست و تأیید
+    **غیرفعال** یا **منقضی** شده باشد (یا ظرفیتش تمام شده باشد) ⇒ مصرف نمی‌شود.
+
+    خروجی: (ok, reason) — reason: None | notfound | inactive | expired | exhausted"""
+    c = str(code or "").strip().upper()
+    if not c: return True, None
+    d = conn.execute("SELECT active, expires, max_uses, used FROM discounts WHERE code=?", (c,)).fetchone()
+    if not d: return False, "notfound"
+    if not d["active"]: return False, "inactive"
+    e = parse_dt(d["expires"])
+    if e and e <= now_utc(): return False, "expired"
+    if d["max_uses"] and d["used"] >= d["max_uses"]: return False, "exhausted"
+    cur = conn.execute("UPDATE discounts SET used=used+1 WHERE code=? AND (max_uses=0 OR used<max_uses)", (c,))
+    if cur.rowcount != 1: return False, "exhausted"
+    return True, None
+
+
 def disc_refund(code):
     """برگشتِ یک مصرف تخفیف (جبرانِ تأیید نیمه‌کارهٔ پرداخت): used یک واحد کم می‌شود ولی هرگز منفی نمی‌شود."""
     with _lock:

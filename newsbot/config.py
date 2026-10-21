@@ -142,17 +142,22 @@ CF_ENABLED = bool(CF_ACCOUNT_ID and CF_KV_NAMESPACE_ID and CF_API_TOKEN)
 REFERRAL_ENABLED = os.getenv("REFERRAL_ENABLED", "1").strip() == "1"
 # CFG-03 (فاز ۱۲): اعتبارسنجی زنده — مقدار خارج از بازه همین‌جا کلمپ و در CONFIG_ERRORS ثبت می‌شود
 REFERRAL_PERCENT = _env_float("REFERRAL_PERCENT", 20.0, 0.0, 50.0)
-# REF-3/تصمیم ۸ (فاز ۱۲): سقف «تعداد» منسوخ شد — پاداش با هر خرید تعلق می‌گیرد و سقف اختیاریِ
-# مبلغی از پنل سوپرادمین (تنظیم ref_cap_amount؛ ۰ = نامحدود) اعمال می‌شود. این متغیر فقط برای
-# سازگاری importهای قدیمی نگه داشته شده و هیچ مسیری از مقدار آن استفاده نمی‌کند.
-REFERRAL_MAX_PER_USER = max(0, _env_int("REFERRAL_MAX_PER_USER", 50))
+# REF-3/تصمیم 8 (فاز ۱۲): سقف «تعداد» منسوخ شد — پاداش با هر خرید تعلق می‌گیرد و سقف اختیاریِ
+# مبلغی از پنل سوپرادمین (تنظیم ref_cap_amount؛ ۰ = نامحدود) اعمال می‌شود.
+# PH-01 (Q-3a): این متغیر حذف شد — سقفِ «تعداد» هرگز اجرا نمی‌شد و فقط یک تصورِ نادرست می‌ساخت.
+# سقفِ واقعی فقط مبلغی است و **به تفکیکِ واحدِ پول** مقایسه می‌شود.
 
 # ── امنیت (SEC-09 / تصمیم ۱۰-الف، فاز ۱۲) ──
 # کلید رمزنگاری کلیدهای AI در حالت سکون؛ هر رشتهٔ دلخواه (با SHA-256 به کلید Fernet تبدیل می‌شود).
 # خالی ⇒ بدون رمزنگاری (سازگاری با نصب‌های موجود؛ استارت هشدار می‌دهد اگر کلید متن ساده وجود داشته باشد).
 SECRETS_KEY = os.getenv("SECRETS_KEY", "").strip()
 # فقط برای پرووایدرهای AI محلی (Ollama/LM Studio): اجازهٔ مقصد خصوصی برای base_url مدل
-ALLOW_PRIVATE_MODEL_HOSTS = os.getenv("ALLOW_PRIVATE_MODEL_HOSTS", "").strip() == "1"
+# فقط برای پروایدرهای AI محلی (Ollama/LM Studio): فهرستِ «میزبان:پورت»هایی که اجازهٔ
+# دسترسی به میزبانِ خصوصی دارند — جداشده با کاما. خالی (پیش‌فرض) = هیچ میزبانِ خصوصی
+# مجاز نیست. «all» یعنی همهٔ میزبان‌های خصوصی (پذیرشِ آگاهانهٔ ریسک).
+# PH-02/Q-5 (SEC-007): پیش‌تر یک پرچمِ boolean بود که کلِ محافظتِ میزبانِ خصوصی را برای
+# همهٔ مدیرها برمی‌داشت؛ حالا فهرستِ سفیدِ دقیق است.
+ALLOW_PRIVATE_MODEL_HOSTS = os.getenv("ALLOW_PRIVATE_MODEL_HOSTS", "").strip()
 
 # ── کانال اجباری (فقط برای ادمین‌ها) ──
 MANDATORY_CHANNEL_ID = os.getenv("MANDATORY_CHANNEL_ID", "").strip()
@@ -175,6 +180,10 @@ MAX_LOOKBACK = 168
 MAX_PPC = 5
 
 # ── هم‌زمانی و زمان‌بندی ──
+# PH-01/Q-2a: آستانهٔ «اختلافِ مؤثر» بین مبلغِ یخ‌زده (آنچه به مشتری نشان داده شد) و مبلغِ
+# بازمحاسبه‌شده با کیف پولِ زنده. درصدی است تا برای هر دو واحدِ پول یکسان معنی داشته باشد.
+# ۰ = سخت‌گیریِ کامل: هر اختلافی تأیید را متوقف می‌کند.
+PAY_QUOTE_TOLERANCE_PCT = _env_float("PAY_QUOTE_TOLERANCE_PCT", 0.0, 0.0, 100.0)
 AI_CONCURRENCY = _env_int("AI_CONCURRENCY", 3)
 FETCH_CONCURRENCY = _env_int("FETCH_CONCURRENCY", 8)
 CYCLE_CONCURRENCY = _env_int("CYCLE_CONCURRENCY", 2)

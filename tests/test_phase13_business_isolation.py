@@ -24,7 +24,9 @@ def _chan(uid, chat_id):
 
 
 def _wallet(uid):
-    return round(float(q("SELECT credit FROM users WHERE id=?", (uid,), one=True)["credit"] or 0), 2)
+    "PH-01: موجودی در جدولِ wallet (واحد‌دار) نگه‌داری می‌شود."
+    from newsbot.core_wallet import wallet_total
+    return wallet_total(uid)
 
 
 def test_daily_post_cap_isolated_between_admins():
@@ -58,7 +60,7 @@ def test_wallet_credit_isolated_between_referrers():
     ra, ba, rb, bb = 9205, 9206, 9207, 9208
     for u in (ra, ba, rb, bb):
         _user(u)
-    q("UPDATE users SET credit=0 WHERE id IN (?,?,?,?)", (ra, ba, rb, bb), commit=True)
+    q("DELETE FROM wallet WHERE user_id IN (?,?,?,?)", (ra, ba, rb, bb), commit=True)
     q("DELETE FROM referrals WHERE referred_id IN (?,?)", (ba, bb), commit=True)
     assert record_referral(ra, ba) is True and record_referral(rb, bb) is True
     p0, c0 = referral_cfg()

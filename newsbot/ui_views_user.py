@@ -118,29 +118,46 @@ def _applied_disc(context, pid):
     return d
 
 def _price_text(p, lang, d):
+    """متنِ قیمت برای پلن‌هایی که **تعرفهٔ عددی** ندارند (پلنِ مذاکره‌ای — Q-4c).
+
+    تخفیف روی متنِ «توافقی» اعمال نمی‌شود (عددی در آن نیست) و متنِ نمایشی هرگز با
+    مبلغِ دریافتی اشتباه گرفته نمی‌شود."""
     price = plan_txt(p, "price", lang) or tr(lang, "free_word")
-    return (discount_price(price, d["percent"]), price) if d else (price, None)
+    if d and plan_num(p, lang):
+        return (discount_price(price, d["percent"]), price)
+    return (price, None)
 
 async def view_plan(update, context, pid):
     uid = update.effective_user.id; lang = L(update); p = get_plan(pid); u = get_user(uid); lim = admin_limits(uid)
     if not p: await popup(update, context, tr(lang, "plan_notfound")); return await view_plans(update, context)
     d = _applied_disc(context, pid); new_price, old_price = _price_text(p, lang, d)
-    text = f"{'🎁' if p['is_free'] else '⭐'} <b>{esc(plan_txt(p, 'name', lang))}</b>\n{esc(plan_txt(p, 'description', lang))}\n\n" + tr(lang, "plan_details", days=p["days"], posts=p["daily_posts"], src=p["max_sources"], ch=p["max_channels"], tests=p["daily_tests"], price=esc(new_price))
-    if d: text += "\n" + tr(lang, "plan_disc_line", old=esc(old_price), new=esc(new_price), code=esc(d["code"]), p=d["percent"])
-    kb = []; qt = None; can_buy = True
+    cur_plan = get_plan(lim["plan_id"]) if lim["plan_id"] else None
+    # PH-01: قیمت همیشه از یک منبعِ واحد (upgrade_quote) می‌آید تا «نمایش‌داده‌شده» و
+    # «دریافت‌شدنی» یکی باشند (FIN-004) و واحدِ پول هم همراهش باشد (Q-1c).
+    qt = upgrade_quote(uid, p, cur_plan, d["percent"] if d else None, lang=lang)
+    price_line = fmt_amt(qt["payable"], lang) if qt["payable_num"] else new_price
+    text = f"{'🎁' if p['is_free'] else '⭐'} <b>{esc(plan_txt(p, 'name', lang))}</b>\n{esc(plan_txt(p, 'description', lang))}\n\n" + tr(lang, "plan_details", days=p["days"], posts=p["daily_posts"], src=p["max_sources"], ch=p["max_channels"], tests=p["daily_tests"], price=esc(price_line))
+    if qt["payable_num"] and d: text += "\n" + tr(lang, "plan_disc_line", old=esc(old_price), new=esc(price_line), code=esc(d["code"]), p=d["percent"])
+    kb = []; can_buy = True
     if p["is_free"]: kb.append([B(tr(lang, "plan_free_used"), "noop") if u and u["free_used"] else B(tr(lang, "plan_free_btn"), f"u:free:{pid}")])
     else:
-        num = plan_num(p, lang)
         u_active = lim["active"] and lim["plan_id"] not in (None, 0)
-        if num: text += "\n" + tr(lang, "plan_num_line", v=esc(fmt_amt(num, lang)))
+        if qt["payable_num"]:
+            text += "\n" + tr(lang, "plan_num_line", v=esc(fmt_amt(qt["payable"], lang)))
+            if qt["balance"]:
+                text += "\n" + tr(lang, "plan_wallet_line", v=esc(fmt_amt(qt["balance"], lang)))
         if u_active and lim["plan_id"] == pid:
             text += "\n\n" + tr(lang, "plan_renew_note")           # تمدید: دورهٔ جدید پس از پلن فعلی
         elif u_active:
             # فاز ۱۴: صداقت پرداخت — نرخ روزانهٔ تعرفهٔ هم‌زبان تعیین‌کننده:
-            # گران‌تر ⇒ ارتقای کسری · ارزان‌تر ⇒ نزول (فروش نداریم) · بدون تعرفه ⇒ امکان محاسبه نیست
-            qt = upgrade_quote(uid, p, get_plan(lim["plan_id"]), None, lang=lang)
-            can_buy = bool(qt["payable_num"]) and not qt["blocked"]
-            text += "\n\n" + tr(lang, "plan_downgrade" if qt["blocked"] else ("plan_nonum" if not qt["payable_num"] else "plan_upgrade_note"))
+            # گران‌تر ⇒ ارتقای کسری · ارزان‌تر ⇒ نزول (فروش نداریم)
+            text += "\n\n" + tr(lang, "plan_downgrade" if qt["blocked"] else "plan_upgrade_note")
+        if not qt["payable_num"]:
+            # Q-4c: پلنِ بدونِ تعرفهٔ عددی آنلاین خریداری نمی‌شود (قیمت توافقی است)
+            can_buy = False
+            text += "\n\n" + tr(lang, "plan_negotiable")
+        elif qt["blocked"]:
+            can_buy = False
     if pay_pending_for(uid, pid): kb.append([B(tr(lang, "plan_pending_btn"), "noop")])
     elif can_buy: kb.append([B(tr(lang, "plan_renew_btn" if lim["plan_id"] == pid and lim["active"] else "plan_req_btn"), f"u:req:{pid}"), B(tr(lang, "disc_remove") if d else tr(lang, "disc_btn"), f"u:disc{'x' if d else ''}:{pid}")])
     else: kb.append([B(tr(lang, "plan_locked_btn"), "noop")])
@@ -152,6 +169,10 @@ async def do_free(update, context, pid):
     async with user_op_lock(uid):   # BIZ-05: یک عملیات پلن در لحظه برای هر کاربر
         u = get_user(uid); p = get_plan(pid)
         if not p or not p["is_free"] or u["free_used"]: await popup(update, context, tr(lang, "free_once")); return await view_plans(update, context)
+        # PH-01/FIN-005: کاربرِ دارای پلنِ پولیِ فعال نباید با پلنِ رایگان اعتبارش را
+        # از دست بدهد (پلنِ فعال عوض می‌شد و free_used هم مصرف می‌شد).
+        if admin_limits(uid)["active"]:
+            await popup(update, context, tr(lang, "plan_active_free")); return await view_plan(update, context, pid)
         # PHASE 4 (UISEC-10/SEC-04): claim اتمیک پیش از واگذاری — دو ضربهٔ هم‌زمان فقط یک‌بار برنده می‌شود
         from newsbot.core_plans import free_claim, free_release
         if not free_claim(uid): await popup(update, context, tr(lang, "free_once")); return await view_plans(update, context)
@@ -178,25 +199,22 @@ async def do_request(update, context, pid):
     qt = upgrade_quote(uid, p, cur, d["percent"] if d else None, lang=lang)
     if qt["blocked"]:
         await popup(update, context, tr(lang, "plan_downgrade")); return await view_plan(update, context, pid)
-    if not qt["payable_num"] and lim["active"] and lim["plan_id"] not in (None, 0) and lim["plan_id"] != pid:
-        # تعرفهٔ عددیِ هم‌زبان ثبت نشده؛ به‌جای مبلغ حدسی، خرید متوقف می‌شود (گارد سرور)
-        await popup(update, context, tr(lang, "plan_nonum")); return await view_plan(update, context, pid)
+    if not qt["payable_num"]:
+        # PH-01/Q-4c: پلنِ بدونِ تعرفهٔ عددی (قیمت توافقی) آنلاین خریداری نمی‌شود؛
+        # به‌جای ساختنِ رسیدِ بدونِ مبلغ، مشتری به پشتیبانی هدایت می‌شود.
+        await popup(update, context, tr(lang, "plan_negotiable")); return await view_plan(update, context, pid)
     # single source of truth: amount (number) and display (text) computed exactly once here;
     # the same amount persists to pay_requests.final_price at receipt time (no later overwrite)
-    amt = qt["payable"] if qt["payable_num"] else None
-    if amt is not None:
-        final_amount = str(amt)
-        # display به‌صورت متن خام ساخته می‌شود؛ محل‌های استفاده خودشان esc می‌کنند (نه دوباره‌esc)
-        if qt["kind"] == "upgrade" and cur:
-            b = [tr(lang, "plan_credit_line", name=plan_txt(cur, "name", lang), v=fmt_amt(qt["credit"], lang))]
-            if qt["used_balance"]: b.append(tr(lang, "plan_wallet_line", v=fmt_amt(qt["used_balance"], lang)))
-            display = (tr(lang, "plan_upg_display", v=fmt_amt(amt, lang), plan=plan_txt(p, "name", lang),
-                           days=round(qt["rem_days"]), cost=fmt_amt(qt["new_cost"], lang)) + "\n" + "\n".join(b))
-        else:
-            display = fmt_amt(amt, lang) + (("\n" + tr(lang, "plan_wallet_line", v=fmt_amt(qt["used_balance"], lang))) if qt["used_balance"] else "")
+    amt = qt["payable"]
+    final_amount = str(amt)
+    # display به‌صورت متن خام ساخته می‌شود؛ محل‌های استفاده خودشان esc می‌کنند (نه دوباره esc)
+    if qt["kind"] == "upgrade" and cur:
+        b = [tr(lang, "plan_credit_line", name=plan_txt(cur, "name", lang), v=fmt_amt(qt["credit"], lang))]
+        if qt["used_balance"]: b.append(tr(lang, "plan_wallet_line", v=fmt_amt(qt["used_balance"], lang)))
+        display = (tr(lang, "plan_upg_display", v=fmt_amt(amt, lang), plan=plan_txt(p, "name", lang),
+                       days=round(qt["rem_days"]), cost=fmt_amt(qt["new_cost"], lang)) + "\n" + "\n".join(b))
     else:
-        final_amount = new_price
-        display = new_price
+        display = fmt_amt(amt, lang) + (("\n" + tr(lang, "plan_wallet_line", v=fmt_amt(qt["used_balance"], lang))) if qt["used_balance"] else "")
     context.user_data["await"] = {"kind": "receipt", "pid": pid, "back": f"u:plan:{pid}", "disc": d["code"] if d else None,
                                   "final": final_amount, "display": display, "upgrade_amt": amt, "pc": qt, "ts": time.time()}
     await render(update, context, gtext("pay", lang, plan=esc(plan_txt(p, "name", lang)), price=esc(display)) + tr(lang, "receipt_hint"), [[B(tr(lang, "cancel"), "c:cancel")]])

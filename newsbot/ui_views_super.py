@@ -15,8 +15,9 @@ from newsbot.core_discounts import disc_list, disc_get, disc_valid
 from newsbot.core_channels import list_channels, mandatory_cfg
 from newsbot.core_sources import count_sources
 from newsbot.core_articles import count_articles
-from newsbot.core_payments import pay_pending, pay_get, pay_set, pay_approve_atomic, PayError
-from newsbot.core_referrals import credit_referral_on_payment, referral_cfg
+from newsbot.core_payments import (pay_pending, pay_get, pay_set, pay_approve_atomic, pay_mark_notified,
+                                   pay_unnotified, pay_approved_recent, PayError)
+from newsbot.core_referrals import referral_cfg
 from newsbot.secret_store import decrypt as decrypt_key   # SEC-09: نمایش ماسک‌شدهٔ کلید رمزنگاری‌شده
 from newsbot.ai_models import list_models, get_model
 from newsbot.text_format import strip_tags
@@ -43,6 +44,8 @@ async def view_health(update, context):
     models = list_models(); ok = sum(1 for m in models if m["active"] and m["status"] == "ok")
     try: pending = q("SELECT COUNT(*) c FROM pub_journal", one=True)["c"]
     except Exception: pending = 0
+    try: unnot = len(pay_unnotified(50))         # PH-01/OBS-014: پرداخت‌های تأییدشدهٔ اعلام‌نشده
+    except Exception: unnot = 0
     chans = q("SELECT COUNT(*) c FROM channels", one=True)["c"]; ready = q("SELECT COUNT(*) c FROM articles WHERE status='ready'", one=True)["c"]
     head = "🩺 <b>System health</b>" if not fa else "🩺 <b>سلامت سیستم</b>"
     # چیدمان مینیمال: هر سنجه یک خط، با فاصله بین گروه‌های مرتبط
@@ -57,6 +60,7 @@ async def view_health(update, context):
         f"\n\n📡 کانال‌های ثبت‌شده: {chans}"
         f"\n📥 موارد آماده در صف: {ready}"
         f"\n📌 موارد معلق ژورنال: {pending}"
+        f"\n🧾 پرداخت‌های تأییدشدهٔ اعلام‌نشده: {unnot}"
         f"\n\n🤖 وضعیت مدل‌های هوش مصنوعی: {ok}/{len(models)} سالم"
         f"\n\n💾 حجم دیتابیس: {size:.1f} MB"
         f"\n🧠 مصرف حافظهٔ فرایند: {rss_mb():.0f} MB"
@@ -235,6 +239,15 @@ async def view_s_pays(update, context):
     text = tr(lang, "s_pays_title") + ("".join(tr(lang, "s_pay_line", id=r["id"], who=esc(("@" + r["username"]) if r["username"] else (r["name"] or r["user_id"])), plan=esc(r["plan_name"]), price=esc(r["final_price"] or r["plan_price"]), t=r["created_at"][5:16]) for r in shown) or "\n" + tr(lang, "s_pay_none"))
     if hidden: text += tr(lang, "s_pays_more", n=hidden)
     kb = [[B(tr(lang, "s_pay_rc", id=r["id"]), f"s:pay_rc:{r['id']}"), B(tr(lang, "s_pay_ok"), f"s:pay_ok:{r['id']}:l"), B(tr(lang, "s_pay_no"), f"s:pay_no:{r['id']}:l")] for r in shown] + [[B(tr(lang, "back"), "s:home")]]
+    # PH-01/FIN-013: پرداخت‌های اخیرِ تأییدشده با دکمهٔ «بازگشتِ وجه»
+    done = pay_approved_recent(8)
+    if done:
+        text += "\n\n" + tr(lang, "s_pays_done_title")
+        for r in done:
+            text += tr(lang, "s_pay_line", id=r["id"], who=esc(("@" + r["username"]) if r["username"] else (r["name"] or r["user_id"])),
+                        plan=esc(r["plan_name"] or "—"), price=esc(r["final_price"] or "—"),
+                        t=(r["decided_at"] or r["created_at"] or "")[5:16])
+        kb = kb[:-1] + [[B(tr(lang, "s_pay_refund_btn", id=r["id"]), f"s:pay_refund:{r['id']}") for r in done[:4]]] + [kb[-1]]
     await render(update, context, text, kb)
 
 async def view_s_texts(update, context):
@@ -263,29 +276,33 @@ async def _decide_pay_locked(update, context, rid, approve, from_list, lang):
         pay_set(rid, "pending"); await popup(update, context, tr(lang, "notfound")); return await view_s_pays(update, context) if from_list else None
     if approve:
         # PHASE 4: claim + تخفیف + کیف پول/سابقه + واگذاری پلن + approved در یک تراکنش (PAY-1/DB-04).
-        # رول‌بک دستی حذف شد (DB-16): شکست در هر نقطه = رول‌بک کامل تراکنش؛ هیچ نیمه‌کاره‌ای باقی نمی‌ماند.
+        # PH-01: قیمت دوباره محاسبه و در صورت اختلافِ مؤثر، تأیید متوقف می‌شود (Q-2a)؛
+        # پاداشِ ارجاع هم درونِ همین تراکنش اعطا می‌شود (FIN-009) و اینجا فقط اعلام می‌گردد.
         try:
-            exp, queued = pay_approve_atomic(rid)
+            exp, queued, ref_reward = pay_approve_atomic(rid, by_uid=update.effective_user.id)
         except PayError as e:
-            await popup(update, context, tr(lang, "s_pay_seen" if e.code == "seen" else ("disc_exhausted" if e.code == "disc_exhausted" else "notfound")))
+            if e.code == "quote_stale":
+                await popup(update, context, tr(lang, "s_pay_stale"))
+            elif e.code == "disc_invalid":
+                await popup(update, context, tr(lang, "s_pay_disc_invalid"))
+            else:
+                await popup(update, context, tr(lang, "s_pay_seen" if e.code == "seen" else ("disc_exhausted" if e.code == "disc_exhausted" else "notfound")))
             return await view_s_pays(update, context) if from_list else None
         except Exception:
             log.exception("payment approval failed rid=%s uid=%s", rid, r["user_id"])
             await popup(update, context, tr(lang, "s_pay_seen")); return await view_s_pays(update, context) if from_list else None
-        # اعتبار ارجاع — اتمیک و idempotent (فقط ردیف credited=0 حرکت می‌کند)؛
-        # شکست آن هرگز پرداخت تأییدشده را خراب نمی‌کند.
-        try:
-            paid_num = None
-            try: paid_num = float(str(r["final_price"] or "").strip())
-            except (TypeError, ValueError): paid_num = None
-            if paid_num is None: paid_num = plan_num(p, ul)
-            res = credit_referral_on_payment(r["user_id"], paid_num, ref_key=f"pay:{rid}")   # REF-3: پاداش هر خرید (idempotent per-payment)
-            if res:   # معرف مطلع می‌شود: مبلغ دقیق واریزشده به کیف پول (با واحد زبان خودش)
-                ref_id, amt = res
+        # معرف مطلع می‌شود: مبلغ دقیقِ واریزشده به کیف پولِ **خودش** (با واحدِ خودش)
+        if ref_reward:
+            try:
+                ref_id, amt, ref_cur = ref_reward
                 rl = user_lang(ref_id) or "fa"
+                from newsbot.core_wallet import lang_of_currency
+                rl = lang_of_currency(ref_cur) or rl          # واحدِ پاداش = واحدِ پرداخت
                 await notify_user_fn(ref_id, tr(rl, "ref_reward", amount=fmt_amt(amt, rl)))
-        except Exception: log.exception("referral credit failed rid=%s", rid)
+            except Exception: log.exception("referral notify failed rid=%s", rid)
         await notify_user_fn(r["user_id"], tr(ul, "pay_approved", name=esc(plan_txt(p, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=fmt_date(exp, admin_offset(r["user_id"])))))
+        try: pay_mark_notified(rid)
+        except Exception: pass
         await popup(update, context, tr(lang, "s_pay_done_ok"))
     else:
         pay_set(rid, "rejected"); await notify_user_fn(r["user_id"], tr(ul, "pay_rejected")); await popup(update, context, tr(lang, "s_pay_done_no"))

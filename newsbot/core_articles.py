@@ -147,13 +147,24 @@ def settle_publication(aid, ch, journal):
     if journal.get("test_user") is not None: rate_mark(f"test:{ch['id']}")
 
 def recover_publications():
-    """بازیابی ژورنال‌های گیرکرده: ack → settle · بقیه → release (هرگز پست تکراری)."""
+    """بازیابی ژورنال‌های گیرکرده: ack → settle · بقیه → release (هرگز پست تکراری).
+
+    PH-03/PIPE-021: سطرِ ژورنال در فازِ ``unsettled`` یعنی «رهاسازی قبلاً انجام شده»؛
+    نوشتنِ دوباره‌اش هیچ اثری ندارد جز **بارِ نوشتن** (هر ۵ دقیقه، یک تراکنش به‌ازای هر
+    سطر). حالا چنین سطری دیگر بازنویسی نمی‌شود؛ اگر مقاله در حالتِ پایانی باشد
+    (failed/delivery_unknown) ⇒ سطر حذف می‌شود (انتشارِ دوباره از قبل با
+    ``soft_window_candidate`` ممنوع است ⇒ حذف، انتشارِ تکراری را باز نمی‌گرداند)."""
     for row in q("SELECT a.id,a.channel_id,a.reason,a.status FROM articles a JOIN pub_journal j ON j.article_id=a.id"):
         if ch_lock(row["channel_id"]).locked(): continue
         journal = get_pub_journal(row["id"])
         if not journal: continue
         try:
-            if journal.get("phase") == "ack":
+            phase = journal.get("phase")
+            if phase == "unsettled":
+                if row["status"] in ("failed", "published") or (row["reason"] or "") == "delivery_unknown":
+                    q("DELETE FROM pub_journal WHERE article_id=?", (row["id"],), commit=True)
+                continue
+            if phase == "ack":
                 ch = get_channel(row["channel_id"])
                 if ch: settle_publication(row["id"], ch, journal)
             else:
@@ -284,6 +295,22 @@ def cleanup():
         conn.execute("DELETE FROM usage WHERE day <?", ((now_utc() - timedelta(days=60)).strftime("%Y-%m-%d"),))
         conn.execute("DELETE FROM support_map WHERE ts <?", ((now_utc() - timedelta(days=7)).isoformat(),))
         conn.execute("DELETE FROM pay_requests WHERE status!='pending' AND COALESCE(decided_at, created_at) <?", ((now_utc() - timedelta(days=90)).isoformat(),))
+        # ── PH-03/DB-008: جدول‌هایی که بی‌حدّ رشد می‌کردند ────────────────────────────
+        # نشانگرهای idempotencyِ ارجاع («refpaid:pay:<id>») یک ردیف به‌ازای هر پرداختِ
+        # تأییدشده در settings می‌ساختند و هرگز پاک نمی‌شدند. نشانگر فقط تا وقتی لازم
+        # است که سطرِ پرداخت وجود داشته باشد (تأییدِ دوباره از روی سطرِ حذف‌شده ممکن
+        # نیست) ⇒ نشانگرِ بی‌پرداخت حذف می‌شود (پنجرهٔ replay باز نمی‌شود).
+        conn.execute("DELETE FROM settings WHERE key LIKE 'refpaid:pay:%' AND "
+                     "CAST(substr(key, length('refpaid:pay:')+1) AS INTEGER) NOT IN (SELECT id FROM pay_requests)")
+        # توکن‌های انتقالِ مالکیتِ کانال: منقضی‌شده یا مصرف‌شده ⇒ بی‌فایده.
+        conn.execute("DELETE FROM ch_tokens WHERE (expires_at IS NOT NULL AND expires_at < ?) OR "
+                     "(used_at IS NOT NULL AND used_at < ?)",
+                     (now_iso(), (now_utc() - timedelta(days=7)).isoformat()))
+        # آمارِ روزانهٔ مصرفِ AI (لاگِ تحلیلی) — ۹۰ روز کافی است.
+        conn.execute("DELETE FROM ai_usage WHERE day <?", ((now_utc() - timedelta(days=90)).strftime("%Y-%m-%d"),))
+        # اعلان‌های تحویل‌شده (PH-03/OBS-011) — ۳۰ روز نگهداری.
+        conn.execute("DELETE FROM notifications WHERE delivered_at IS NOT NULL AND delivered_at < ?",
+                     ((now_utc() - timedelta(days=30)).isoformat(),))
     _trx(_go)
     try: q("PRAGMA wal_checkpoint(TRUNCATE)")   # خارج از تراکنش (checkpoint داخل تراکنش معنا ندارد)
     except Exception: pass

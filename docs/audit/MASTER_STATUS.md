@@ -14,9 +14,9 @@
 | **Audit workspace** | `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (clean clone of `main` @ `08bc876`; audit docs written here) |
 | **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **1 CRITICAL** financial defect (now **reproduced**), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
 | **Audit completion** | **~94 %** (all 20 audit domains inspected; a second verification pass executed the FIN-001 reproduction and re-ran the suite; production runtime verification unavailable) |
-| **Current phase** | `PH-00` done → `PH-01`, `PH-02`, `PH-04`, `PH-08` **all implemented, awaiting merge** |
-| **Current phase status** | PR **#20** audit register · **#21** deploy environment · **#22** PH-01 money · **#23** PH-02 egress · **#24** PH-04 deploy safety · **#25** PH-08 AI budget — all open, all CI green, **none merged** |
-| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` (merge order: #20 → #22 → #23 → #24 → #25) |
+| **Current phase** | `PH-00` done → `PH-01`, `PH-02`, `PH-04`, `PH-08` merged → `PH-03` **implemented (PR #28), awaiting merge** |
+| **Current phase status** | PRs **#20**–**#27** merged (audit register, environment, money, egress, deploy safety, AI budget, ISO hotfix, D1 startup fix) · **#27** UI texts (open) · **#28** PH-03 payment/notification durability (open) |
+| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` (open PRs: #27 UI texts → #28 PH-03; then PH-05 → PH-06 → PH-07 → PH-09 → PH-10 → PH-11) |
 | **Owner approval required** | `true` |
 
 ---
@@ -29,10 +29,26 @@
 |---|---|
 | **نشانه** | پنل VPS (vyce.cloud): CPU روی ۱۰۰٪ به‌صورت دندانه‌ای؛ ربات کار نمی‌کند؛ سرور ~۴ ساعت قبل از اسکرین‌شات خاموش و ~۵۱ ثانیه قبلش روشن شده بود |
 | **رد شد (واقعیت، نه حدس)** | ۱) **کدِ من نیست:** `main` هنوز `08bc876` است و **هیچ‌کدام** از PRهای #20…#25 merge نشده‌اند ⇒ کدِ فازها هرگز به سرور نرسیده. ۲) **استقرارهای اخیر نیست:** اجراهای #42، #43 و #44 همگی در **۱۲ تا ۱۵ ثانیه** شکست خوردند، یعنی پیش از هر SSH/SCP ⇒ سرور اصلاً به‌روزرسانی نشد. |
-| **محتمل‌ترین علت** | **OPS-033**: مهاجرتِ یک‌بارهٔ کانُنیکال‌سازیِ زمان (`normalize_iso_columns`) روی دیتابیسِ بزرگ هرگز کامل نمی‌شد ⇒ `TimeoutStartSec=180` آن را می‌کشت ⇒ `Restart=always` دوباره بلندش می‌کرد ⇒ حلقهٔ ۱۰۰٪ CPU. دندانه‌ای بودنِ نمودار دقیقاً امضای همین حلقه است. |
+| **علتِ تأییدشده (۲۰۲۶-۱۰-۲۱، بعداً)** | **DB-27**: خطای بحرانیِ استارتاپ روی D1 — «`D1 HTTP 400 … duplicate column name: next_plan_id`» — یعنی برنامه در هر بار بالا آمدن می‌افتاد ⇒ با `Restart=always` **حلقهٔ ۱۰۰٪ CPU**. ریشه: `_table_cols()` روی D1 مجموعهٔ خالی برمی‌گرداند (PRAGMA در D1 no-op بود و خطای واقعی پنهان می‌شد) ⇒ migration ستونِ موجود را دوباره اضافه می‌کرد. اصلاح: **PR #26** (کامیت `3393596`، merge شده). |
 | **اصلاحِ کد** | **PR #26** (ادغام‌نشده): مهاجرت اکنون **بسته‌ای** (مصرف حافظهٔ کران‌دار)، **قابلِ ادامه** (checkpoint هر ستون، commit‌شده بیرون از تراکنشِ اسکیما) و drop-inِ systemd سقفِ ری‌استارت دارد ⇒ حلقهٔ بی‌پایان متوقف می‌شود. |
 | **اصلاحِ فوری روی سرور** | چون مسیرِ استقرار خودش خراب است (۱۳ ثانیه)، اصلاح باید **دستی** اعمال شود — دستورها در گزارشِ همین نوبت آمده است. |
 | **بازبینیِ صادقانه** | ممیزی همین مسیر را دیده بود و آن را **PERF-005 · LOW/P3** ثبت کرده بود. آن درجه‌بندی اشتباه بود: این یک ایرادِ دسترس‌پذیری است. PERF-005 بازدرجه‌بندی شد و OPS-033 به‌عنوان CRITICAL ثبت شد. |
+
+---
+
+## PH-03 (2026-10-21) — پایداریِ پرداخت و اعلان — **IMPLEMENTED (PR #28، ادغام‌نشده)**
+
+| یافته | چه چیزی درست شد |
+|---|---|
+| **UI-006** (HIGH/P0) | کپشنِ رسید با `header[:1000]` بریده می‌شد و برش **داخلِ تگ** می‌افتاد ⇒ تلگرام آن را رد می‌کرد ⇒ **هیچ مدیری رسید را نمی‌دید** و مشتری «رسید دریافت شد» می‌گفت. حالا: یادداشت در سطحِ فیلد به ۳۰۰ کاراکتر کوتاه، بقیه escape و متن با `fit_html` بسته می‌شود ⇒ HTML معتبر و ≤۱۰۲۴. ریشهٔ لایهٔ فرمت هم درست شد: `hard_html` سقفِ سخت را **واقعاً** رعایت می‌کرد (بستنِ تگ‌ها متن را بلندتر می‌کرد ⇒ ۱۰۲۹ > ۱۰۲۴). |
+| **UI-009** (HIGH/P1) | فرمِ «رسید» با یک ضربهٔ دکمهٔ دیگر پاک می‌شد ⇒ عکسِ رسید «ناشناخته» رد می‌شد. حالا `clear_interaction` فرمِ رسید را نگه می‌دارد و مشتری یادآوری می‌گیرد (`receipt_still_pending`). لغوِ صریح همچنان فرم را می‌بندد. |
+| **OBS-011** (HIGH/P1) | اعلانِ نرسیدهٔ مدیر کلان فقط در لاگ گم می‌شد و سرریزِ صف **دراپ** می‌شد. حالا جدولِ `notifications` (dead-letter) دارد: زمان‌بند با فاصلهٔ نمایی دوباره می‌فرستد، از سقفِ تلاش ⇒ «مرده» (نه حذف)، و شمارش در بخشِ سلامت دیده می‌شود. |
+| **OBS-013** (HIGH/P1) | رسیدی که هیچ مدیری ندیده بود یتیم می‌ماند ⇒ ستون‌های افزایشی `super_notified_at`/`notify_attempts` + اعلامِ دوباره در هر تیک + شمارنده در `/health`. |
+| **DB-008** (LOW/P3) | نشانگرهای idempotencyِ ارجاعِ یتیم، توکن‌های منقضیِ کانال، آمارِ AI و اعلان‌های تحویل‌شده پاک می‌شوند؛ نشانگرِ پرداختِ زنده می‌ماند (پنجرهٔ replay باز نمی‌شود)؛ دفترِ مالی عمداً دست‌نخورده است. |
+| **PIPE-021** (MEDIUM/P2) | سطرِ ژورنالِ `unsettled` در هر چرخهٔ بازیابی دوباره نوشته می‌شد (نوشتنِ بی‌پایان). حالا بازنویسی نمی‌شود و اگر مقاله پایانی باشد حذف می‌شود. |
+
+**اسکیما:** نسخهٔ ۹ (`super_notified_at`، `notify_attempts`، جدولِ `notifications` + دو ایندکس) — **افزایشی**؛ برگشتِ کد داده‌ای را خراب نمی‌کند.
+**تست‌ها:** ۲۰ تستِ تازه در `tests/test_ph03_payment_durability.py` · کلِ مجموعه **۵۹۲ passed** · pyflakes ساکت · `final_verification` ۱۷/۱۷.
 
 ## 1. Findings summary
 
@@ -43,13 +59,13 @@
 | MEDIUM | **79** |
 | LOW | **66** |
 | INFO | **12** |
-| **TOTAL** | **184** |
+| **TOTAL** | **185** |
 
 | Status | Count |
 |---|---|
-| OPEN | 158 |
-| FIXED_UNVERIFIED | 1 (OBS-007 — بخشِ «اتصال به پرداخت» رفع شد، هم‌ترازیِ نگه‌داری هنوز در PH-09 است) |
-| VERIFIED_FIXED | 20 (شامل ۱۶ یافتهٔ مالی، UI-017، TEST-005، OPS-028 و DOC-001) |
+| OPEN | 128 |
+| FIXED_UNVERIFIED | 3 (OBS-007 — بخشِ «اتصال به پرداخت» رفع شد، هم‌ترازیِ نگه‌داری هنوز در PH-09 است) |
+| VERIFIED_FIXED | 49 (شامل یافته‌های مالی، UI-017، TEST-005، OPS-028، DOC-001 و ۶ یافتهٔ PH-03) |
 | BLOCKED | 0 (رفعِ OPS-001 به خوانشِ تولید مسدود است) |
 | DEFERRED | 5 (SEC-003…SEC-006 + FIN-015) |
 | WONT_FIX | 0 |

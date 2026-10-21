@@ -176,7 +176,7 @@ def test_v6_schema_surface_and_migration():
     import newsbot
     from newsbot.db import REFERRAL_CREDIT_TRIGGER
     from tools.migrate_sqlite_to_d1 import TABLES
-    assert newsbot.SCHEMA_VERSION == 8, "PH-01: کیف پولِ واحد‌دار ⇒ نسخه ۸"
+    assert newsbot.SCHEMA_VERSION == 9, "PH-03: پایداریِ اعلان ⇒ نسخه ۹"
     assert "INSERT INTO credit_log" in REFERRAL_CREDIT_TRIGGER and "'referral'" in REFERRAL_CREDIT_TRIGGER
     assert "AFTER UPDATE OF credit_amount ON referrals" in REFERRAL_CREDIT_TRIGGER   # سازگاری v5⇒v6
     assert "DROP TRIGGER IF EXISTS trg_referral_credit_wallet" in _src("newsbot/db.py")

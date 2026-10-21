@@ -118,9 +118,9 @@
     "low": 66,
     "informational": 12,
     "total": 185,
-    "open": 134,
+    "open": 128,
     "fixed_unverified": 3,
-    "verified_fixed": 43,
+    "verified_fixed": 49,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0
@@ -210,9 +210,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
-      "phase": "PH-09",
-      "evidence_ref": "docs/audit/FINDINGS.md#db-008"
+      "status": "VERIFIED_FIXED",
+      "phase": "PH-03",
+      "evidence_ref": "docs/audit/FINDINGS.md#db-008",
+      "fix_applied": "پاک‌سازیِ دوره‌ای حالا نشانگرهای idempotencyِ ارجاعِ یتیم (``refpaid:pay:<id>`` که پرداختشان حذف شده)، توکن‌های منقضی/مصرف‌شدهٔ کانال، آمارِ روزانهٔ AI و اعلان‌های تحویل‌شده را پاک می‌کند. نشانگرِ پرداختِ زنده **نگه داشته می‌شود** (پنجرهٔ replay باز نمی‌شود). دفترِ مالی (``credit_log``/``plan_changes``) عمداً پاک نمی‌شود."
     },
     {
       "id": "DB-009",
@@ -789,9 +790,10 @@
       "priority": "P1",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-03",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-011"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-011",
+      "fix_applied": "اعلانِ نرسیدهٔ مدیر کلان **حذف نمی‌شود**: در جدولِ جدیدِ ``notifications`` ذخیره می‌شود (dead-letter)، زمان‌بند با فاصلهٔ نمایی دوباره می‌فرستد، و اگر از سقفِ تلاش گذشت سطر «مرده» می‌شود (نه حذف) تا در بخشِ سلامت دیده شود. سرریزِ صف هم به‌جای دراپ، به همین جدول می‌رود."
     },
     {
       "id": "OBS-012",
@@ -811,9 +813,10 @@
       "priority": "P1",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-03",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-013"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-013",
+      "fix_applied": "رسیدهایی که هیچ مدیر کلانی ندیده، دوباره اعلام می‌شوند: ستونِ ``super_notified_at`` + ``notify_attempts`` (افزایشی) و سرویسِ ``_renotify_payments`` در هر تیک. شمارِ «اعلام‌نشده به مدیر» در بخشِ سلامت نمایش داده می‌شود."
     },
     {
       "id": "OBS-014",
@@ -1547,9 +1550,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
-      "phase": "PH-09",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-021"
+      "status": "VERIFIED_FIXED",
+      "phase": "PH-03",
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-021",
+      "fix_applied": "بازیابیِ ژورنال، سطرِ ``unsettled`` را دیگر در هر چرخه بازنویسی نمی‌کند؛ اگر مقاله در حالتِ پایانی باشد (failed/delivery_unknown) سطر حذف می‌شود. انتشارِ تکراری ممکن نیست (``soft_window_candidate`` این مقاله‌ها را رد می‌کند)."
     },
     {
       "id": "PIPE-022",
@@ -2014,9 +2018,10 @@
       "priority": "P0",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-03",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-006"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-006",
+      "fix_applied": "کپشنِ رسید دیگر با برشِ ساده ساخته نمی‌شود: یادداشت در سطحِ فیلد به ۳۰۰ کاراکتر کوتاه، بقیه escape و متن با ``fit_html`` بسته می‌شود ⇒ **HTML معتبر و ≤۱۰۲۴**. ریشهٔ لایهٔ فرمت هم اصلاح شد (``hard_html`` سقفِ سخت را واقعاً رعایت می‌کند — بستنِ تگ‌ها متن را بلندتر می‌کرد و از سقف رد می‌شد). اگر هیچ مدیری نرسید ⇒ سطر «اعلام‌نشده» می‌ماند و مشتری صادقانه مطلع می‌شود."
     },
     {
       "id": "UI-007",
@@ -2047,9 +2052,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-03",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-009"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-009",
+      "fix_applied": "فرمِ «رسید» دیگر با یک ضربهٔ دکمهٔ دیگر پاک نمی‌شود (``clear_interaction`` آن را نگه می‌دارد) و مشتری یادآوری می‌گیرد که فرم باز است (``receipt_still_pending``). لغوِ صریح همچنان فرم را می‌بندد."
     },
     {
       "id": "UI-010",

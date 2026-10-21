@@ -75,12 +75,16 @@ def _recover_state():
     rollback_expired_benefits()   # BIZ-03: نقش ادمینِ پلنِ منقضی پایین می‌آید
 
 
-async def _renotify_payments():
+async def _renotify_payments(bot=None):
     """PH-01/FIN-021 — پرداخت‌های تأییدشده‌ای که مشتری هنوز مطلع نشده، دوباره اعلام می‌شوند.
 
     بدونِ این مسیر، یک خطای موقتِ تلگرام می‌توانست بگذارد مشتری پرداخت‌شده بی‌خبر بماند
-    (پول دریافت شده، پلن فعال، ولی هیچ اعلامی به مشتری نشده)."""
-    from newsbot.core_payments import pay_unnotified, pay_mark_notified
+    (پول دریافت شده، پلن فعال، ولی هیچ اعلامی به مشتری نشده).
+
+    PH-03/OBS-013 — علاوه بر آن، **رسیدهایی که هیچ مدیر کلانی ندیده** دوباره اعلام
+    می‌شوند (بدونِ این، یک رسیدِ پرداخت می‌توانست بی‌صدا در صف بماند و هرگز تأیید نشود)."""
+    from newsbot.core_payments import (pay_unnotified, pay_mark_notified, pay_unnotified_super,
+                                        pay_mark_super_notified, pay_mark_super_failed)
     from newsbot.core_plans import get_plan, plan_txt
     from newsbot.core_users import user_lang
     from newsbot.ui_widgets import notify_user_fn
@@ -95,6 +99,66 @@ async def _renotify_payments():
             await arun(pay_mark_notified, r["id"])
         except Exception as e:
             log_event("WARN", f"payment re-notify failed rid={r['id']}: {type(e).__name__}: {e}")
+    # ── OBS-013: رسیدِ «اعلام‌نشده به مدیر» ──────────────────────────────────────────
+    if bot is None: return
+    srows = await arun(pay_unnotified_super, 10)
+    for r in srows:
+        try:
+            await _notify_super_about_receipt(bot, r)
+            await arun(pay_mark_super_notified, r["id"])
+        except Exception as e:
+            await arun(pay_mark_super_failed, r["id"])
+            log_event("WARN", f"super re-notify failed rid={r['id']}: {type(e).__name__}: {e}")
+
+
+async def _notify_super_about_receipt(bot, r):
+    """PH-03/OBS-013 — رسید را دوباره به مدیران کلان می‌فرستد (عکس اگر باشد، وگرنه متن)."""
+    from telegram import InlineKeyboardMarkup
+    from newsbot.core_payments import pay_receipt_caption
+    from newsbot.core_plans import get_plan, plan_txt
+    from newsbot.core_users import user_lang
+    from newsbot.config import SUPER_ADMIN_IDS
+    from newsbot.ui_widgets import B
+    rid = r["id"]; p = await arun(get_plan, r["plan_id"])
+    p_price = p["price"] if p is not None and "price" in p.keys() else ""
+    price_txt = r["final_price"] or p_price or ""
+    kb = InlineKeyboardMarkup([[B("✅ تأیید / Approve", f"s:pay_ok:{rid}"), B("❌ رد / Reject", f"s:pay_no:{rid}")]])
+    last = None
+    for sid in SUPER_ADMIN_IDS:
+        sl = user_lang(sid) or "fa"
+        header = pay_receipt_caption(rid, "", r["user_id"], plan_txt(p, "name", sl) if p else "",
+                                     plan_txt(p, "price", sl) if p else "—", price_txt,
+                                     r["discount"], r["note"], sl)
+        try:
+            if r["receipt_chat"] and r["receipt_msg"]:
+                await bot.copy_message(sid, r["receipt_chat"], r["receipt_msg"], caption=header, parse_mode="HTML", reply_markup=kb)
+            else:
+                await bot.send_message(sid, header, parse_mode="HTML", reply_markup=kb)
+            return True
+        except Exception as e:
+            last = e
+    if last: raise last
+    return False
+
+
+async def _retry_alerts():
+    """PH-03/OBS-011 — اعلان‌های نرسیدهٔ مدیر کلان را دوباره می‌فرستد.
+
+    پیام‌هایی که از سقفِ تلاش گذشته‌اند «مرده» می‌شوند (نه حذف) تا در بخشِ سلامت دیده شوند."""
+    import json as _json
+    from newsbot.core_alerts import alert_pending, alert_mark_delivered, alert_mark_failed
+    from newsbot import runtime
+    if not runtime.NOTIFY_SUPER: return
+    for a in await arun(alert_pending, 10):
+        kb = None
+        try:
+            if a["payload"]:
+                kb = (_json.loads(a["payload"]) or {}).get("kb")
+            await runtime.NOTIFY_SUPER(a["text"], kb)
+            await arun(alert_mark_delivered, a["id"])
+        except Exception as e:
+            dead = await arun(alert_mark_failed, a["id"], str(e))
+            log_event("ERROR" if dead else "WARN", f"alert re-notify failed id={a['id']}: {type(e).__name__}: {e}")
 
 async def scheduler_tick(bot):
     if _tick_lock.locked(): return
@@ -108,8 +172,10 @@ async def scheduler_tick(bot):
         except Exception as e: log_event("ERROR", f"publication recovery: {e}")
         try: await probe_down_models()
         except Exception as e: log_event("WARN", f"probe_down_models failed: {type(e).__name__}: {e}")
-        try: await _renotify_payments()
+        try: await _renotify_payments(bot)
         except Exception as e: log_event("ERROR", f"payment re-notify failed: {e}")
+        try: await _retry_alerts()
+        except Exception as e: log_event("ERROR", f"alert re-notify failed: {e}")
         try: await _plan_notifications()
         except Exception as e: log_event("ERROR", f"plan notifications: {e}")
         if not await arun(gget, "automation_enabled", True): return

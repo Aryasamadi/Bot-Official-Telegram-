@@ -174,10 +174,14 @@ def tariff(p, lang="fa"):
     return amt, currency_of(lang)
 
 def fmt_amt(v, lang="fa"):
-    """نمایش مبلغ با واحد زبان کاربر: fa → «3000000 تومان» · en → «$30» (بدون نماد علمی)."""
+    """نمایش مبلغ با واحد زبان کاربر: fa → «3000000 تومان» · en → «$30» (بدون نماد علمی).
+
+    PH-05/UI-018: بازهٔ عددی/لاتین داخلِ متنِ راست‌به‌چپ با نشانه‌های جهت جداسازی
+    می‌آید تا «۳۰۰۰۰۰۰ تومان» جابه‌جا دیده نشود."""
     x = float(v or 0)
     s = str(int(x)) if x == int(x) else f"{x:.2f}"
-    return (s + " تومان") if lang == "fa" else ("$" + s)
+    from newsbot.ui_i18n import ltr
+    return ltr(s + " تومان") if lang == "fa" else ltr("$" + s)
 
 def _fmt_price(v): return fmt_amt(v, "en")
 

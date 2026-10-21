@@ -14,9 +14,9 @@
 | **Audit workspace** | `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (clean clone of `main` @ `08bc876`; audit docs written here) |
 | **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **1 CRITICAL** financial defect (now **reproduced**), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
 | **Audit completion** | **~94 %** (all 20 audit domains inspected; a second verification pass executed the FIN-001 reproduction and re-ran the suite; production runtime verification unavailable) |
-| **Current phase** | `PH-00` done → `PH-01`, `PH-02`, `PH-04`, `PH-08` merged → `PH-03` **implemented (PR #28), awaiting merge** |
-| **Current phase status** | PRs **#20**–**#27** merged (audit register, environment, money, egress, deploy safety, AI budget, ISO hotfix, D1 startup fix) · **#27** UI texts (open) · **#28** PH-03 payment/notification durability (open) |
-| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` (open PRs: #27 UI texts → #28 PH-03; then PH-05 → PH-06 → PH-07 → PH-09 → PH-10 → PH-11) |
+| **Current phase** | `PH-00`→`PH-08` merged → `PH-03` merged → `PH-05` **implemented (PR #32), awaiting merge** |
+| **Current phase status** | PRs #20–#31 merged · **#32** PH-05 UI/UX integrity (open) |
+| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` (open: #31 D1 schema ordering → #32 PH-05; then PH-06 → PH-07 → PH-09 → PH-10 → PH-11) |
 | **Owner approval required** | `true` |
 
 ---
@@ -50,6 +50,24 @@
 **اسکیما:** نسخهٔ ۹ (`super_notified_at`، `notify_attempts`، جدولِ `notifications` + دو ایندکس) — **افزایشی**؛ برگشتِ کد داده‌ای را خراب نمی‌کند.
 **تست‌ها:** ۲۰ تستِ تازه در `tests/test_ph03_payment_durability.py` · کلِ مجموعه **۵۹۲ passed** · pyflakes ساکت · `final_verification` ۱۷/۱۷.
 
+---
+
+## PH-05 (2026-10-21) — یکپارچگیِ رابطِ کاربری و مسیرِ مشتری — **IMPLEMENTED (PR #32، ادغام‌نشده)**
+
+| گروه | چه چیزی درست شد |
+|---|---|
+| **UI-005** (HIGH) | `split_html` دیگر تکهٔ خالی یا بیش‌ازحد نمی‌دهد (پیش از این «نسخهٔ کاملِ مطلب» و دیپ‌لینک‌ها می‌توانستند کاملاً شکست بخورند) |
+| **UI-008** (HIGH) | برچسبِ دکمه هم سقف دارد ⇒ نامِ ۱۰۰کاراکتریِ پلن دیگر کلِ صفحهٔ خرید را نمی‌شکند |
+| **UI-011** (HIGH) | هر کنشِ ویرانگرِ سوپرادمین لاگِ ممیزی می‌نویسد (۲۸ یافته در مجموع) |
+| **UI-012** | `s:auto`، `s:plan_free` و `s:uassign` تأییدِ دومرحله‌ای می‌خواهند |
+| **UI-001/002** | شش کلیدِ i18nِ گمشده اضافه شد؛ نشانگرهای لفظی صریح شدند؛ تست، هر فراخوانیِ `tr` را می‌سنجد |
+| **UI-014** | صفحهٔ خانهٔ کاربر حالا پشتیبانی/دعوت/راهنما/زبان را دارد (مسیرِ `u:ref` پیش از این غیرقابل‌دسترس بود) |
+| **UI-007** | فهرستِ منابع/دسته/معیار صفحه‌بندی شد (سقفِ کیبوردِ تلگرام) |
+| **UI-003/004/010/016/018/019/020/021/022/023/025/026** | بازخوردِ دکمه‌ها، پاسخِ فوری برای مسیرهای کند، هشدارِ فرمِ دورریخته، ترجمهٔ خطاهای انتشار، جداسازیِ جهتِ مبلغ، توضیحِ درستِ انگلیسی، بازگشتِ صفحه‌بندی، حالت‌های خالی، سقفِ برچسب و آستانهٔ پاپ‌آپ |
+| **SEC-008/009/014/015/016، FIN-020** | توکنِ انتقال دوباره استفاده می‌شود + نرخ‌محدودسازی؛ callbackِ دست‌ساز «پیدا نشد» می‌دهد؛ `s:txtr2` اعتبارسنجی می‌شود؛ حذفِ مدلِ شخصی یکسان شد؛ کلیدِ API در نمایش پوشانده می‌شود؛ `s:plan_free` فقط پلنِ هدف را علامت می‌زند |
+
+**تست‌ها:** ۱۷ تستِ تازه در `tests/test_ph05_ui_integrity.py` — دقیقاً همان نُه تستی که نقشهٔ فاز PH-05 خواسته بود · کلِ مجموعه **۶۱۵ passed** · pyflakes ساکت · `final_verification` ۱۷/۱۷.
+
 ## 1. Findings summary
 
 | Severity | Count |
@@ -63,9 +81,9 @@
 
 | Status | Count |
 |---|---|
-| OPEN | 128 |
+| OPEN | 100 |
 | FIXED_UNVERIFIED | 3 (OBS-007 — بخشِ «اتصال به پرداخت» رفع شد، هم‌ترازیِ نگه‌داری هنوز در PH-09 است) |
-| VERIFIED_FIXED | 49 (شامل یافته‌های مالی، UI-017، TEST-005، OPS-028، DOC-001 و ۶ یافتهٔ PH-03) |
+| VERIFIED_FIXED | 77 (شامل یافته‌های مالی، UI-017، TEST-005، OPS-028، DOC-001، ۶ یافتهٔ PH-03 و ۲۸ یافتهٔ PH-05) |
 | BLOCKED | 0 (رفعِ OPS-001 به خوانشِ تولید مسدود است) |
 | DEFERRED | 5 (SEC-003…SEC-006 + FIN-015) |
 | WONT_FIX | 0 |

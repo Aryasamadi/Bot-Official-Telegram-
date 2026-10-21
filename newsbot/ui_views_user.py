@@ -19,7 +19,11 @@ from newsbot.ui_widgets import B, U, esc, render, popup, pairs, L, uname
 from newsbot.ui_views_admin import view_admin_home
 
 
-async def view_lang(update, context): await render(update, context, tr("fa", "choose_lang"), [[B("🇮🇷 فارسی", "lang:fa"), B("🇬🇧 English", "lang:en")]])
+async def view_lang(update, context):
+    """انتخاب زبان — با دکمهٔ بازگشت (PH-05/UI-024: پیش از این، کاربر برای خروج مجبور بود زبان انتخاب کند)."""
+    await render(update, context, tr("fa", "choose_lang"),
+                  [[B("🇮🇷 فارسی", "lang:fa"), B("🇬🇧 English", "lang:en")],
+                   [B(tr(L(update), "back"), "home")]])
 
 async def set_language(update, context, lang):
     """تغییر زبان صفر تا صد: زبانِ رابط، و در همه‌ی کانال‌ها پرامپت پیش‌فرض و متن‌های پیش‌فرضِ محتوا/گزارش هم به زبان تازه بازنویسی می‌شوند (فقط آن‌هایی که مدیر دستی عوض نکرده)."""
@@ -33,8 +37,16 @@ async def go_home_safe(update, context):
     await go_home(update, context)
 
 async def view_user_home(update, context):
+    """صفحهٔ خانهٔ کاربر.
+
+    PH-05/UI-014: پیش از این فقط **یک** دکمه (پلن‌ها) بود و مسیرِ دعوت (``u:ref``) از هیچ
+    صفحه‌ای قابل‌دسترس نبود ⇒ مشتریِ غیرفنی نمی‌توانست پشتیبانی/دعوت/راهنما/زبان را
+    پیدا کند (کاربر باید فرمان‌ها را از حفظ می‌دانست)."""
     lang = L(update); u = update.effective_user
-    text = gtext("welcome", lang, name=esc(u.first_name)); kb = [[B(tr(lang, "plans_btn"), "u:plans")]]
+    text = gtext("welcome", lang, name=esc(u.first_name))
+    kb = [[B(tr(lang, "plans_btn"), "u:plans")],
+          [B(tr(lang, "sup_btn"), "u:man"), B(tr(lang, "ref_btn"), "u:ref")],
+          [B(tr(lang, "help_btn"), "u:help"), B(tr(lang, "lang_btn"), "u:lang")]]
     # کانال اجباریِ همین زبان: کاربر آن را می‌بیند، عضو می‌شود و عضویتش را بررسی می‌کند
     if mandatory_configured(lang):
         ok, join = await mandatory_membership(context.bot, u.id, lang)
@@ -44,38 +56,19 @@ async def view_user_home(update, context):
     await render(update, context, text, kb)
 
 def _referral_message(link, lang, percent):
-    """یک متن واحد برای مسیر عادی و fallback؛ درصد همیشه از تنظیمات زنده می‌آید."""
-    if lang == "en":
-        reward_line = (
-            f"Invite your friends and earn <b>{percent:g}% credit on all their eligible purchases!</b> 💎"
-            if percent is not None else
-            "Invite your friends; the reward rate follows the administrator's current settings. 💎"
-        )
-        return f"""🤝 <b>Invite friends and earn credit!</b> 🎁
+    """متنِ صفحهٔ دعوت.
 
-{reward_line}
-
-💰 Every purchase they make can add more credit for your own purchases in the bot, helping you save money.
-
-🔗 <b>Your personal invite link:</b>
-{link}
-
-🚀 Share your link now; the more friends you invite who make purchases, the more opportunities you have to earn credit!"""
-    reward_line = (
-        f"دوستاتو به ربات دعوت کن و از <b>تمام خریدهای واجد شرایط اون‌ها، {percent:g}% اعتبار پاداش بگیر!</b> 💎"
-        if percent is not None else
-        "دوستاتو به ربات دعوت کن؛ <b>میزان پاداش بر اساس درصد تنظیم‌شده در پنل مدیر</b> محاسبه می‌شود. 💎"
-    )
-    return f"""🤝 <b>با دعوت دوستانت، اعتبار کسب کن!</b> 🎁
-
-{reward_line}
-
-💰 هر خرید دوستات می‌تونه اعتبار بیشتری برات بسازه؛ اعتباری که می‌تونی برای خریدهای خودت در ربات استفاده کنی و در هزینه‌هات صرفه‌جویی کنی.
-
-🔗 <b>لینک اختصاصی دعوت تو:</b>
-{link}
-
-🚀 همین حالا لینکت رو برای دوستات بفرست؛ هرچه دوستان بیشتری دعوت کنی و خرید کنند، فرصت بیشتری برای جمع‌آوری اعتبار خواهی داشت!"""
+    PH-05/UI-015: این متن **سخت‌کد** بود و کلیدهای ``ref_title``/``ref_how``/``ref_link``/
+    ``ref_line``/``ref_cap_line`` بی‌استفاده بودند ⇒ صفحهٔ دعوت قابل‌ویرایش و قابل‌محلی‌سازی
+    نبود. حالا متن از همان کلیدهای i18n خوانده می‌شود (و درصد از تنظیمات زنده می‌آید)."""
+    from newsbot.ui_i18n import TXT
+    p = "" if percent is None else ("%g" % percent)
+    def t(key, **kw):
+        s = TXT[key][1 if lang == "en" else 0]
+        try: return s.format(**kw)
+        except Exception: return s
+    reward = t("ref_how", p=p) if p else t("ref_how_nopct")
+    return t("ref_title") + reward + "\n\n🔗 " + t("ref_link", link=link).strip()
 
 
 async def view_referral(update, context):
@@ -139,7 +132,7 @@ async def view_plan(update, context, pid):
     text = f"{'🎁' if p['is_free'] else '⭐'} <b>{esc(plan_txt(p, 'name', lang))}</b>\n{esc(plan_txt(p, 'description', lang))}\n\n" + tr(lang, "plan_details", days=p["days"], posts=p["daily_posts"], src=p["max_sources"], ch=p["max_channels"], tests=p["daily_tests"], price=esc(price_line))
     if qt["payable_num"] and d: text += "\n" + tr(lang, "plan_disc_line", old=esc(old_price), new=esc(price_line), code=esc(d["code"]), p=d["percent"])
     kb = []; can_buy = True
-    if p["is_free"]: kb.append([B(tr(lang, "plan_free_used"), "noop") if u and u["free_used"] else B(tr(lang, "plan_free_btn"), f"u:free:{pid}")])
+    if p["is_free"]: kb.append([B(tr(lang, "plan_free_used"), f"u:freeused:{pid}") if u and u["free_used"] else B(tr(lang, "plan_free_btn"), f"u:free:{pid}")])
     else:
         u_active = lim["active"] and lim["plan_id"] not in (None, 0)
         if qt["payable_num"]:
@@ -158,9 +151,9 @@ async def view_plan(update, context, pid):
             text += "\n\n" + tr(lang, "plan_negotiable")
         elif qt["blocked"]:
             can_buy = False
-    if pay_pending_for(uid, pid): kb.append([B(tr(lang, "plan_pending_btn"), "noop")])
+    if pay_pending_for(uid, pid): kb.append([B(tr(lang, "plan_pending_btn"), f"u:pending:{pid}")])   # PH-05/UI-003
     elif can_buy: kb.append([B(tr(lang, "plan_renew_btn" if lim["plan_id"] == pid and lim["active"] else "plan_req_btn"), f"u:req:{pid}"), B(tr(lang, "disc_remove") if d else tr(lang, "disc_btn"), f"u:disc{'x' if d else ''}:{pid}")])
-    else: kb.append([B(tr(lang, "plan_locked_btn"), "noop")])
+    else: kb.append([B(tr(lang, "plan_locked_btn"), f"u:locked:{pid}")])   # PH-05/UI-003
     kb.append([B(tr(lang, "back"), "u:plans")]); await render(update, context, text, kb)
 
 async def do_free(update, context, pid):

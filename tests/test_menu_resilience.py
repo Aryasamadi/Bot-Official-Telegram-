@@ -149,12 +149,12 @@ def test_ref_displays_full_copy_and_live_admin_percent():
 
     assert bot.sent, "متن دعوت باید ارسال شود"
     sent = "\n".join(bot.sent)
-    assert "با دعوت دوستانت، اعتبار کسب کن!" in sent
-    assert "تمام خریدهای واجد شرایط اون‌ها، 17.5% اعتبار پاداش بگیر!" in sent
-    assert "هر خرید دوستات می‌تونه اعتبار بیشتری برات بسازه" in sent
-    assert "لینک اختصاصی دعوت تو:" in sent
+    assert "دوستانتان را دعوت کنید و اعتبار بگیرید" in sent
+    assert "از هر خرید موفق آن‌ها، <b>17.5٪</b> مبلغ به کیف پول شما اضافه می‌شود" in sent
+    assert "از این اعتبار می‌توانید برای خریدهای بعدی خود استفاده کنید" in sent
+    assert "لینک اختصاصی دعوت شما:" in sent
     assert "ref_7800" in sent
-    assert "فرصت بیشتری برای جمع‌آوری اعتبار خواهی داشت" in sent
+    assert "همین حالا لینک را برای دوستانتان بفرستید" in sent
 
 
 def test_ref_fallback_keeps_the_full_message_when_render_raises():
@@ -184,10 +184,10 @@ def test_ref_fallback_keeps_the_full_message_when_render_raises():
 
     assert bot.sent, "fallback باید پیام بفرستد"
     sent = "\n".join(bot.sent)
-    assert "با دعوت دوستانت، اعتبار کسب کن!" in sent
-    assert "تمام خریدهای واجد شرایط اون‌ها، 12.5% اعتبار پاداش بگیر!" in sent
-    assert "لینک اختصاصی دعوت تو:" in sent and "ref_7801" in sent
-    assert "فرصت بیشتری برای جمع‌آوری اعتبار خواهی داشت" in sent
+    assert "دوستانتان را دعوت کنید و اعتبار بگیرید" in sent
+    assert "از هر خرید موفق آن‌ها، <b>12.5٪</b> مبلغ به کیف پول شما اضافه می‌شود" in sent
+    assert "لینک اختصاصی دعوت شما:" in sent and "ref_7801" in sent
+    assert "همین حالا لینک را برای دوستانتان بفرستید" in sent
 
 
 def test_ref_cfg_failure_still_delivers_link_and_full_copy():
@@ -214,9 +214,9 @@ def test_ref_cfg_failure_still_delivers_link_and_full_copy():
 
     assert bot.sent, "حتی با خطای تنظیمات باید پیام برود"
     sent = "\n".join(bot.sent)
-    assert "با دعوت دوستانت، اعتبار کسب کن!" in sent
-    assert "درصد تنظیم‌شده در پنل مدیر" in sent
-    assert "لینک اختصاصی دعوت تو:" in sent and "ref_7802" in sent
+    assert "دوستانتان را دعوت کنید و اعتبار بگیرید" in sent
+    assert "میزانِ اعتبار به درصدِ تنظیم‌شده در پنل مدیر بستگی دارد" in sent
+    assert "لینک اختصاصی دعوت شما:" in sent and "ref_7802" in sent
 
 
 # ══════════════════════════════════════════════════════════════════════════

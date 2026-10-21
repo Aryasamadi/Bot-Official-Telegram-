@@ -171,15 +171,16 @@ def test_free_claim_cas_only_once():
 
 
 # ── DB-15: توکن انتقال / بازگردانی مالکیت اتمیک ──
-def test_transfer_token_single_active_and_revert_clears():
+def test_transfer_token_is_reused_while_valid_and_cleared_on_revert():
+    """PH-05/SEC-008: توکنِ معتبرِ مصرف‌نشده **دوباره استفاده** می‌شود (تلاشِ مکررِ یک
+    هم‌ادمین نباید توکنِ در انتظارِ مالک را باطل کند)؛ با بازگشتِ مالکیت پاک می‌شود."""
     from newsbot.core_channels import issue_transfer_token, revert_channel_owner, check_transfer_token
     q("INSERT OR IGNORE INTO channels(id,chat_id,title,username,admin_id,verified_by,created_at,settings) VALUES(?,?,?,?,?,?,?,?)",
       (-9001, -1009001, "CH", "ch9001", 5001, 5001, now_iso(), "{}"), commit=True)
     t1 = issue_transfer_token(-9001, 5001)
-    t2 = issue_transfer_token(-9001, 5001)     # باطل‌سازی t1 در همان تراکنشِ صدور t2
-    assert t1 and t2 and t1 != t2
-    assert check_transfer_token(-9001, t1) is None      # توکن قدیمی فعال نیست
-    assert check_transfer_token(-9001, t2) is not None
+    t2 = issue_transfer_token(-9001, 5001)     # توکنِ معتبر ⇒ همان توکن دوباره برگردانده می‌شود
+    assert t1 and t2 and t1 == t2
+    assert check_transfer_token(-9001, t1) is not None      # توکن هنوز معتبر است
     old = revert_channel_owner(-9001, 6001)
     assert old == 5001
     assert check_transfer_token(-9001, t2) is None      # همهٔ توکن‌ها با مالکیت پاک شدند

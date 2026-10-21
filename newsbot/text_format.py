@@ -275,15 +275,58 @@ def finish_ok(t):
     if re.search(r"[\w؀-ۿ،,؛:\u200c\u200d]$", e): return t.rstrip() + " …"
     return t
 
+def _hard_split(text, limit):
+    """یک تکهٔ خیلی بلند را به تکه‌های معتبر می‌شکند (UI-005).
+
+    هر تکه HTML معتبر و ≤ limit است و **محتوا حذف نمی‌شود** (برخلافِ یک برشِ ساده)."""
+    out = []
+    rest = text or ""
+    step = limit
+    guard = 0
+    while rest and guard < 4000:
+        guard += 1
+        if len(rest) <= limit:
+            s = sanitize_html(rest)
+            if len(s) <= limit:
+                out.append(s); break
+            # escape کردن طول را زیاد کرد ⇒ تکه را کوچک‌تر می‌کنیم و دوباره می‌سنجیم
+            rest = rest[:max(1, int(len(rest) * limit / len(s) * 0.9))]
+            continue
+        if step > limit: step = limit
+        s = sanitize_html(rest[:step])
+        if len(s) > limit:
+            step = max(1, int(step * limit / len(s) * 0.9))   # گامِ کوچک‌تر **باید بماند**
+            continue
+        out.append(s); rest = rest[step:]
+    return [c for c in out if c.strip()]
+
+
 def split_html(text, limit=None):
+    """متن را به تکه‌های معتبرِ تلگرام می‌شکند.
+
+    PH-05/UI-005: پیش از این، یک پاراگرافِ بلند ** intact** بیرون می‌آمد (بیش از حدِ
+    تلگرام ⇒ «message is too long») و تکهٔ خالی هم بیرون می‌آمد (⇒ «MESSAGE_TEXT_EMPTY»).
+    حالا: هیچ تکه‌ای خالی نیست و هیچ تکه‌ای از limit رد نمی‌شود."""
     limit = limit or config.MSG_LIMIT
+    text = text or ""
+    if not text.strip(): return []
     if len(text) <= limit: return [text]
     chunks, cur = [], ""
     for para in text.split("\n"):
-        if len(cur) + len(para) + 1 > limit: chunks.append(sanitize_html(cur)); cur = para
-        else: cur = f"{cur}\n{para}" if cur else para
+        if len(para) > limit:            # پاراگرافِ بلند ⇒ جدا و با برشِ سخت شکسته می‌شود
+            if cur: chunks.append(sanitize_html(cur)); cur = ""
+            chunks.extend(_hard_split(para, limit))
+            continue
+        if cur and len(cur) + len(para) + 1 > limit:
+            chunks.append(sanitize_html(cur)); cur = para
+        else:
+            cur = f"{cur}\n{para}" if cur else para
     if cur: chunks.append(sanitize_html(cur))
-    return chunks
+    out = []
+    for c in chunks:
+        if len(c) <= limit: out.append(c)
+        else: out.extend(_hard_split(c, limit))     # escape می‌تواند از سقف رد کند
+    return [c for c in out if c.strip()]
 
 def preview_text(html_text, n=100):
     t = re.sub(r"\s+", " ", strip_tags(html_text).replace("\n", " ")).strip()

@@ -118,9 +118,9 @@
     "low": 66,
     "informational": 12,
     "total": 185,
-    "open": 128,
+    "open": 100,
     "fixed_unverified": 3,
-    "verified_fixed": 49,
+    "verified_fixed": 77,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0
@@ -514,9 +514,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-020"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-020",
+      "fix_applied": "``s:plan_free`` فقط **همان** پلن را علامت می‌زند (``UPDATE plans SET is_free=0 WHERE id<>?``) ⇒ پلنِ رایگانِ پایه به یک پلنِ پولی تبدیل نمی‌شود و اگر پلنِ دیگری انتخاب شود، باز هم یک پلنِ رایگان باقی می‌ماند."
     },
     {
       "id": "FIN-021",
@@ -1708,9 +1709,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#sec-008"
+      "evidence_ref": "docs/audit/FINDINGS.md#sec-008",
+      "fix_applied": "توکنِ انتقالِ مالکیتِ کانال، اگر معتبر و مصرف‌نشده باشد **دوباره استفاده** می‌شود (تلاشِ مکررِ یک هم‌ادمین دیگر توکنِ مالک را باطل نمی‌کند) + نرخ‌محدودسازیِ ۶۰ثانیه‌ای روی هر کانال."
     },
     {
       "id": "SEC-009",
@@ -1719,9 +1721,10 @@
       "priority": "P3",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#sec-009"
+      "evidence_ref": "docs/audit/FINDINGS.md#sec-009",
+      "fix_applied": "callback_data دست‌ساز دیگر stack trace در ژورنال نمی‌نویسد: ``ValueError`` در روتر به «پیدا نشد» تبدیل می‌شود و فقط یک هشدارِ کوتاه در ژورنال می‌ماند."
     },
     {
       "id": "SEC-010",
@@ -1775,9 +1778,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#sec-014"
+      "evidence_ref": "docs/audit/FINDINGS.md#sec-014",
+      "fix_applied": "``s:txtr2`` فقط کلیدهای معتبر (``TEXT_KEYS``) و زبان‌های معتبر (``config.LANGS``) را می‌نویسد ⇒ سطرِ بی‌ربط در settings ساخته نمی‌شود."
     },
     {
       "id": "SEC-015",
@@ -1786,9 +1790,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#sec-015"
+      "evidence_ref": "docs/audit/FINDINGS.md#sec-015",
+      "fix_applied": "قاعدهٔ حذفِ مدلِ شخصی یکسان شد: فقط مالک (سوپرادمین هم اجازهٔ حذفِ مدلِ شخصیِ دیگران را ندارد؛ حذفِ مدلِ عمومی از ``s:model_d2`` است)."
     },
     {
       "id": "SEC-016",
@@ -1797,9 +1802,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#sec-016"
+      "evidence_ref": "docs/audit/FINDINGS.md#sec-016",
+      "fix_applied": "کلیدِ API که داخلِ URL جاسازی شده، در **نمایش** پوشانده می‌شود (``?key=…`` ⇒ ``?key=***``)؛ دادهٔ ذخیره‌شده دست‌نخورده می‌ماند."
     },
     {
       "id": "TEST-001",
@@ -1963,9 +1969,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-001"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-001",
+      "fix_applied": "شش کلیدِ گمشده (``s_users_w``، ``s_admins_w``، ``s_prev``، ``s_next``، ``s_model_add``، ``s_models_test``) به دیکشنری اضافه شدند + تستی که هر ``tr(lang,\"X\")``ِ لفظی را در برابرِ ``TXT`` بررسی می‌کند."
     },
     {
       "id": "UI-002",
@@ -1974,9 +1981,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-002"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-002",
+      "fix_applied": "هر فراخوانیِ ``tr`` باید همهٔ placeholderهای کلیدش را پر کند (تستِ خودکار)؛ نشانگرهای **لفظی** (``{{key}}``، ``{{name}}``) صریح شدند و قالب همیشه اعمال می‌شود ⇒ دیگر «{name}» حل‌نشده دیده نمی‌شود."
     },
     {
       "id": "UI-003",
@@ -1985,9 +1993,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-003"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-003",
+      "fix_applied": "دکمه‌های «کاری‌نکن» (``noop``) به مسیرهای واقعی (``u:pending``، ``u:locked``، ``u:freeused``) تبدیل شدند که یک پیامِ روشن می‌دهند."
     },
     {
       "id": "UI-004",
@@ -1996,9 +2005,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-004"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-004",
+      "fix_applied": "مسیرهای کند (``s:bc_go``، ``a:srcr``، ``a:pub``، ``s:model_test``، ``a:myai_t``، ``a:artf``، ``s:models_test``) حالا **فوراً** به کاربر پاسخ می‌دهند ⇒ اسپینرِ دکمه دقیقه‌ها نمی‌ماند."
     },
     {
       "id": "UI-005",
@@ -2007,9 +2017,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-005"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-005",
+      "fix_applied": "``split_html`` دیگر تکهٔ خالی یا تکهٔ بیش‌ازحد نمی‌دهد: پاراگرافِ بلند با برشِ سخت شکسته می‌شود، محتوا حذف نمی‌شود و هر تکه HTML معتبر و ≤ سقف است (property test روی طول‌های ۰..۲۰۰۰۰)."
     },
     {
       "id": "UI-006",
@@ -2030,9 +2041,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-007"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-007",
+      "fix_applied": "فهرستِ منابع، دسته‌ها و معیارها **صفحه‌بندی** شد (۱۵ در هر صفحه) ⇒ markup از حدِ تلگرام رد نمی‌شود."
     },
     {
       "id": "UI-008",
@@ -2041,9 +2053,10 @@
       "priority": "P1",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-008"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-008",
+      "fix_applied": "برچسبِ دکمه هم (نه فقط ``callback_data``) سقفِ ۶۴ کاراکتری دارد ⇒ نامِ ۱۰۰کاراکتریِ پلن دیگر کلِ صفحهٔ خرید را نمی‌شکند."
     },
     {
       "id": "UI-009",
@@ -2064,9 +2077,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-010"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-010",
+      "fix_applied": "اگر ضربهٔ دکمه، فرمِ در حالِ تکمیلِ کاربر را دور بریزد، حالا **هشدار** داده می‌شود (پیش از این بی‌صدا بود). فرمِ رسیدِ پرداخت (PH-03) باز می‌ماند."
     },
     {
       "id": "UI-011",
@@ -2075,9 +2089,10 @@
       "priority": "P1",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-011"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-011",
+      "fix_applied": "هر شاخهٔ ویرانگرِ سوپرادمین یک ``log_event(..., uid)`` با شناسهٔ شیء می‌نویسد (حذف کانال/منبع/دسته/معیار/پلن/کد/مدل/مطلب، لغوی پلن، مسدودی، بازنشانی شمارنده‌ها، اعطای پلن، پلنِ رایگان، فعالیتِ کلِ ربات) ⇒ «چه کسی چه چیزی را حذف کرد؟» قابل‌پاسخ است. تست، هر مسیرِ ``*2`` را بررسی می‌کند."
     },
     {
       "id": "UI-012",
@@ -2086,9 +2101,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-012"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-012",
+      "fix_applied": "``s:auto`` (فعالیتِ کلِ ربات)، ``s:plan_free`` و ``s:uassign`` (اعطای ارزش) حالا تأییدِ دومرحله‌ای می‌خواهند (مثلِ ``a:chdel2``)."
     },
     {
       "id": "UI-013",
@@ -2097,9 +2113,10 @@
       "priority": "P3",
       "category": "DOCUMENTATION MISMATCH",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-013"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-013",
+      "fix_applied": "بخشِ ۸ از ``docs/PERMISSIONS.md`` فهرستِ **واقعیِ** مسیرهای دومرحله‌ای را می‌گوید (و تستی آن را با کد تطبیق می‌دهد)."
     },
     {
       "id": "UI-014",
@@ -2108,9 +2125,10 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-014"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-014",
+      "fix_applied": "صفحهٔ خانهٔ کاربر حالا دکمه‌های پشتیبانی/دعوت/راهنما/زبان را دارد ⇒ مسیرِ ``u:ref`` (که قبلاً فقط با فرمان قابل‌دسترس بود) از رابط پیدا می‌شود."
     },
     {
       "id": "UI-015",
@@ -2119,9 +2137,10 @@
       "priority": "P3",
       "category": "IMPROVEMENT OPPORTUNITY",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-015"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-015",
+      "fix_applied": "متنِ صفحهٔ دعوت دیگر سخت‌کد نیست و از کلیدهای ``ref_title``/``ref_how``/``ref_link`` (و ``ref_how_nopct`` برای خرابیِ تنظیمات) خوانده می‌شود ⇒ قابل‌ویرایش و قابل‌محلی‌سازی شد."
     },
     {
       "id": "UI-016",
@@ -2130,9 +2149,10 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-016"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-016",
+      "fix_applied": "کدهای خطای انتشار (``not_ready``، ``no_channel``، ``too_long``، ``flood``، …) به فارسی و انگلیسی ترجمه شدند ⇒ کاربر دیگر «publish: not_ready» نمی‌بیند."
     },
     {
       "id": "UI-017",
@@ -2153,9 +2173,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-018"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-018",
+      "fix_applied": "helperِ ``ltr()`` اضافه و روی نمایشِ مبلغ (قیمت/کیف پول) اعمال شد ⇒ بازهٔ عددی داخلِ متنِ راست‌به‌چپ جابه‌جا دیده نمی‌شود."
     },
     {
       "id": "UI-019",
@@ -2164,9 +2185,10 @@
       "priority": "P3",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-019"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-019",
+      "fix_applied": "نمای انگلیسیِ پلن دیگر توضیحِ فارسی را نشان نمی‌دهد؛ قالب روی یک نامِ ثابت (``{desc}``) یکسان شد و فراخوان، توضیحِ متناسب با زبان را می‌دهد (⇒ مجموعهٔ placeholderهای fa/en برابر شد)."
     },
     {
       "id": "UI-020",
@@ -2175,9 +2197,10 @@
       "priority": "P3",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-020"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-020",
+      "fix_applied": "غلطِ املاییِ متنِ ``/help`` («مدیریق») در به‌روزرسانیِ متن‌ها (PR #27) برطرف شد."
     },
     {
       "id": "UI-021",
@@ -2186,9 +2209,10 @@
       "priority": "P3",
       "category": "IMPROVEMENT OPPORTUNITY",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-021"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-021",
+      "fix_applied": "دکمهٔ بازگشتِ فهرستِ کاربران/مشترکان، شمارهٔ صفحه را نگه می‌دارد."
     },
     {
       "id": "UI-022",
@@ -2197,9 +2221,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-022"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-022",
+      "fix_applied": "مسیرهایی که بی‌صدا ``return`` می‌کردند، حالا پیامِ «پیدا نشد» می‌دهند."
     },
     {
       "id": "UI-023",
@@ -2208,9 +2233,10 @@
       "priority": "P3",
       "category": "IMPROVEMENT OPPORTUNITY",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-023"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-023",
+      "fix_applied": "حالتِ خالیِ صریح برای فهرستِ کدهای تخفیف/کاربران/مشترکان اضافه شد (``s_disc_none``، ``s_users_none``، ``s_admins_none``)."
     },
     {
       "id": "UI-024",
@@ -2230,9 +2256,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-025"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-025",
+      "fix_applied": "برچسبِ دکمه‌ها سقفِ ۶۴ کاراکتری دارد و فهرست‌های بلند صفحه‌بندی شده‌اند ⇒ کیبوردِ ادمین روی موبایل اسکن‌پذیر می‌ماند."
     },
     {
       "id": "UI-026",
@@ -2241,9 +2268,10 @@
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-05",
-      "evidence_ref": "docs/audit/FINDINGS.md#ui-026"
+      "evidence_ref": "docs/audit/FINDINGS.md#ui-026",
+      "fix_applied": "آستانهٔ پاپ‌آپ از ۳۵ به ۲۰۰ رفت (تلگرام بیشتر از ۲۰۰ کاراکتر را پاپ‌آپ نمی‌پذیرد) ⇒ پیام‌های مدیر دیگر به‌صورت حبابِ جداگانه در چت نمی‌ریزند."
     }
   ],
   "phases": [

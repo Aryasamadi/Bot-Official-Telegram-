@@ -43,8 +43,10 @@ def get_user_banned(uid):
     from newsbot.core_users import get_user
     u = get_user(uid); return bool(u and u["banned"])
 
-async def _prep(update, context):
-    u = update.effective_user; ensure_user(u.id, u.username, u.full_name, premium=getattr(u, "is_premium", None)); context.user_data.pop("await", None); context.user_data["panel"] = None
+async def _prep(update, context, keep_await=False):
+    u = update.effective_user; ensure_user(u.id, u.username, u.full_name, premium=getattr(u, "is_premium", None))
+    if not keep_await: context.user_data.pop("await", None)     # PH-05/UI-024: /lang فرم را دور نمی‌ریزد
+    context.user_data["panel"] = None
     return user_lang(u.id)
 
 async def send_deeplink(update, context, key):
@@ -108,7 +110,10 @@ async def cmd_about(update, context):
     if not lang: return await view_lang(update, context)
     await render(update, context, gtext("about", lang), [[B(tr(lang, "home"), "home")]])
 
-async def cmd_lang(update, context): await _prep(update, context); await view_lang(update, context)
+async def cmd_lang(update, context):
+    """PH-05/UI-024: /lang فرمِ در حالِ تکمیل را **دور نمی‌ریزد** (keep_await) و انتخابِ زبان
+    هم به کاربر اطلاع می‌دهد که متن‌های پیش‌فرضِ کانال‌ها به زبان تازه بازنویسی می‌شوند."""
+    await _prep(update, context, keep_await=True); await view_lang(update, context)
 
 async def cmd_cancel(update, context):
     """توقف واقعی عملیات جاری (تست/چرخه/انتشار) و بازگشت به خانه.

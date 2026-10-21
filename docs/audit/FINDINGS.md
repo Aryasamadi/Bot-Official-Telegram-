@@ -242,7 +242,7 @@
 - **Fix:** `UPDATE plans SET is_free=0 WHERE id<>?` and log the change.
 - **Regression test required:** yes — toggle on a paid plan; assert the others are unchanged.
 - **Dependencies / risks:** super-admin only; low.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — ``s:plan_free`` فقط **همان** پلن را علامت می‌زند (``UPDATE plans SET is_free=0 WHERE id<>?``) ⇒ پلنِ رایگانِ پایه به یک پلنِ پولی تبدیل نمی‌شود و اگر پلنِ دیگری انتخاب شود، باز هم یک پلنِ رایگان باقی می‌ماند.
 
 ## FIN-021 — The approval notification is best-effort; the DB can say `approved` while the user is never told
 - **Severity / Priority / Category:** LOW · P3 · DESIGN WEAKNESS
@@ -368,7 +368,7 @@
 - **Fix:** reuse an unconsumed, unexpired token; add `rate_ok(f"chadd:{cid}", 60)`.
 - **Regression test required:** yes — two consecutive claims return the same token (or the second is rate-limited) and produce exactly one DM.
 - **Dependencies / risks:** reusing a token widens the brute-force window slightly; compensate with the existing `tok:{uid}` limit.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — توکنِ انتقالِ مالکیتِ کانال، اگر معتبر و مصرف‌نشده باشد **دوباره استفاده** می‌شود (تلاشِ مکررِ یک هم‌ادمین دیگر توکنِ مالک را باطل نمی‌کند) + نرخ‌محدودسازیِ ۶۰ثانیه‌ای روی هر کانال.
 
 ## SEC-009 — Unvalidated `int()` on attacker-controlled callback segments
 - **Severity / Priority / Category:** LOW · P3 · CONFIRMED BUG
@@ -378,7 +378,7 @@
 - **Fix:** add a `_i(seg)` helper returning `None` on failure and use the existing `notfound` pattern.
 - **Regression test required:** yes — dispatch the malformed callbacks; expect `notfound` and no traceback.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — callback_data دست‌ساز دیگر stack trace در ژورنال نمی‌نویسد: ``ValueError`` در روتر به «پیدا نشد» تبدیل می‌شود و فقط یک هشدارِ کوتاه در ژورنال می‌ماند.
 
 ## SEC-010 — `docs/SECURITY.md` states that all user-input egress goes through `fetch` / `_GuardedStream`
 - **Severity / Priority / Category:** MEDIUM · P2 · DOCUMENTATION MISMATCH
@@ -427,7 +427,7 @@
 - **Fix:** validate `c in TEXT_KEYS and d in config.LANGS` before writing.
 - **Regression test required:** yes — dispatch `s:txtr2:foo:bar` -> `notfound`, no row created.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — ``s:txtr2`` فقط کلیدهای معتبر (``TEXT_KEYS``) و زبان‌های معتبر (``config.LANGS``) را می‌نویسد ⇒ سطرِ بی‌ربط در settings ساخته نمی‌شود.
 
 ## SEC-015 — Super-admin can delete another admin's personal AI model through `a:myai_d2`, while the view/edit paths refuse the same actor
 - **Severity / Priority / Category:** INFO · P3 · DESIGN WEAKNESS
@@ -436,7 +436,7 @@
 - **Fix:** unify the rule or document the override in `docs/PERMISSIONS.md` section 1.
 - **Regression test required:** yes — super dispatching `a:myai_d2:{other_model}` -> `notfound` (or the documented override).
 - **Dependencies / risks:** changes super-admin capabilities — needs a product decision.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — قاعدهٔ حذفِ مدلِ شخصی یکسان شد: فقط مالک (سوپرادمین هم اجازهٔ حذفِ مدلِ شخصیِ دیگران را ندارد؛ حذفِ مدلِ عمومی از ``s:model_d2`` است).
 
 ## SEC-016 — `sources.api_url` is echoed to the source owner and to super admins, including embedded credentials
 - **Severity / Priority / Category:** LOW · P3 · DESIGN WEAKNESS
@@ -445,7 +445,7 @@
 - **Fix:** strip `key`/`apikey`/`api_key`/`token`/`access_token` query parameters from the **display** copy only.
 - **Regression test required:** yes — a source with `?key=SECRET` renders without `SECRET`.
 - **Dependencies / risks:** the request must still use the real URL.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — کلیدِ API که داخلِ URL جاسازی شده، در **نمایش** پوشانده می‌شود (``?key=…`` ⇒ ``?key=***``)؛ دادهٔ ذخیره‌شده دست‌نخورده می‌ماند.
 
 ---
 
@@ -575,7 +575,7 @@
 - **Fix:** add the six keys to `TXT` (fa+en) and add a test asserting every `tr(lang,"X")` literal exists.
 - **Regression test required:** yes.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — شش کلیدِ گمشده (``s_users_w``، ``s_admins_w``، ``s_prev``، ``s_next``، ``s_model_add``، ``s_models_test``) به دیکشنری اضافه شدند + تستی که هر ``tr(lang,"X")``ِ لفظی را در برابرِ ``TXT`` بررسی می‌کند.
 
 ## UI-002 — Unfilled `{placeholder}` tokens are shown verbatim to end users
 - **Severity / Priority / Category:** MEDIUM · P1 · CONFIRMED BUG
@@ -585,7 +585,7 @@
 - **Fix:** pass `n=` at both call sites; make the `{key}` and `{name}/{plan}/{price}` markers literal.
 - **Regression test required:** yes — assert no rendered user string matches `\{[a-z_]+\}`.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — هر فراخوانیِ ``tr`` باید همهٔ placeholderهای کلیدش را پر کند (تستِ خودکار)؛ نشانگرهای **لفظی** (``{{key}}``، ``{{name}}``) صریح شدند و قالب همیشه اعمال می‌شود ⇒ دیگر «{name}» حل‌نشده دیده نمی‌شود.
 
 ## UI-003 — `noop` buttons give zero feedback
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -595,7 +595,7 @@
 - **Fix:** replace `noop` with `u:pending:<pid>` / `u:locked:<pid>` routes that answer with a toast.
 - **Regression test required:** yes.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — دکمه‌های «کاری‌نکن» (``noop``) به مسیرهای واقعی (``u:pending``، ``u:locked``، ``u:freeused``) تبدیل شدند که یک پیامِ روشن می‌دهند.
 
 ## UI-004 — The callback is answered only after the work finishes; the button spinner can last minutes
 - **Severity / Priority / Category:** MEDIUM · P1 · CONFIRMED BUG (UX)
@@ -605,7 +605,7 @@
 - **Fix:** answer early for known-slow routes (a `slow` marker on the route table).
 - **Regression test required:** yes — assert `query.answer` precedes the work coroutine for slow routes.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — مسیرهای کند (``s:bc_go``، ``a:srcr``، ``a:pub``، ``s:model_test``، ``a:myai_t``، ``a:artf``، ``s:models_test``) حالا **فوراً** به کاربر پاسخ می‌دهند ⇒ اسپینرِ دکمه دقیقه‌ها نمی‌ماند.
 
 ## UI-005 — `split_html()` can emit an empty chunk and a chunk longer than Telegram's 4096 limit
 - **Severity / Priority / Category:** HIGH · P1 · CONFIRMED BUG
@@ -616,7 +616,7 @@
 - **Fix:** hard-split over-long paragraphs with the existing `fit_html`/`hard_html` helpers and skip empty chunks.
 - **Regression test required:** yes — property test over lengths 0..20 000 and single/multi-paragraph inputs.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — ``split_html`` دیگر تکهٔ خالی یا تکهٔ بیش‌ازحد نمی‌دهد: پاراگرافِ بلند با برشِ سخت شکسته می‌شود، محتوا حذف نمی‌شود و هر تکه HTML معتبر و ≤ سقف است (property test روی طول‌های ۰..۲۰۰۰۰).
 
 ## UI-006 — A payment receipt can be silently lost before it reaches any administrator
 - **Severity / Priority / Category:** HIGH · P0 · CONFIRMED BUG
@@ -636,7 +636,7 @@
 - **Fix:** paginate `view_sources` / `view_cats` (15 per page), mirroring `view_s_users`.
 - **Regression test required:** yes.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — فهرستِ منابع، دسته‌ها و معیارها **صفحه‌بندی** شد (۱۵ در هر صفحه) ⇒ markup از حدِ تلگرام رد نمی‌شود.
 
 ## UI-008 — Plan names (up to 100 chars) become button labels, and Telegram's 64-character button limit kills the whole screen
 - **Severity / Priority / Category:** HIGH · P1 · CONFIRMED BUG
@@ -646,7 +646,7 @@
 - **Fix:** truncate the label to ~24 characters and/or clamp `name_limit` to ~40; add a guard in `B()`.
 - **Regression test required:** yes — a plan with a 100-char name must still render.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — برچسبِ دکمه هم (نه فقط ``callback_data``) سقفِ ۶۴ کاراکتری دارد ⇒ نامِ ۱۰۰کاراکتریِ پلن دیگر کلِ صفحهٔ خرید را نمی‌شکند.
 
 ## UI-009 — The payment-receipt flow is silently aborted by any other button press
 - **Severity / Priority / Category:** HIGH · P1 · CONFIRMED BUG (money path)
@@ -666,7 +666,7 @@
 - **Fix:** keep `"await"`/`"qs"` across navigation, or warn before discarding.
 - **Regression test required:** yes.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — اگر ضربهٔ دکمه، فرمِ در حالِ تکمیلِ کاربر را دور بریزد، حالا **هشدار** داده می‌شود (پیش از این بی‌صدا بود). فرمِ رسیدِ پرداخت (PH-03) باز می‌ماند.
 
 ## UI-011 — Destructive and high-impact administrator actions are not audited
 - **Severity / Priority / Category:** HIGH · P1 · DESIGN WEAKNESS / CONFIRMED BUG
@@ -676,7 +676,7 @@
 - **Fix:** add `log_event` to each destructive branch.
 - **Regression test required:** yes — assert `log_event` is called for each `*2` execute branch.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — هر شاخهٔ ویرانگرِ سوپرادمین یک ``log_event(..., uid)`` با شناسهٔ شیء می‌نویسد (حذف کانال/منبع/دسته/معیار/پلن/کد/مدل/مطلب، لغوی پلن، مسدودی، بازنشانی شمارنده‌ها، اعطای پلن، پلنِ رایگان، فعالیتِ کلِ ربات) ⇒ «چه کسی چه چیزی را حذف کرد؟» قابل‌پاسخ است. تست، هر مسیرِ ``*2`` را بررسی می‌کند.
 
 ## UI-012 — One-click, unconfirmed, high-impact super-admin actions
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -685,7 +685,7 @@
 - **Fix:** route the three through `_confirm()` with `...2` variants, exactly like `a:chdel2`.
 - **Regression test required:** yes.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — ``s:auto`` (فعالیتِ کلِ ربات)، ``s:plan_free`` و ``s:uassign`` (اعطای ارزش) حالا تأییدِ دومرحله‌ای می‌خواهند (مثلِ ``a:chdel2``).
 
 ## UI-014 — The customer home screen has one button, and the referral route is unreachable from the UI
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG (dead route) + DESIGN WEAKNESS
@@ -695,7 +695,7 @@
 - **Fix:** add the buttons to `view_user_home` and emit `u:ref`.
 - **Regression test required:** yes — assert every screen the router can render is reachable from home.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — صفحهٔ خانهٔ کاربر حالا دکمه‌های پشتیبانی/دعوت/راهنما/زبان را دارد ⇒ مسیرِ ``u:ref`` (که قبلاً فقط با فرمان قابل‌دسترس بود) از رابط پیدا می‌شود.
 
 ## UI-016 — Raw English error codes are shown to Persian users
 - **Severity / Priority / Category:** LOW · P2 · DESIGN WEAKNESS
@@ -704,7 +704,7 @@
 - **Fix:** extend `_pub_err` with the remaining codes.
 - **Regression test required:** yes.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-21, PH-05)** — کدهای خطای انتشار (``not_ready``، ``no_channel``، ``too_long``، ``flood``، …) به فارسی و انگلیسی ترجمه شدند ⇒ کاربر دیگر «publish: not_ready» نمی‌بیند.
 
 ## UI-017 — The plan price is free text; the seeded paid plan literally says "Contact us"
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS

@@ -43,7 +43,17 @@ def quota_bars(rows, width=10):
     out = [f"{i} <code>{bar(u, c, width)}</code> <b>{u}</b>/{c}" for i, u, c in rows if c is not None]
     return ("\n" + " · ".join(out)) if out else ""
 
-def B(t, d): return InlineKeyboardButton(t, callback_data=d[:64])
+BTN_LABEL_MAX = 64      # سقفِ برچسبِ دکمه در تلگرام — بیشتر از این، کلِ پیام رد می‌شود
+
+def B(t, d):
+    """PH-05/UI-008: **برچسب** هم سقف دارد (قبلاً فقط ``callback_data`` کوتاه می‌شد).
+
+    یک نامِ پلنِ ۱۰۰کاراکتری ⇒ برچسبِ ۱۰۲کاراکتری ⇒ تلگرام کلِ صفحه را رد می‌کرد
+    (``BUTTON_TEXT_INVALID``) ⇒ مشتری اصلاً صفحهٔ پلن‌ها را نمی‌دید."""
+    label = str(t)
+    if len(label) > BTN_LABEL_MAX:
+        label = label[:BTN_LABEL_MAX - 1].rstrip() + "…"
+    return InlineKeyboardButton(label, callback_data=str(d)[:64])
 def U(t, url): return InlineKeyboardButton(t, url=url)
 def esc(x): return html.escape(str(x if x is not None else ""))
 def onoff(v): return "✅" if v else "❌"
@@ -550,7 +560,7 @@ async def run_model_test(update, context, mid, personal=False):
 # ══════════════════════════════════════════════════════════════════════════
 # popup / render / ask / wizard
 # ══════════════════════════════════════════════════════════════════════════
-POPUP_MAX_CHARS = 35     # کوتاه‌تر از این ⇒ پاپ‌آپ بالای صفحه
+POPUP_MAX_CHARS = 200    # تلگرام تا ۲۰۰ کاراکتر را به‌صورت پاپ‌آپ بالای صفحه می‌پذیرد
 POPUP_TEMP_SECONDS = 10  # بلندتر ⇒ پیام معمولی که پس از این مدت حذف می‌شود
 
 async def popup(update, context, text):
@@ -586,8 +596,14 @@ async def render(update, context, text, kb=None, force_new=False):
     try:
         m = await context.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
     except TelegramError:
-        # آخرین حد: اگر HTML هم رد شد، متن ساده بفرست تا کاربر هیچ پاسخی نگیرد
-        m = await context.bot.send_message(chat_id, strip_tags(text), reply_markup=markup, disable_web_page_preview=True)
+        # آخرین حد: اگر HTML هم رد شد، متن ساده بفرست تا کاربر هیچ پاسخی نگیرد.
+        # PH-05/UI-007 · UI-008: اگر خودِ کیبورد نامعتبر باشد (برچسبِ بلند یا تعدادِ
+        # دکمهٔ زیاد) ⇒ فرستادنِ دوبارهٔ همان کیبورد هم شکست می‌خورد و کاربر هیچ
+        # پاسخی نمی‌گیرد ⇒ در این حالت **بدونِ کیبورد** می‌فرستیم.
+        try:
+            m = await context.bot.send_message(chat_id, strip_tags(text), disable_web_page_preview=True)
+        except TelegramError:
+            m = await context.bot.send_message(chat_id, strip_tags(text)[:4000], disable_web_page_preview=True)
     context.user_data["panel"] = m.message_id
 
 async def ask(update, context, prompt, kind, back, **extra):

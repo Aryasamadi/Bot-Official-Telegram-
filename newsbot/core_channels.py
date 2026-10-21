@@ -21,8 +21,18 @@ def _new_transfer_token(): return f"{random.SystemRandom().randint(0, 10**10 - 1
 
 def issue_transfer_token(cid, issued_to):
     """توکن تازه صادر می‌کند و توکن‌های مصرف‌نشده‌ی قبلیِ همان کانال را باطل می‌کند (همیشه یکی فعال است).
-    PHASE 4 (DB-15): باطل‌سازی و درج در یک تراکنش — کرش دیگر کانال را بدون توکن فعال رها نمی‌کند."""
+    PHASE 4 (DB-15): باطل‌سازی و درج در یک تراکنش — کرش دیگر کانال را بدون توکن فعال رها نمی‌کند.
+
+    PH-05/SEC-008: اگر یک توکنِ **مصرف‌نشده و منقضی‌نشده** برای همان کانال و همان
+    گیرنده وجود داشته باشد، **همان** دوباره استفاده می‌شود ⇒ تلاش‌های مکررِ یک
+    هم‌ادمین، توکنِ در انتظارِ مالکِ واقعی را باطل نمی‌کند و برایش پیامِ تکراری نمی‌فرستد."""
     now = now_utc()
+    row = q("SELECT * FROM ch_tokens WHERE channel_id=? AND used_at IS NULL AND issued_to=? "
+            "ORDER BY issued_at DESC LIMIT 1", (cid, issued_to), one=True)
+    if row:
+        exp = parse_dt(row["expires_at"])
+        if exp and now_utc() <= exp:
+            return row["token"]          # توکنِ معتبرِ در جریان ⇒ همان را برگردان
     for _ in range(6):
         tok = _new_transfer_token()
         def _go(conn):

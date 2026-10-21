@@ -42,8 +42,12 @@ def test_price_num_fa_column_exists_in_schema():
 
 
 def test_fmt_amt_units():
-    assert fmt_amt(3000000, "fa") == "3000000 تومان"
-    assert fmt_amt(5, "en") == "$5"
+    """PH-05/UI-018: مبلغ با نشانه‌های جداسازیِ جهت نمایش داده می‌شود (LRM در دو طرف)."""
+    from newsbot.ui_i18n import ltr
+    assert fmt_amt(3000000, "fa") == ltr("3000000 تومان")
+    assert fmt_amt(3000000, "fa").strip("\u200e") == "3000000 تومان"
+    assert fmt_amt(5, "en") == ltr("$5")
+    assert fmt_amt(5, "en").strip("‎") == "$5"
 
 
 # ═══════════════════ قواعد تمدید/ارتقا/خرید/نزول ═══════════════════

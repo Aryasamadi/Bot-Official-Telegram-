@@ -27,11 +27,25 @@ TEXT_KEYS = ["welcome", "help", "about", "pay"]
 
 
 def gtext(key, lang="fa", **kw):
+    """متنِ قابل‌ویرایشِ مدیر کلان.
+
+    PH-05/UI-002: قالب همیشه اعمال می‌شود (حتی بدونِ kw) تا متن‌هایی که عمداً یک
+    placeholder را **نشان می‌دهند** با ``{{…}}`` نوشته شوند و ناخواسته به «نامِ کلیدِ
+    گم‌شده» تبدیل نشوند. اگر قالب‌بندی شکست بخورد (مثلاً آدمین یک «{» تایپ کرده باشد)
+    ⇒ متنِ خام برگردانده می‌شود (مثلِ رفتارِ قبلی)."""
     v = gget(f"text_{key}_{lang}") or DEFAULT_TEXTS[key].get(lang) or DEFAULT_TEXTS[key]["fa"]
-    try: return v.format(**kw) if kw else v
+    try: return v.format(**kw)
     except Exception: return v
 
 def gtext_set(key, lang, value): gset(f"text_{key}_{lang}", value)
+
+
+def ltr(s):
+    """PH-05/UI-018: جداسازیِ دوجهته برای متن‌های لاتین/عددی داخلِ پاراگرافِ فارسی.
+
+    بدونِ این، یک بازهٔ لاتین (مثل «۵ USDT») در متنِ راست‌به‌چپ جابه‌جا دیده می‌شود."""
+    t = str(s if s is not None else "")
+    return "‎" + t + "‎" if t else t
 
 # ══════════════════════════════════════════════════════════════════════════
 # دیکشنری دوزبانه‌ی رابط کاربری (fa, en)
@@ -45,6 +59,15 @@ TXT = {
     "lang_set_n": (" · زبان {n} کانال هم تغییر کرد", " · {n} channel(s) relocalized"),
     "busy_click": ("⏳ لطفاً کمی صبر کنید", "⏳ Slow down a bit"),
     # ---- کاربر / پلن
+    # PH-05/UI-014: دکمه‌های صفحهٔ خانه (پشتیبانی/دعوت/راهنما/زبان) — پیش از این صفحهٔ
+    # خانه فقط یک دکمه داشت و مسیرِ دعوت (u:ref) از هیچ‌جا قابل‌دسترس نبود.
+    "sup_btn": ("💬 پشتیبانی", "💬 Support"), "help_btn": ("📖 راهنما", "📖 Help"), "lang_btn": ("🌐 زبان", "🌐 Language"),
+    # PH-05/UI-003: بازخوردِ دکمه‌هایی که کاری نمی‌کردند
+    "u_pending_note": ("⏳ پرداخت شما در حال بررسی است؛ به‌زودی نتیجه اعلام می‌شود.", "⏳ Your payment is under review; the result will be announced soon."),
+    "u_locked_note": ("🔒 این پلن در حال حاضر قابل خرید نیست؛ به‌زودی اعلام می‌شود.", "🔒 This plan is not available right now; we'll announce it soon."),
+    "u_noop_note": ("ℹ️ این دکمه الان کاری نمی‌کند.", "ℹ️ This button does nothing right now."),
+    # PH-05/UI-010: هشدارِ «فرمِ در حالِ تکمیل دور ریخته شد» (پیش از این بی‌صدا بود)
+    "form_cancelled": ("⚠️ فرمِ در حالِ تکمیل لغو شد.", "⚠️ The form in progress was cancelled."),
     "plans_btn": ("🧾 پلن‌ها", "🧾 Plans"), "plans_title": ("🧾 <b>پلن‌ها و اشتراک</b>", "🧾 <b>Plans & subscription</b>"), "plans_ref": ("🎁 با دعوت دوستان اعتبار کیف پول بگیرید: /ref", "🎁 Invite friends to earn wallet credit: /ref"), "plans_current": ("✅ پلن فعلی: <b>{name}</b>{until}", "✅ Current plan: <b>{name}</b>{until}"), "until": (" · تا {d}", " · until {d}"),
     "plans_next": ("⏭ پلن بعدی: <b>{name}</b>", "⏭ Next plan: <b>{name}</b>"), "plans_pick": ("👇 برای دیدن جزئیات و قیمت، یک پلن را انتخاب کنید.", "👇 Choose a plan to see details and price."),
     "plan_details": ("⏳ مدت: {days} روز\n📢 {posts} پست در روز · 🧪 {tests} تست در روز\n🌐 {src} منبع · 📣 {ch} کانال\n💰 قیمت: <b>{price}</b>", "⏳ Duration: {days} days\n📢 {posts} posts/day · 🧪 {tests} tests/day\n🌐 {src} sources · 📣 {ch} channels\n💰 Price: <b>{price}</b>"),
@@ -77,6 +100,8 @@ TXT = {
     "ref_btn": ("🤝 دعوت دوستان", "🤝 Invite friends"),
     "ref_title": ("🤝 <b>دوستانتان را دعوت کنید و اعتبار بگیرید</b> 🎁", "🤝 <b>Invite friends. Earn credit!</b> 🎁"),
     "ref_how": ("\n\n💎 دوستانتان را با لینک اختصاصی خود دعوت کنید.\n💰 از هر خرید موفق آن‌ها، <b>{p}٪</b> مبلغ به کیف پول شما اضافه می‌شود.\n🛍️ از این اعتبار می‌توانید برای خریدهای بعدی خود استفاده کنید.\n🚀 همین حالا لینک را برای دوستانتان بفرستید.", "\n\n💎 Invite friends using your personal link.\n💰 Earn <b>{p}%</b> of the amount from every successful purchase they make.\n🛍️ Use your wallet credit for your own purchases and save money!\n🚀 Share your link and build up more credit."),
+    # PH-05/UI-015: وقتی درصدِ تنظیمات در دسترس نیست (خرابیِ موقت) ⇒ متنِ بدونِ عددِ جعلی
+    "ref_how_nopct": ("\n\n💎 دوستانتان را با لینک اختصاصی خود دعوت کنید.\n💰 میزانِ اعتبار به درصدِ تنظیم‌شده در پنل مدیر بستگی دارد.\n🛍️ از این اعتبار می‌توانید برای خریدهای بعدی خود استفاده کنید.\n🚀 همین حالا لینک را برای دوستانتان بفرستید.", "\n\n💎 Invite friends using your personal link.\n💰 The reward rate follows the administrator's current settings.\n🛍️ Use your wallet credit for your own purchases and save money!\n🚀 Share your link and build up more credit."),
     "ref_line": ("\n👥 دعوت‌شدگان: {n} · 💰 اعتبار دریافتی: {c}", "\n👥 Invited: {n} · 💰 Earned credit: {c}"),
     "ref_cap_line": ("\n🎯 سقف کل پاداش شما: {cap}", "\n🎯 Your total reward cap: {cap}"),
     "ref_link": ("\n\n🔗 <b>لینک اختصاصی دعوت شما:</b>\n<code>{link}</code>", "\n\n🔗 <b>Your personal invite link:</b>\n<code>{link}</code>"),
@@ -148,6 +173,10 @@ TXT = {
     "confirm_pay_no_q": ("❌ این رسید رد شود؟", "❌ Reject this receipt?"),
      "confirm_pay_refund_q": ("مبلغِ پرداخت #{id} به کیف پولِ مشتری برگردانده شود؟ این کار یک «رسیدِ بازگشت» ثبت می‌کند.", "Return payment #{id} to the customer's wallet? This records a refund receipt."),
     "s_what_free": ("امکان پلن رایگان", "free quota"), "s_what_tests": ("شمارندهٔ تست", "test counter"), "s_what_posts": ("شمارندهٔ پست", "post counter"),
+    # PH-05/UI-012: متنِ «چه چیزی تأیید می‌شود» برای کنش‌های پرخطرِ سوپرادمین
+    "s_what_auto": ("فعالیت ربات در همهٔ کانال‌ها", "automation in all channels"),
+    "s_what_plan_free": ("پلنِ رایگان", "the free plan"),
+    "s_what_uassign": ("اعطای پلن به کاربر", "assigning a plan to the user"),
     # ---- حالت‌های خالی و مرتب‌سازی (فاز ۹ — UX-02/UX-06/UX-07)
     "src_none": ("\n⚠️ هنوز منبعی ندارید.\nاز «➕ افزودن منبع» یک فید RSS یا لینک صفحه اضافه کنید.", "\n⚠️ No sources yet.\nUse “➕ Add source” to add an RSS feed or page URL."),
     "queue_none": ("📭 صف خالی است.\nبرای ساخت پیش‌نمایش، «🧪 تست فوری» را بزنید.", "📭 The queue is empty — nothing to publish.\nRun “🧪 Quick test” to generate a preview."),
@@ -179,7 +208,7 @@ TXT = {
     "src_ch_on": ("🟢 منبع برای کانال روشن شد", "🟢 Source on for channel"), "src_ch_off": ("🔴 منبع برای کانال خاموش شد", "🔴 Source off for channel"),
     "src_bot_on": ("🟢 منبع برای محتوای ربات روشن شد", "🟢 Source on for bot content"), "src_bot_off": ("🔴 منبع برای محتوای ربات خاموش شد", "🔴 Source off for bot content"),
     "src_api": ("🔌 API", "🔌 API"), "src_api_none": ("🔌 بدون API", "🔌 No API"), "src_api_on": ("🔌 API: <code>{u}</code>", "🔌 API: <code>{u}</code>"),
-    "src_api_url": ("🔌 آدرس API منبع را بفرستید\n<code>https://site.com/wp-json/wp/v2/posts?per_page=20</code>\n\nℹ️ جای کلید در آدرس را <code>{key}</code> بگذارید\n🗑 برای حذف بنویسید <code>-</code>", "🔌 Send the source API URL\n<code>https://site.com/wp-json/wp/v2/posts?per_page=20</code>\n\nℹ️ Put <code>{key}</code> where the key goes\n🗑 Send <code>-</code> to remove"),
+    "src_api_url": ("🔌 آدرس API منبع را بفرستید\n<code>https://site.com/wp-json/wp/v2/posts?per_page=20</code>\n\nℹ️ جای کلید در آدرس را <code>{{key}}</code> بگذارید\n🗑 برای حذف بنویسید <code>-</code>", "🔌 Send the source API URL\n<code>https://site.com/wp-json/wp/v2/posts?per_page=20</code>\n\nℹ️ Put <code>{{key}}</code> where the key goes\n🗑 Send <code>-</code> to remove"),
     "src_api_key": ("🔑 کلید API را بفرستید\n➖ اگر کلید لازم نیست، <code>-</code> بفرستید", "🔑 Send the API key\n🗑 If not needed, send <code>-</code>"),
     "src_api_ok": ("✅ API ثبت شد · {n} آیتم خوانده شد", "✅ API saved · {n} items read"), "src_api_bad": ("⚠️ پاسخ API قابل استفاده نبود\n🔴 آدرس ثبت شد اما منبع غیرفعال است", "⚠️ API response was not usable\n🔴 Saved but the source is off"),
     "src_api_del": ("🗑 API حذف شد", "🗑 API removed"),
@@ -241,12 +270,20 @@ TXT = {
     "s_admins": ("💼 مشترکان", "🧑‍💼 Admins"), "s_auto": ("{i} فعالیت کل ربات", "{i} Global automation"), "s_me": ("👤 پنل شخصی", "👤 My panel"), "s_auto_on": ("🟢 فعالیت ربات در همهٔ کانال‌ها روشن شد", "🟢 Global automation on"), "s_auto_off": ("🔴 فعالیت ربات در همهٔ کانال‌ها متوقف شد", "🔴 Global automation off"),
     "s_plans_title": ("🧾 <b>پلن‌ها</b>", "🧾 <b>Plans</b>"), "s_plan_new": ("➕ پلن جدید", "➕ Plan"), "s_plan_created": ("✅ پلن «{name}» ساخته شد", "✅ “{name}” created"), "s_plan_deleted": ("🗑 پلن حذف شد", "🗑 Plan deleted"),
     "s_plan_in_use": ("🔒 این پلن کاربر فعال یا پرداخت در انتظار دارد؛ به‌جای حذف، غیرفعال شد", "🔒 Plan has active users or pending payments — deactivated (not deleted)"),
-    "s_plan_view": ("🧾 <b>{name}</b> {free}\n\n📌 وضعیت: {st}\n📝 توضیح: {desc}\n📝 Description: {desc_en}\n\n⏳ مدت: {days} روز\n📢 پست روزانه: {posts}\n🧪 تست روزانه: {tests}\n🌐 منابع: {src}\n📣 کانال‌ها: {ch}\n\n💰 قیمت: {price} / {price_en}\n🔢 تعرفهٔ عددی: {price_num}\n👥 کاربران: {n}", "🧾 <b>{name}</b> {free}\n\n📌 Status: {st}\n📝 Description: {desc}\n\n⏳ Duration: {days} days\n📢 Posts/day: {posts}\n🧪 Tests/day: {tests}\n🌐 Sources: {src}\n📣 Channels: {ch}\n\n💰 Price: {price} / {price_en}\n🔢 Numeric tariff: {price_num}\n👥 Users: {n}"),
+    "s_plan_view": ("🧾 <b>{name}</b> {free}\n\n📌 وضعیت: {st}\n📝 توضیح: {desc}\n\n⏳ مدت: {days} روز\n📢 پست روزانه: {posts}\n🧪 تست روزانه: {tests}\n🌐 منابع: {src}\n📣 کانال‌ها: {ch}\n\n💰 قیمت: {price} / {price_en}\n🔢 تعرفهٔ عددی: {price_num}\n👥 کاربران: {n}", "🧾 <b>{name}</b> {free}\n\n📌 Status: {st}\n📝 Description: {desc}\n\n⏳ Duration: {days} days\n📢 Posts/day: {posts}\n🧪 Tests/day: {tests}\n🌐 Sources: {src}\n📣 Channels: {ch}\n\n💰 Price: {price} / {price_en}\n🔢 Numeric tariff: {price_num}\n👥 Users: {n}"),
     "s_plan_free_set": ("🎁 تنظیم به‌عنوان پلن رایگان", "🎁 Make free"), "s_plan_free_done": ("🎁 پلن رایگان تنظیم شد", "🎁 Free plan set"), "s_plan_del": ("🗑 حذف پلن", "🗑 Delete plan"), "s_field_prompt": ("✏️ مقدار جدید «{f}» را بفرستید:", "✏️ New value for “{f}”"),
     "s_discs_title": ("🎟 <b>کدهای تخفیف</b>", "🎟 <b>Discount codes</b>"), "s_disc_new": ("➕ کد جدید", "➕ Code"), "s_disc_line": ("\n{i} <code>{code}</code> · 🎟 {p}% · ⏳ {exp} · 👥 {used}/{max}", "\n{i} <code>{code}</code> · 🎟 {p}% · ⏳ {exp} · 👥 {used}/{max}"),
     "s_disc_view": ("🎟 <code>{code}</code> {st}\n💥 {p}% · ⏳ {exp} · 👥 {used}/{max}", "🎟 <code>{code}</code> {st}\n💥 {p}% · ⏳ {exp} · 👥 {used}/{max}"), "s_disc_created": ("✅ کد {code} ساخته شد", "✅ Code {code} created"), "s_disc_dup": ("⚠️ این کد تکراری یا نامعتبر است", "⚠️ Duplicate or invalid code"),
     "s_disc_exp_bad": ("⚠️ تاریخ انقضا نامعتبر است؛ تعداد روز یا تاریخ به‌شکل YYYY-MM-DD بفرستید", "⚠️ Expiry: days number or YYYY-MM-DD"), "s_disc_p": ("✏️ درصد تخفیف", "✏️ Percent"), "s_disc_e": ("✏️ تاریخ انقضا", "✏️ Expiry"), "s_disc_m": ("✏️ سقف استفاده", "✏️ Max uses"), "s_disc_del": ("🗑 حذف کد", "🗑 Delete code"), "unlimited": ("∞", "∞"),
     "s_users_title": ("👥 <b>{what}</b> · {n} نفر\nصفحهٔ {p} از {pp}", "👥 <b>{what}</b> · {n} rows\nPage {p}/{pp}"),
+    # PH-05/UI-001: این شش کلید در دیکشنری نبودند ⇒ کلیدِ خام به سوپرادمین نشان داده می‌شد
+    "s_users_w": ("👥 کاربران", "👥 Users"), "s_admins_w": ("💼 مشترکان", "💼 Subscribers"),
+    "s_prev": ("◀️ قبلی", "◀️ Prev"), "s_next": ("بعدی ▶️", "Next ▶️"),
+    "s_model_add": ("➕ مدل", "➕ Model"), "s_models_test": ("🧪 تست همه", "🧪 Test all"),
+    # PH-05/UI-023: حالتِ خالیِ فهرست‌ها (قبلاً با «کدی نیست» یکی بود با «کوئری شکست خورد»)
+    "s_disc_none": ("📭 هیچ کد تخفیفی ثبت نشده است.", "📭 No discount codes yet."),
+    "s_admins_none": ("📭 هنوز مشترکی وجود ندارد.", "📭 No subscribers yet."),
+    "s_users_none": ("📭 کاربری ثبت نشده است.", "📭 No users yet."),
     "s_user_view": ("{name} · {role} · {lang}\nپلن: {plan} {act}\nپست امروز: {p} · تست: {t}\nکانال: {c} · منبع: {s} · تولید: {d} (انتشار: {pub})\nتاریخ عضویت: {join} · آخرین بازدید: {seen}", "{name} · {role} · {lang}\nPlan: {plan} {act}\nToday: {p} posts · {t} tests\nChannels: {c} · sources: {s} · generated: {d} (published: {pub})\nJoined: {join} · seen: {seen}"),
     "s_ban_y": ("⛔ مسدود", "⛔ banned"), "s_ban_n": ("✅ فعال", "✅ active"), "s_uplan": ("🧾 تعیین پلن", "🧾 Assign plan"), "s_urevoke": ("❌ لغو پلن", "❌ Revoke plan"), "s_uban": ("⛔ مسدود / رفع مسدودی", "⛔ Ban/unban"), "s_umsg": ("✉️ ارسال پیام", "✉️ Message"),
     "s_ureport": ("📊 کانال‌های کاربر", "📊 Channels"), "s_ufree": ("🔁 بازنشانی پلن رایگان", "🔁 Reset free"), "s_utests": ("🧪 بازنشانی تست‌ها", "🧪 Reset tests"), "s_uposts": ("📢 بازنشانی پست‌ها", "📢 Reset posts"),
@@ -266,7 +303,7 @@ TXT = {
     "s_pay_ok": ("✅ تأیید", "✅ Approve"), "s_pay_no": ("❌ رد", "❌ Reject"), "s_pay_done_ok": ("✅ تأیید شد · پلن فعال یا رزرو شد", "✅ Approved · plan activated or queued"), "s_pay_done_no": ("❌ رد شد", "❌ Rejected"), "s_pay_seen": ("⚠️ این رسید قبلاً بررسی شده است", "⚠️ Already handled"),
     "s_pay_new": ("🛎 <b>پرداخت #{id}</b>\n👤 {who} (<code>{uid}</code>)\n🧾 <b>{plan}</b>\n💵 مبلغ پلن: {plan_price}\n💰 پرداختی: {price}{disc}{note}", "🛎 <b>Payment #{id}</b>\n👤 {who} (<code>{uid}</code>)\n🧾 <b>{plan}</b>\n💵 Plan price: {plan_price}\n💰 Payable: {price}{disc}{note}"),
     "s_bc_prompt": ("پیام همگانی را بفرستید (متن، عکس یا ویدیو؛ قالب‌بندی حفظ می‌شود):", "Broadcast message (text/photo/video; formatting kept):"), "s_bc_confirm": ("📣 این پیام برای <b>{n}</b> کاربر ارسال شود؟", "📣 Send to <b>{n}</b> users?"), "s_bc_go": ("✅ ارسال", "✅ Send"),     "s_bc_sending": ("📣 در حال ارسال به {n} کاربر…", "📣 Sending to {n} users…"), "s_bc_progress": ("📣 ارسال همگانی: {i}/{n}", "📣 Broadcasting: {i}/{n}"), "s_bc_done": ("📣 ارسال تمام شد · موفق: {ok} · ناموفق: {fail}", "📣 ok {ok} · failed {fail}"),
-    "s_texts_title": ("📝 <b>متن‌های ربات</b>\nمتغیرها: <code>{name}</code> <code>{plan}</code> <code>{price}</code>", "<b>Texts</b>\nPlaceholders: <code>{name}</code> <code>{plan}</code> <code>{price}</code>"),
+    "s_texts_title": ("📝 <b>متن‌های ربات</b>\nمتغیرها: <code>{{name}}</code> <code>{{plan}}</code> <code>{{price}}</code>", "<b>Texts</b>\nPlaceholders: <code>{{name}}</code> <code>{{plan}}</code> <code>{{price}}</code>"),
     "s_text_prompt": ("متن جدید «{k}» ({lg}) را بفرستید:", "New “{k}” text ({lg}):"), "s_text_saved": ("✅ متن ذخیره شد", "✅ Text saved"), "s_text_reset_done": ("↩️ به متن پیش‌فرض برگشت", "↩️ Reset to default"),
     "s_health": ("سلامت", "Health"),
     "s_mand": ("🔐 کانال اجباری", "🔐 Mandatory channel"),
@@ -286,9 +323,14 @@ TXT = {
 }
 
 def tr(lang, key, /, **kw):
+    """متنِ دوزبانه.
+
+    PH-05/UI-002: قالب همیشه اعمال می‌شود (حتی وقتی kw نیست) تا متن‌هایی که عمداً یک
+    placeholder را **نشان می‌دهند** (مثل «متغیرها: {name}») با ``{{name}}`` نوشته شوند و
+    به «نامِ کلیدِ گم‌شده» تبدیل نشوند. اگر قالب‌بندی شکست بخورد ⇒ متنِ خام (مثلِ قبل)."""
     if key not in TXT: return str(key)   # کلید ناشناخته (callback_data دست‌ساز) نباید KeyError بدهد
     s = TXT[key][1 if lang == "en" else 0]
-    try: return s.format(**kw) if kw else s
+    try: return s.format(**kw)
     except Exception: return s
 
 TOGGLABLE = {"enabled", "hashtags", "include_link", "include_media", "strict_ads", "allow_undated"}

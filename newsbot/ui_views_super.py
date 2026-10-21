@@ -185,7 +185,7 @@ async def view_s_plan(update, context, pid):
     n = q("SELECT COUNT(*) c FROM users WHERE plan_id=?", (pid,), one=True)["c"]
     pn = f"{fmt_amt(plan_num(p, 'en'), 'en')} · {fmt_amt(plan_num(p, 'fa'), 'fa')}" if (plan_num(p, "en") or plan_num(p, "fa")) else "—"
     try:
-        text = tr(lang, "s_plan_view", name=esc(p["name"]), name_en=esc(p["name_en"] or "—"), free="🎁" if p["is_free"] else "", st="🟢" if p["active"] else "🔴", desc=esc(p["description"]), desc_en=esc(p["description_en"] or ""), days=p["days"], posts=p["daily_posts"], tests=p["daily_tests"], src=p["max_sources"], ch=p["max_channels"], price=esc(p["price"]), price_en=esc(p["price_en"] or "—"), price_num=pn, n=n)
+        text = tr(lang, "s_plan_view", name=esc(p["name"]), name_en=esc(p["name_en"] or "—"), free="🎁" if p["is_free"] else "", st="🟢" if p["active"] else "🔴", desc=esc((p["description_en"] or "") if lang == "en" else (p["description"] or "")), days=p["days"], posts=p["daily_posts"], tests=p["daily_tests"], src=p["max_sources"], ch=p["max_channels"], price=esc(p["price"]), price_en=esc(p["price_en"] or "—"), price_num=pn, n=n)
     except Exception:
         text = tr(lang, "s_plans_title") + "\n" + esc(str(dict(p)))
     kb = pairs([B(f"✏️ {f[2] if lang == 'en' else f[1]}", f"s:plan_e:{pid}:{f[0]}") for f in PLAN_FIELDS]) + [[B(tr(lang, "toggle"), f"s:plan_t:{pid}"), B(tr(lang, "s_plan_free_set"), f"s:plan_free:{pid}")], [B(tr(lang, "s_plan_del"), f"s:plan_d:{pid}")], [B(tr(lang, "back"), "s:plans")]]
@@ -197,6 +197,7 @@ def _disc_st(d, lang):
 async def view_s_discs(update, context):
     lang = L(update); ds = disc_list()
     text = tr(lang, "s_discs_title") + "".join(tr(lang, "s_disc_line", i=_disc_st(d, lang), code=esc(d["code"]), p=d["percent"], exp=fmt_date(d["expires"]) if d["expires"] else "∞", used=d["used"], max=d["max_uses"] or "∞") for d in ds)
+    if not ds: text += "\n" + tr(lang, "s_disc_none")          # PH-05/UI-023: حالتِ خالیِ صریح
     kb = pairs([B(f"{_disc_st(d, lang)} {d['code'][:18]} −{d['percent']}%", f"s:disc:{d['code']}") for d in ds]) + [[B(tr(lang, "s_disc_new"), "s:disc_new")], [B(tr(lang, "back"), "s:home")]]
     await render(update, context, text, kb)
 
@@ -211,20 +212,21 @@ async def view_s_users(update, context, page=0, role=None):
     lang = L(update); users = list_users(role); per = 10; pages = max(1, (len(users) + per - 1) // per); page = max(0, min(page, pages - 1)); chunk = users[page * per:(page + 1) * per]; pre = "admins" if role else "users"
     def ic(u): return "⛔" if u["banned"] else {"user": "👤", "admin": "🧑‍"}.get(u["role"], "👑")
     text = tr(lang, "s_users_title", what=tr(lang, "s_admins_w" if role else "s_users_w"), n=len(users), p=page + 1, pp=pages) + "\n" + "".join(f"\n{ic(u)} {esc(uname(u))} · {esc(plan_txt(admin_limits(u['id'])['plan'], 'name', lang) or tr(lang, 'no_plan'))}{' 🟢' if admin_limits(u['id'])['active'] else ''}" for u in chunk)
-    kb = pairs([B(f"{ic(u)} {uname(u)[:22]}", f"s:user:{u['id']}") for u in chunk]); nav = []
+    if not users: text += "\n" + tr(lang, "s_admins_none" if role else "s_users_none")   # PH-05/UI-023
+    kb = pairs([B(f"{ic(u)} {uname(u)[:22]}", f"s:user:{u['id']}:{page}") for u in chunk]); nav = []
     if page > 0: nav.append(B(tr(lang, "s_prev"), f"s:{pre}:{page - 1}"))
     if page + 1 < pages: nav.append(B(tr(lang, "s_next"), f"s:{pre}:{page + 1}"))
     if nav: kb.append(nav)
     kb.append([B(tr(lang, "back"), "s:home")]); await render(update, context, text, kb)
 
-async def view_s_user(update, context, tid):
+async def view_s_user(update, context, tid, page=0):
     lang = L(update); u = get_user(tid)
     if not u: return await view_s_users(update, context)
     lim = admin_limits(tid); use = usage_today(tid); off = admin_offset(tid)
     role_txt = tr(lang, "role_admin" if u["role"] == "admin" else ("role_user" if u["role"] == "user" else "role_super"))
     text = tr(lang, "s_user_view", name=esc(uname(u)), id=tid, role=role_txt, ban=tr(lang, "s_ban_y" if u["banned"] else "s_ban_n"), lang=esc(u["lang"]) or "—", prem="💎" if u["premium"] else "", plan=esc(plan_txt(lim["plan"], "name", lang) or tr(lang, "no_plan")), act="🟢" if lim["active"] else "🔴", exp=tr(lang, "until", d=fmt_date(lim["expires"], off)) if lim["expires"] else "",
               nxt=("\n" + tr(lang, "plans_next", name=esc(plan_txt(lim["next_plan"], "name", lang)))) if lim["next_plan"] else "", p=use["posts"], t=use["tests"], c=len(list_channels(tid)), s=count_sources(tid), d=count_articles(tid, 24), pub=count_articles(tid, 24, "published"), free=onoff(u["free_used"]), join=(u["created_at"] or "")[:10], seen=ago_text(u["last_seen"], lang))
-    kb = [[B(tr(lang, "s_uplan"), f"s:uplan:{tid}"), B(tr(lang, "s_urevoke"), f"s:urevoke:{tid}")], [B(tr(lang, "s_uban"), f"s:uban:{tid}"), B(tr(lang, "s_umsg"), f"s:umsg:{tid}")], [B(tr(lang, "s_ureport"), f"s:ureport:{tid}"), B(tr(lang, "s_ufree"), f"s:ufree:{tid}")], [B(tr(lang, "s_utests"), f"s:utests:{tid}"), B(tr(lang, "s_uposts"), f"s:uposts:{tid}")], [B(tr(lang, "back"), "s:users:0")]]
+    kb = [[B(tr(lang, "s_uplan"), f"s:uplan:{tid}"), B(tr(lang, "s_urevoke"), f"s:urevoke:{tid}")], [B(tr(lang, "s_uban"), f"s:uban:{tid}"), B(tr(lang, "s_umsg"), f"s:umsg:{tid}")], [B(tr(lang, "s_ureport"), f"s:ureport:{tid}"), B(tr(lang, "s_ufree"), f"s:ufree:{tid}")], [B(tr(lang, "s_utests"), f"s:utests:{tid}"), B(tr(lang, "s_uposts"), f"s:uposts:{tid}")], [B(tr(lang, "back"), f"s:{'admins' if (u['role'] == 'admin') else 'users'}:{int(page or 0)}")]]
     await render(update, context, text, kb)
 
 async def view_s_models(update, context):

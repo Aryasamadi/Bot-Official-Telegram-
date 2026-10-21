@@ -10,7 +10,7 @@ from newsbot.db import gget
 from newsbot.logutils import log_event, redact
 from newsbot.timeutils import ago_text, fmt_date, local_clock, utc_clock, off_label, tz_key_of
 from newsbot.ui_widgets import notify_user_fn, notify_supers
-from newsbot.ratelimit import rate_left, rate_free, rate_mark, rate_clear
+from newsbot.ratelimit import rate_left, rate_free, rate_mark, rate_clear, rate_ok
 from newsbot.concurrency import ch_lock
 from newsbot.core_users import (admin_limits, admin_offset, usage_today, get_user, is_super,
                                 user_lang, channel_posts_today)
@@ -106,10 +106,16 @@ async def channel_claim(update, context, existing, uid, lang, back, ud):
     if uid == owner or is_super(uid):
         return await render(update, context, tr(lang, "ch_recover_text", title=esc(existing["title"]), who=owho),
                             [[B(tr(lang, "b_recheck"), f"a:chrec:{cid}")], [B(tr(lang, "cancel"), "c:cancel")]])
-    tok = issue_transfer_token(cid, owner)
-    if not tok: return await popup(update, context, tr(lang, "ch_recheck_err"))
-    me = get_user(uid); who_me = f"{esc(uname(me))} (<code>{uid}</code>)"
-    await notify_user_fn(owner, tr(user_lang(owner) or "fa", "ch_token_dm", title=esc(existing["title"]), who=who_me, token=tok, min=TRANSFER_TTL_MIN))
+        tok = issue_transfer_token(cid, owner)
+        if not tok: return await popup(update, context, tr(lang, "ch_recheck_err"))
+        me = get_user(uid); who_me = f"{esc(uname(me))} (<code>{uid}</code>)"
+        # PH-05/SEC-008: نرخ‌محدودسازیِ درخواستِ توکن روی همان کانال ⇒ یک هم‌ادمین نمی‌تواند
+        # پی‌درپی توکن بسازد و برای مالک پیامِ تکراری بفرستد (توکنِ معتبر دوباره استفاده می‌شود).
+        if not rate_ok(f"chadd:{cid}", 60):
+           await popup(update, context, tr(lang, "test_wait", n=rate_left(f"chadd:{cid}", 60)))
+           return await render(update, context, tr(lang, "ch_taken", who=owho),
+                               [[B(tr(lang, "cancel"), "c:cancel")]])
+        await notify_user_fn(owner, tr(user_lang(owner) or "fa", "ch_token_dm", title=esc(existing["title"]), who=who_me, token=tok, min=TRANSFER_TTL_MIN))
     await notify_supers(f"«{esc(existing['title'])}» transfer token issued for {who_me}")
     log_event("WARN", f"توکن انتقال «{existing['title']}» صادر شد (متقاضی {uid})", uid)
     ud["await"] = {"kind": "chtoken", "cid": cid, "back": back, "tries": 0, "title": existing["title"], "ts": time.time()}
@@ -143,22 +149,44 @@ async def channel_recheck(update, context, cid):
 # ══════════════════════════════════════════════════════════════════════════
 # منابع
 # ══════════════════════════════════════════════════════════════════════════
-async def view_sources(update, context, cid):
+async def view_sources(update, context, cid, page=0):
+    """فهرستِ منابع — **صفحه‌بندی‌شده** (PH-05/UI-007).
+
+    پیش از این همهٔ منابع در یک کیبورد می‌آمدند؛ با بیش از ~۱۰۰ منبع، markup از حدِ
+    تلگرام رد می‌شد و کلِ صفحه می‌افتاد (screen اصلیِ مدیریتِ منابع)."""
     uid = update.effective_user.id; lang = L(update); ch = channel_owned(cid, uid)
     if not ch: return await view_admin_home(update, context)
     srcs = list_sources(cid); lim = admin_limits(uid)
+    per = 15
+    pages = max(1, (len(srcs) + per - 1) // per)
+    page = max(0, min(int(page or 0), pages - 1))
+    shown = srcs[page * per:(page + 1) * per]
     text = tr(lang, "src_title", title=esc(ch["title"]), n=count_sources(uid), cap=cap(lim["max_sources"])) + "\n" + "".join(
-        tr(lang, "src_line", i="🟢" if s["active"] else "🔴", b="🤖" if (s["bot_active"] is None or s["bot_active"]) else "🚫", host=esc(hostname(s["url"])) + (" 🔌" if _has_api(s) else ""), n=s["found_total"] or 0, err=tr(lang, "src_err", n=s["fail_count"]) if s["fail_count"] else "") for s in srcs)
+        tr(lang, "src_line", i="🟢" if s["active"] else "🔴", b="🤖" if (s["bot_active"] is None or s["bot_active"]) else "🚫", host=esc(hostname(s["url"])) + (" 🔌" if _has_api(s) else ""), n=s["found_total"] or 0, err=tr(lang, "src_err", n=s["fail_count"]) if s["fail_count"] else "") for s in shown)
     if not srcs: text += "\n" + tr(lang, "src_none")
-    kb = pairs([B(f"{'🟢' if s['active'] else '🔴'} {hostname(s['url'])[:22]}", f"a:srcv:{s['id']}") for s in srcs]) + [[B(tr(lang, "src_add"), f"a:srca:{cid}")], [B(tr(lang, "back"), f"a:ch:{cid}")]]
+    elif pages > 1: text += f"\n\n📄 {page + 1}/{pages}"
+    kb = pairs([B(f"{'🟢' if s['active'] else '🔴'} {hostname(s['url'])[:22]}", f"a:srcv:{s['id']}") for s in shown])
+    if pages > 1:
+        nav = []
+        if page > 0: nav.append(B(tr(lang, "s_prev"), f"a:src:{cid}:{page - 1}"))
+        if page + 1 < pages: nav.append(B(tr(lang, "s_next"), f"a:src:{cid}:{page + 1}"))
+        if nav: kb.append(nav)
+    kb += [[B(tr(lang, "src_add"), f"a:srca:{cid}")], [B(tr(lang, "back"), f"a:ch:{cid}")]]
     await render(update, context, text, kb)
+
+def _scrub_api_url(url):
+    """PH-05/SEC-016: کلیدِ API که داخلِ URL جاسازی شده نباید به مالک/سوپرادمین نشان داده شود."""
+    import re as _re
+    s = str(url or "")
+    return _re.sub(r"(?i)([?&](?:api[_-]?key|apikey|key|token|access[_-]?token|password|secret)=)[^&#]*",
+                    r"\1***", s)
 
 async def view_source(update, context, sid):
     lang = L(update); s = get_source(sid)
     if not s or (s["admin_id"] != update.effective_user.id and not is_super(update.effective_user.id)): return await view_admin_home(update, context)
     bot_on = s["bot_active"] is None or s["bot_active"]
     st = tr(lang, "src_st", c="🟢" if s["active"] else "🔴", b="🤖" if bot_on else "🚫")
-    api = tr(lang, "src_api_on", u=esc(str(s["api_url"])[:60])) if _has_api(s) else tr(lang, "src_api_none")
+    api = tr(lang, "src_api_on", u=esc(_scrub_api_url(s["api_url"])[:60])) if _has_api(s) else tr(lang, "src_api_none")
     text = tr(lang, "src_view", host=esc(hostname(s["url"])), url=esc(s["url"]), feed=tr(lang, "src_feed", u=esc(s["feed_url"])) if s["feed_url"] and s["feed_url"] != s["url"] else "", st=st, last=ago_text(s["last_fetch"], lang), n=s["found_total"], f=s["fail_count"], err=f"\n⚠️ <code>{esc(redact(s['last_error'] or '')[:120])}</code>" if s["last_error"] else "") + "\n" + api
     kb = [[B(tr(lang, "src_recheck"), f"a:srcr:{sid}")], [B(("🟢 " if s["active"] else "🔴 ") + tr(lang, "tog_ch"), f"a:srct:{sid}"), B(("🟢 " if bot_on else "🔴 ") + tr(lang, "tog_bot"), f"a:srctb:{sid}")],
           [B(tr(lang, "src_api"), f"a:srcapi:{sid}")] + ([B(tr(lang, "src_api_del"), f"a:srcapix:{sid}")] if _has_api(s) else []), [B(tr(lang, "delete"), f"a:srcd:{sid}")], [B(tr(lang, "back"), f"a:src:{s['channel_id']}")]]
@@ -178,10 +206,24 @@ async def view_content(update, context, cid):
           [B(tr(lang, "b_strict", i=onoff(s["strict_ads"])), f"a:tog:{cid}:strict_ads")], [B(tr(lang, "back"), f"a:ch:{cid}")]]
     await render(update, context, text, kb)
 
-async def view_cats(update, context, cid):
+async def view_cats(update, context, cid, page=0):
+    """فهرستِ دسته‌ها — صفحه‌بندی‌شده (PH-05/UI-007)."""
     lang = L(update); s = get_settings(cid)
-    text = tr(lang, "cats_title") + "\n" + "".join(f"\n{esc(c['emoji'])} <b>{esc(c['name'])}</b>: {esc(c['style'][:70])}" for c in s["categories"])
-    kb = pairs([B(f"{esc(c['emoji'])} {c['name'][:18]}", f"a:catv:{cid}:{i}") for i, c in enumerate(s["categories"])]) + [[B(tr(lang, "cat_add"), f"a:cata:{cid}")], [B(tr(lang, "back"), f"a:con:{cid}")]]
+    cats = s["categories"]
+    per = 15
+    pages = max(1, (len(cats) + per - 1) // per)
+    page = max(0, min(int(page or 0), pages - 1))
+    shown = cats[page * per:(page + 1) * per]
+    off = page * per
+    text = tr(lang, "cats_title") + "\n" + "".join(f"\n{esc(c['emoji'])} <b>{esc(c['name'])}</b>: {esc(c['style'][:70])}" for c in shown)
+    if pages > 1: text += f"\n\n📄 {page + 1}/{pages}"
+    kb = pairs([B(f"{esc(c['emoji'])} {c['name'][:18]}", f"a:catv:{cid}:{off + i}") for i, c in enumerate(shown)])
+    if pages > 1:
+        nav = []
+        if page > 0: nav.append(B(tr(lang, "s_prev"), f"a:cat:{cid}:{page - 1}"))
+        if page + 1 < pages: nav.append(B(tr(lang, "s_next"), f"a:cat:{cid}:{page + 1}"))
+        if nav: kb.append(nav)
+    kb += [[B(tr(lang, "cat_add"), f"a:cata:{cid}")], [B(tr(lang, "back"), f"a:con:{cid}")]]
     await render(update, context, text, kb)
 
 async def view_cat(update, context, cid, i):
@@ -189,10 +231,24 @@ async def view_cat(update, context, cid, i):
     if not c: return await view_cats(update, context, cid)
     await render(update, context, tr(lang, "cat_view", e=c["emoji"], name=esc(c["name"]), style=esc(c["style"])), [[B(tr(lang, "cat_edit"), f"a:cats:{cid}:{i}"), B(tr(lang, "delete"), f"a:catd:{cid}:{i}")], [B(tr(lang, "back"), f"a:cat:{cid}")]])
 
-async def view_crits(update, context, cid):
-    lang = L(update); s = get_settings(cid); tot = sum(float(c["weight"]) for c in s["criteria"]) or 1
-    text = tr(lang, "crits_title", m=s["min_score"]) + "\n" + "".join(tr(lang, "crit_line", name=esc(c["name"]), w=c["weight"], p=f"{float(c['weight']) / tot * 100:.0f}") for c in s["criteria"])
-    kb = pairs([B(tr(lang, "crit_btn", name=c["name"][:16], w=c["weight"]), f"a:criv:{cid}:{i}") for i, c in enumerate(s["criteria"])]) + [[B(tr(lang, "crit_add"), f"a:cria:{cid}")], [B(tr(lang, "back"), f"a:con:{cid}")]]
+async def view_crits(update, context, cid, page=0):
+    """فهرستِ معیارها — صفحه‌بندی‌شده (PH-05/UI-007)."""
+    lang = L(update); s = get_settings(cid); crits = s["criteria"]
+    per = 15
+    pages = max(1, (len(crits) + per - 1) // per)
+    page = max(0, min(int(page or 0), pages - 1))
+    shown = crits[page * per:(page + 1) * per]
+    off = page * per
+    tot = sum(float(c["weight"]) for c in crits) or 1
+    text = tr(lang, "crits_title", m=s["min_score"]) + "\n" + "".join(tr(lang, "crit_line", name=esc(c["name"]), w=c["weight"], p=f"{float(c['weight']) / tot * 100:.0f}") for c in shown)
+    if pages > 1: text += f"\n\n📄 {page + 1}/{pages}"
+    kb = pairs([B(tr(lang, "crit_btn", name=c["name"][:16], w=c["weight"]), f"a:criv:{cid}:{off + i}") for i, c in enumerate(shown)])
+    if pages > 1:
+        nav = []
+        if page > 0: nav.append(B(tr(lang, "s_prev"), f"a:cri:{cid}:{page - 1}"))
+        if page + 1 < pages: nav.append(B(tr(lang, "s_next"), f"a:cri:{cid}:{page + 1}"))
+        if nav: kb.append(nav)
+    kb += [[B(tr(lang, "crit_add"), f"a:cria:{cid}")], [B(tr(lang, "back"), f"a:con:{cid}")]]
     await render(update, context, text, kb)
 
 async def view_crit(update, context, cid, i):

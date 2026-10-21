@@ -24,7 +24,7 @@ from newsbot.core_articles import get_article, article_update, delete_article
 from newsbot.core_plans import (assign_plan, revoke_plan, get_plan, plan_txt, list_plans,
                                 update_plan, delete_plan)
 from newsbot.core_discounts import disc_get, disc_update, disc_delete
-from newsbot.core_payments import support_close
+from newsbot.core_payments import support_close, support_open
 from newsbot.ai_models import get_model, update_model, delete_model, test_model
 from newsbot.discover import probe_source
 from newsbot.publish import publish_article
@@ -49,6 +49,23 @@ from newsbot.ui_views_super import (view_super_home, view_health, view_s_plans, 
 
 
 async def dispatch(update, context, data):
+    """نقطهٔ ورودِ همهٔ مسیرهای callback.
+
+    PH-05/SEC-009: ``callback_data`` می‌تواند دست‌ساز باشد (یا از نسخهٔ قدیمی بیاید) ⇒
+    ``int(c)`` روی قطعهٔ نامعتبر ``ValueError`` می‌داد ⇒ یک stack trace در ژورنال نوشته
+    می‌شد (سیلِ لاگ) و کاربر فقط یک پیامِ عمومی می‌گرفت. حالا این حالت **محترمانه** به
+    «پیدا نشد» تبدیل می‌شود و در ژورنال فقط یک هشدارِ کوتاه می‌ماند."""
+    try:
+        return await _dispatch(update, context, data)
+    except ValueError:
+        log_event("WARN", f"callback با قطعهٔ نامعتبر: {str(data)[:40]}")
+        try:
+            await popup(update, context, tr(L(update), "notfound"))
+        except Exception: pass
+        return await go_home_safe(update, context)
+
+
+async def _dispatch(update, context, data):
     uid = update.effective_user.id; lang = L(update); p = data.split(":"); a = p[0]; b = p[1] if len(p) > 1 else ""; c = p[2] if len(p) > 2 else ""; d = p[3] if len(p) > 3 else ""; ud = context.user_data
     if data == "noop": return
     if a == "lang": return await set_language(update, context, b)
@@ -69,6 +86,19 @@ async def dispatch(update, context, data):
         if b == "disc": return await ask(update, context, tr(lang, "disc_prompt"), "disc", f"u:plan:{c}", pid=int(c))
         if b == "discx": ud.setdefault("disc", {}).pop(c, None); return await view_plan(update, context, int(c))
         if b == "man_close": support_close(uid); return await render(update, context, tr(lang, "sup_closed"), [[B(tr(lang, "home"), "home")]])
+        # PH-05/UI-014: دکمه‌های صفحهٔ خانه (پشتیبانی/راهنما/زبان) — پیش از این فقط با فرمان
+        if b == "man":
+            support_open(uid)
+            return await render(update, context, tr(lang, "sup_open"), [[B(tr(lang, "sup_close"), "u:man_close")]], force_new=True)
+        if b == "help":
+            from newsbot.ui_i18n import gtext
+            return await render(update, context, gtext("help", lang), [[B(tr(lang, "home"), "home")]])
+        if b == "lang":
+            return await view_lang(update, context)     # PH-05/UI-024: فرمِ در جریان نابود نمی‌شود
+        # PH-05/UI-003: دکمه‌هایی که «کاری نمی‌کنند» حالا یک پیامِ روشن می‌دهند
+        if b == "pending": return await popup(update, context, tr(lang, "u_pending_note"))
+        if b == "locked":  return await popup(update, context, tr(lang, "u_locked_note"))
+        if b == "freeused": return await popup(update, context, tr(lang, "free_once"))
         return await go_home_safe(update, context)
     # ---------------- کانال اجباری (همهٔ کاربران، پیش از دروازهٔ ادمین)
     if a == "a" and b == "mand":
@@ -97,7 +127,16 @@ async def dispatch(update, context, data):
             if b == "myai_v": return await view_my_ai_model(update, context, mid)
             if b == "myai_o": update_model(mid, active=0 if m["active"] else 1, status="ok", fail_count=0); await popup(update, context, tr(lang, "s_model_off" if m["active"] else "s_model_on")); return await view_my_ai_model(update, context, mid)
             if b == "myai_d": return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(m["name"])), f"a:myai_d2:{mid}", f"a:myai_v:{mid}")
-            if b == "myai_d2": delete_model(mid); await popup(update, context, tr(lang, "deleted")); return await view_my_ai(update, context)
+            if b == "myai_d2":
+                # PH-05/SEC-015: حذفِ مدلِ شخصی — همان قاعدهٔ «فقط مالک» که در نما و ویرایش
+                # هست (سوپرادمین هم اجازهٔ حذفِ مدلِ شخصیِ دیگران را ندارد؛ حذفِ مدلِ
+                # عمومی از مسیرِ s:model_d2 انجام می‌شود).
+                m = get_model(mid)
+                if m and m.get("owner_id") not in (None, uid) and not is_super(uid):
+                    await popup(update, context, tr(lang, "notfound")); return await view_my_ai(update, context)
+                delete_model(mid)
+                log_event("WARN", f"مدلِ شخصی حذف شد: model={mid}", uid)     # PH-05/UI-011
+                await popup(update, context, tr(lang, "deleted")); return await view_my_ai(update, context)
             if b == "myai_e": return await ask(update, context, tr(lang, "s_field_prompt", f=fl(MODEL_FIELDS, d, lang)), "model_field", f"a:myai_v:{mid}", mid=mid, field=d, own=1)
             await run_model_test(update, context, mid, personal=True)
             return await view_my_ai_model(update, context, mid)
@@ -112,7 +151,10 @@ async def dispatch(update, context, data):
             if b == "srctb": on = toggle_source(sid, s["admin_id"], "bot_active"); await popup(update, context, tr(lang, "src_bot_on" if on else "src_bot_off")); return await view_source(update, context, sid)
             if b == "srcapi": return await ask(update, context, tr(lang, "src_api_url"), "src_api_url", f"a:srcv:{sid}", sid=sid)
             if b == "srcapix": return await _confirm(update, context, lang, tr(lang, "confirm_api_del_q", name=esc(s["title"] or s["url"])[:60]), f"a:srcapix2:{sid}", f"a:srcv:{sid}")
-            if b == "srcapix2": set_source_api(sid, "", "", ""); await popup(update, context, tr(lang, "src_api_del")); return await view_source(update, context, sid)
+            if b == "srcapix2":
+                set_source_api(sid, "", "", "")
+                log_event("WARN", f"کلیدِ API منبع پاک شد: source={sid}", uid)     # PH-05/UI-011
+                await popup(update, context, tr(lang, "src_api_del")); return await view_source(update, context, sid)
             if b == "srcr":
                 if not is_super(uid) and not rate_free(f"srcr:{sid}", 60): await popup(update, context, tr(lang, "test_wait", n=rate_left(f"srcr:{sid}", 60))); return await view_source(update, context, sid)
                 await render(update, context, tr(lang, "src_checking"))
@@ -121,7 +163,9 @@ async def dispatch(update, context, data):
                 else: rate_clear(f"srcr:{sid}")
                 await popup(update, context, msg); return await view_source(update, context, sid)
             if b == "srcd": return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(s["title"] or s["url"])[:60]), f"a:srcd2:{sid}", f"a:srcv:{sid}")
-            del_source(sid, s["admin_id"]); await popup(update, context, tr(lang, "src_deleted")); return await view_sources(update, context, s["channel_id"])
+            del_source(sid, s["admin_id"])
+            log_event("WARN", f"منبع حذف شد: source={sid}", uid)                # PH-05/UI-011
+            await popup(update, context, tr(lang, "src_deleted")); return await view_sources(update, context, s["channel_id"])
         if b in ("art", "arte", "artd", "artd2", "artr", "artf", "pub"):
             aid = int(c); art = get_article(aid)
             if not art or (art["admin_id"] != uid and not is_super(uid)): await popup(update, context, tr(lang, "notfound")); return await view_admin_home(update, context)
@@ -133,7 +177,10 @@ async def dispatch(update, context, data):
             if b == "art": return await view_article(update, context, aid)
             if b == "arte": return await ask(update, context, tr(lang, "art_edit_prompt"), "art_edit", f"a:art:{aid}", aid=aid)
             if b == "artd": return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(strip_tags(art["title"] or "")[:60] or f"#{aid}")), f"a:artd2:{aid}", f"a:art:{aid}")
-            if b == "artd2": delete_article(aid, art["admin_id"]); await popup(update, context, tr(lang, "deleted")); return await view_queue(update, context, cid, "ready" if art["status"] in ("ready", "published") else "rejected")
+            if b == "artd2":
+                delete_article(aid, art["admin_id"])
+                log_event("WARN", f"مطلب حذف شد: article={aid}", uid)            # PH-05/UI-011
+                await popup(update, context, tr(lang, "deleted")); return await view_queue(update, context, cid, "ready" if art["status"] in ("ready", "published") else "rejected")
             if b == "artr": article_update(aid, status="ready", reason=""); await popup(update, context, tr(lang, "art_moved")); return await view_article(update, context, aid)
             if b == "artf":
                 if art["full_html"]:
@@ -169,7 +216,10 @@ async def dispatch(update, context, data):
             n = reset_channel_queue(cid); log_event_warn(uid, f"ریست صف کانال {ch['title']}")
             await popup(update, context, tr(lang, "queue_reset_ok", n=n)); return await view_queue(update, context, cid)
         if b == "chdel": return await render(update, context, tr(lang, "ch_del_q", title=esc(ch["title"])), [[B(tr(lang, "yes"), f"a:chdel2:{cid}"), B(tr(lang, "no"), f"a:ch:{cid}")]])
-        if b == "chdel2": del_channel(cid, ch["admin_id"]); await popup(update, context, tr(lang, "ch_deleted")); return await view_admin_home(update, context)
+        if b == "chdel2":
+            del_channel(cid, ch["admin_id"])
+            log_event("WARN", f"کانال حذف شد: channel={cid}", uid)        # PH-05/UI-011
+            await popup(update, context, tr(lang, "ch_deleted")); return await view_admin_home(update, context)
         if b == "tog":
             if d not in TOGGLABLE: return await popup(update, context, tr(lang, "notfound"))
             new = not s.get(d)
@@ -204,7 +254,7 @@ async def dispatch(update, context, data):
                            (uid, new_day, prev["posts"], prev["tests"], prev["posts"], prev["tests"]), commit=True)
             await popup(update, context, tr(lang, "tz_set", city=tz_city(iana, lang), tz=off_label_safe(iana), loc=local_clock(iana))); return await view_sched(update, context, cid)
         if b == "con": return await view_content(update, context, cid)
-        if b == "cat": return await view_cats(update, context, cid)
+        if b == "cat": return await view_cats(update, context, cid, int(d) if d.isdigit() else 0)
         if b == "cata": return await wiz_start(update, context, "cat_add", f"a:cat:{cid}", cid=cid)
         if b == "catv": return await view_cat(update, context, cid, int(d))
         if b == "cats": return await ask(update, context, tr(lang, "cat_style_prompt"), "cat_style", f"a:cat:{cid}", cid=cid, idx=int(d))
@@ -216,10 +266,13 @@ async def dispatch(update, context, data):
             await popup(update, context, tr(lang, "cat_min")); return await view_cats(update, context, cid)
         if b == "catd2":
             cats = s["categories"]; i = int(d)
-            if 0 <= i < len(cats) and len(cats) > 1: cats.pop(i); update_settings(cid, categories=cats); await popup(update, context, tr(lang, "deleted"))
+            if 0 <= i < len(cats) and len(cats) > 1:
+                cats.pop(i); update_settings(cid, categories=cats)
+                log_event("WARN", f"دسته حذف شد: channel={cid} idx={i}", uid)   # PH-05/UI-011
+                await popup(update, context, tr(lang, "deleted"))
             else: await popup(update, context, tr(lang, "cat_min"))
             return await view_cats(update, context, cid)
-        if b == "cri": return await view_crits(update, context, cid)
+        if b == "cri": return await view_crits(update, context, cid, int(d) if d.isdigit() else 0)
         if b == "cria": return await wiz_start(update, context, "crit_add", f"a:cri:{cid}", cid=cid)
         if b == "criv": return await view_crit(update, context, cid, int(d))
         if b == "criw": return await ask(update, context, tr(lang, "crit_w_prompt"), "crit_weight", f"a:cri:{cid}", cid=cid, idx=int(d))
@@ -231,10 +284,13 @@ async def dispatch(update, context, data):
             await popup(update, context, tr(lang, "crit_min")); return await view_crits(update, context, cid)
         if b == "crid2":
             cr = s["criteria"]; i = int(d)
-            if 0 <= i < len(cr) and len(cr) > 1: cr.pop(i); update_settings(cid, criteria=cr); await popup(update, context, tr(lang, "deleted"))
+            if 0 <= i < len(cr) and len(cr) > 1:
+                cr.pop(i); update_settings(cid, criteria=cr)
+                log_event("WARN", f"معیار حذف شد: channel={cid} idx={i}", uid)   # PH-05/UI-011
+                await popup(update, context, tr(lang, "deleted"))
             else: await popup(update, context, tr(lang, "crit_min"))
             return await view_crits(update, context, cid)
-        if b == "src": return await view_sources(update, context, cid)
+        if b == "src": return await view_sources(update, context, cid, int(d) if d.isdigit() else 0)
         if b == "srca":
             if lim["max_sources"] is not None and count_sources(uid) >= lim["max_sources"]: await popup(update, context, tr(lang, "limit_sources", n=lim["max_sources"])); return await view_sources(update, context, cid)
             return await ask(update, context, tr(lang, "src_add_prompt"), "src_add", f"a:src:{cid}", cid=cid)
@@ -246,25 +302,42 @@ async def dispatch(update, context, data):
         if b == "home": return await view_super_home(update, context)
         if b == "report": return await render(update, context, report_text(None, None, lang), [[B(tr(lang, "refresh"), "s:report")], [B(tr(lang, "back"), "s:home")]])
         if b == "health": return await view_health(update, context)
-        if b == "auto": new = not gget("automation_enabled", True); gset("automation_enabled", new); await popup(update, context, tr(lang, "s_auto_on" if new else "s_auto_off")); return await view_super_home(update, context)
+        if b == "auto":
+            # PH-05/UI-012: خاموش/روشن کردنِ فعالیتِ **کلِ ربات** با یک ضربه ⇒ تأییدِ دومرحله‌ای
+            new = not gget("automation_enabled", True)
+            return await _confirm(update, context, lang, tr(lang, "confirm_reset_q", what=tr(lang, "s_what_auto")),
+                                  f"s:auto2:{1 if new else 0}", "s:home")
+        if b == "auto2":
+            new = bool(int(c or 0))
+            gset("automation_enabled", new)
+            log_event("WARN", f"فعالیتِ کلِ ربات {'روشن' if new else 'خاموش'} شد", uid)   # PH-05/UI-011
+            await popup(update, context, tr(lang, "s_auto_on" if new else "s_auto_off")); return await view_super_home(update, context)
         if b == "ref": return await view_s_ref(update, context)   # REF-3 (فاز ۱۲): تنظیمات پاداش دعوت
         if b == "ref_p": return await ask(update, context, tr(lang, "s_ref_prompt_p"), "refpct", "s:ref")
         if b == "ref_c": return await ask(update, context, tr(lang, "s_ref_prompt_c"), "refcap", "s:ref")
         if b == "texts": return await view_s_texts(update, context)
         if b == "mand": return await view_s_mand(update, context)
         if b == "mand_t":
-            if c not in config.LANGS: return
+            if c not in config.LANGS: return await popup(update, context, tr(lang, "notfound"))
             cur = mandatory_cfg(c); mandatory_set(c, on=not cur.get("on")); await popup(update, context, tr(lang, "saved")); return await view_s_mand(update, context)
         if b == "mand_e":
-            if c not in config.LANGS or d not in ("id", "user"): return
+            if c not in config.LANGS or d not in ("id", "user"): return await popup(update, context, tr(lang, "notfound"))
             return await ask(update, context, tr(lang, "s_field_prompt", f=tr(lang, "s_mand_id" if d == "id" else "s_mand_user")), "mand_field", "s:mand", lg=c, field=d)
         if b == "txt": return await ask(update, context, tr(lang, "s_text_prompt", k=c, lg=d), "gtext", "s:texts", key=c, lg=d)
         if b == "txtr": return await _confirm(update, context, lang, tr(lang, "confirm_txtr_q"), f"s:txtr2:{c}:{d}", "s:texts")
-        if b == "txtr2": gtext_set_wrap(c, d); await popup(update, context, tr(lang, "s_text_reset_done")); return await view_s_texts(update, context)
+        if b == "txtr2":
+            # PH-05/SEC-014: فقط کلیدهای معتبر و زبان‌های معتبر ⇒ نباید سطرهای بی‌ربط در
+            # settings ساخته شوند (مسیرِ s:txt همین اعتبارسنجی را دارد).
+            from newsbot.ui_i18n import TEXT_KEYS
+            if c not in TEXT_KEYS or d not in config.LANGS:
+                await popup(update, context, tr(lang, "notfound")); return await view_s_texts(update, context)
+            gtext_set_wrap(c, d)
+            log_event("WARN", f"متنِ ربات بازنشانی شد: key={c} lang={d}", uid)   # PH-05/UI-011
+            await popup(update, context, tr(lang, "s_text_reset_done")); return await view_s_texts(update, context)
         if b == "bc": return await ask(update, context, tr(lang, "s_bc_prompt"), "bc", "s:home")
         if b == "bc_go":
             src = ud.pop("bc_src", None)
-            if not src: return await view_super_home(update, context)
+            if not src: return await popup(update, context, tr(lang, "notfound"))
             users = list_users(); ok = fail = 0; total = len(users)
             await operation_status(context, tr(lang, "s_bc_sending", n=total))
             for i, u in enumerate(users, 1):
@@ -282,13 +355,27 @@ async def dispatch(update, context, data):
             pl = get_plan(int(c))
             if not pl: await popup(update, context, tr(lang, "notfound")); return await view_s_plans(update, context)
             update_plan(int(c), active=0 if pl["active"] else 1); await popup(update, context, tr(lang, "saved")); return await view_s_plan(update, context, int(c))
-        if b == "plan_free": q("UPDATE plans SET is_free=0", commit=True); update_plan(int(c), is_free=1); await popup(update, context, tr(lang, "s_plan_free_done")); return await view_s_plan(update, context, int(c))
+        if b == "plan_free":
+            # PH-05/UI-012 + FIN-020: (۱) تأییدِ دومرحله‌ای (قبلاً یک ضربه، کلِ قیمت‌گذاری را
+            # عوض می‌کرد) و (۲) فقط **همان** پلن علامت می‌خورد — قبلاً is_freeِ همهٔ پلن‌ها صفر
+            # می‌شد و اگر پلنِ دیگری انتخاب شده بود، هیچ پلنِ رایگانی باقی نمی‌ماند.
+            pl = get_plan(int(c))
+            if not pl: await popup(update, context, tr(lang, "notfound")); return await view_s_plans(update, context)
+            return await _confirm(update, context, lang, tr(lang, "confirm_reset_q", what=tr(lang, "s_what_plan_free")),
+                                  f"s:plan_free2:{c}", f"s:plan:{c}")
+        if b == "plan_free2":
+            pid2 = int(c)
+            q("UPDATE plans SET is_free=0 WHERE id<>?", (pid2,), commit=True)
+            update_plan(pid2, is_free=1)
+            log_event("WARN", f"پلنِ رایگان تغییر کرد: plan={pid2}", uid)      # PH-05/UI-011
+            await popup(update, context, tr(lang, "s_plan_free_done")); return await view_s_plan(update, context, pid2)
         if b == "plan_d":
             pl = get_plan(int(c))
             if not pl: await popup(update, context, tr(lang, "notfound")); return await view_s_plans(update, context)
             return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(plan_txt(pl, "name", lang))), f"s:plan_d2:{c}", f"s:plan:{c}")
         if b == "plan_d2":
             ok = delete_plan(int(c))
+            log_event("WARN", f"پلن حذف شد: plan={c} ok={bool(ok)}", uid)      # PH-05/UI-011
             await popup(update, context, tr(lang, "s_plan_deleted" if ok else "s_plan_in_use"))
             return await view_s_plans(update, context)
         if b == "discs": return await view_s_discs(update, context)
@@ -300,29 +387,54 @@ async def dispatch(update, context, data):
             dd = disc_get(c)
             if not dd: await popup(update, context, tr(lang, "notfound")); return await view_s_discs(update, context)
             return await _confirm(update, context, lang, tr(lang, "confirm_del_q", name=esc(dd["code"])), f"s:disc_d2:{c}", f"s:disc:{c}")
-        if b == "disc_d2": disc_delete(c); await popup(update, context, tr(lang, "deleted")); return await view_s_discs(update, context)
+        if b == "disc_d2":
+            disc_delete(c)
+            log_event("WARN", f"کد تخفیف حذف شد: code={c}", uid)                # PH-05/UI-011
+            await popup(update, context, tr(lang, "deleted")); return await view_s_discs(update, context)
         if b == "users": return await view_s_users(update, context, int(c or 0))
         if b == "admins": return await view_s_users(update, context, int(c or 0), role="admin")
-        if b == "user": return await view_s_user(update, context, int(c))
+        if b == "user": return await view_s_user(update, context, int(c), int(d) if d.isdigit() else 0)
         tid = int(c) if c.lstrip("-").isdigit() else 0
         if b == "uplan": return await render(update, context, tr(lang, "s_plan_pick"), pairs([B(f"{plan_txt(pl, 'name', lang)} ({pl['days']}d)", f"s:uassign:{tid}:{pl['id']}") for pl in list_plans(False)]) + [[B(tr(lang, "back"), f"s:user:{tid}")]])
         if b == "uassign":
+            # PH-05/UI-012: اعطای پلن (اعطای ارزش) ⇒ تأییدِ دومرحله‌ای
+            pl = get_plan(int(d))
+            if not pl: await popup(update, context, tr(lang, "notfound")); return await view_s_user(update, context, tid)
+            return await _confirm(update, context, lang, tr(lang, "confirm_reset_q", what=tr(lang, "s_what_uassign")),
+                                  f"s:uassign2:{tid}:{d}", f"s:user:{tid}")
+        if b == "uassign2":
             exp, queued = assign_plan(tid, int(d)); pl = get_plan(int(d)); ul = user_lang(tid) or "fa"; ds = fmt_date_safe(exp, admin_offset(tid))
+            log_event("WARN", f"پلن اعطا شد: user={tid} plan={d} queued={bool(queued)}", uid)   # PH-05/UI-011
             await notify_user_wrap(tid, tr(ul, "pay_approved", name=esc(plan_txt(pl, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=ds)))
             await popup(update, context, tr(lang, "s_assigned_q" if queued else "s_assigned", d=ds) + "\n" + tr(lang, "assign_role_note")); return await view_s_user(update, context, tid)
         if b == "urevoke": return await _confirm(update, context, lang, tr(lang, "confirm_revoke_q"), f"s:urevoke2:{tid}", f"s:user:{tid}")
-        if b == "urevoke2": revoke_plan(tid); await popup(update, context, tr(lang, "s_revoked")); return await view_s_user(update, context, tid)
+        if b == "urevoke2":
+            revoke_plan(tid)
+            log_event("WARN", f"پلنِ کاربر لغو شد: user={tid}", uid)            # PH-05/UI-011
+            await popup(update, context, tr(lang, "s_revoked")); return await view_s_user(update, context, tid)
         if b == "uban":
             u2 = get_user(tid)
             if not u2: await popup(update, context, tr(lang, "notfound")); return await view_s_users(update, context, 0)
             return await _confirm(update, context, lang, tr(lang, "confirm_unban_q" if u2["banned"] else "confirm_ban_q"), f"s:uban2:{tid}", f"s:user:{tid}")
-        if b == "uban2": q("UPDATE users SET banned=1-banned WHERE id=?", (tid,), commit=True); await popup(update, context, tr(lang, "s_banned" if get_user(tid)["banned"] else "s_unbanned")); return await view_s_user(update, context, tid)
+        if b == "uban2":
+            q("UPDATE users SET banned=1-banned WHERE id=?", (tid,), commit=True)
+            log_event("WARN", f"مسدودی/رفعِ مسدودیِ کاربر: user={tid} banned_now={bool(get_user(tid)['banned'])}", uid)   # PH-05/UI-011
+            await popup(update, context, tr(lang, "s_banned" if get_user(tid)["banned"] else "s_unbanned")); return await view_s_user(update, context, tid)
         if b in ("ufree", "utests", "uposts"):
             what = tr(lang, "s_what_free" if b == "ufree" else ("s_what_tests" if b == "utests" else "s_what_posts"))
             return await _confirm(update, context, lang, tr(lang, "confirm_reset_q", what=what), f"s:{b}2:{tid}", f"s:user:{tid}")
-        if b == "ufree2": q("UPDATE users SET free_used=0 WHERE id=?", (tid,), commit=True); await popup(update, context, tr(lang, "s_free_reset")); return await view_s_user(update, context, tid)
-        if b == "utests2": usage_reset(tid, "tests"); await popup(update, context, tr(lang, "s_tests_reset")); return await view_s_user(update, context, tid)
-        if b == "uposts2": usage_reset(tid, "posts"); await popup(update, context, tr(lang, "s_posts_reset")); return await view_s_user(update, context, tid)
+        if b == "ufree2":
+            q("UPDATE users SET free_used=0 WHERE id=?", (tid,), commit=True)
+            log_event("WARN", f"بازنشانیِ سهمیهٔ رایگان: user={tid}", uid)       # PH-05/UI-011
+            await popup(update, context, tr(lang, "s_free_reset")); return await view_s_user(update, context, tid)
+        if b == "utests2":
+            usage_reset(tid, "tests")
+            log_event("WARN", f"بازنشانیِ شمارندهٔ تست: user={tid}", uid)          # PH-05/UI-011
+            await popup(update, context, tr(lang, "s_tests_reset")); return await view_s_user(update, context, tid)
+        if b == "uposts2":
+            usage_reset(tid, "posts")
+            log_event("WARN", f"بازنشانیِ شمارندهٔ پست: user={tid}", uid)          # PH-05/UI-011
+            await popup(update, context, tr(lang, "s_posts_reset")); return await view_s_user(update, context, tid)
         if b == "umsg": return await ask(update, context, tr(lang, "s_umsg_prompt"), "umsg", f"s:user:{tid}", target=tid)
         if b == "ureport":
             chs = list_channels_wrap(tid)
@@ -346,7 +458,9 @@ async def dispatch(update, context, data):
         if b == "model_d2":
             mid = int(c)
             if gget("test_model_id") == mid: gset("test_model_id", None)
-            delete_model(mid); await popup(update, context, tr(lang, "deleted")); return await view_s_models(update, context)
+            delete_model(mid)
+            log_event("WARN", f"مدلِ عمومی حذف شد: model={mid}", uid)                # PH-05/UI-011
+            await popup(update, context, tr(lang, "deleted")); return await view_s_models(update, context)
         if b == "model_e": return await ask(update, context, tr(lang, "s_field_prompt", f=fl(MODEL_FIELDS, d, lang)), "model_field", f"s:model:{c}", mid=int(c), field=d)
         if b == "model_test":
             await run_model_test(update, context, int(c))
@@ -380,7 +494,7 @@ async def dispatch(update, context, data):
         if b == "pay_no": return await _confirm(update, context, lang, tr(lang, "confirm_pay_no_q"), f"s:pay_no2:{c}" + (f":{d}" if d else ""), "s:pays")
         if b == "pay_refund":
             # PH-01/FIN-013: بازگشتِ وجه به کیف پولِ مشتری (با رسید رسمی) — تأییدِ دومرحله‌ای
-            return await _confirm(update, context, lang, tr(lang, "confirm_pay_refund_q"),
+            return await _confirm(update, context, lang, tr(lang, "confirm_pay_refund_q", id=c),
                                  f"s:pay_refund2:{c}", "s:pays")
         if b == "pay_refund2":
             from newsbot.core_payments import refund_payment
@@ -438,6 +552,10 @@ def list_models_wrap():
     return list_models()
 
 
+# PH-05/UI-004: مسیرهایی که کارشان طول می‌کشد ⇒ پاسخِ فوری به کاربر (اسپینرِ دکمه)
+SLOW_ROUTES = ("s:bc_go", "s:models_test", "s:model_test", "a:srcr", "a:pub", "a:myai_t", "a:artf", "s:bc")
+
+
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     qy = update.callback_query; u = update.effective_user; context._callback_answered = False
     if not global_rate_ok(u.id):   # SEC-03: محدودیت سراسری per-user (کلیک‌های سیل‌آسا)
@@ -452,6 +570,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ensure_user(u.id, u.username, u.full_name, premium=getattr(u, "is_premium", None))
     if get_user(u.id)["banned"] and not is_super(u.id): return await qy.answer(tr(L(update), "banned"), show_alert=True)
     data = qy.data or "noop"
+    # PH-05/UI-004: مسیرهای کند باید **فوراً** پاسخ بگیرند؛ وگرنه اسپینرِ دکمه روی
+    # موبایل دقیقه‌ها می‌ماند و کاربر چند بار می‌زند (و کار تکراری می‌سازد).
+    if any(data.startswith(r) for r in SLOW_ROUTES):
+        try: await qy.answer(tr(user_lang(u.id) or "fa", "preparing"), show_alert=False)
+        except Exception: pass
     parts = data.split(":"); action = parts[1] if len(parts) > 1 else ""
     navigation = data in ("home", "c:cancel") or action in (
         "home", "plans", "plan", "myai", "myai_v", "srcv", "src", "art", "ch",
@@ -468,7 +591,13 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if op and not op.replaced_status:
                 await popup(update, context, operation_text(L(update), "cancelled"))
             return await dispatch(update, context, back)
+        # PH-05/UI-010: اگر این ضربه، فرمِ در حالِ تکمیلِ کاربر را دور می‌ریزد، **بی‌صدا**
+        # نریزد ⇒ یک هشدار می‌دهد (وگرنه کاربر دوباره همه‌چیز را تایپ می‌کند).
+        _st = context.user_data.get("await") or {}
+        _will_drop = bool(_st) and _st.get("kind") != "receipt" and "await" not in keep
         clear_interaction(context, keep=keep)
+        if _will_drop:
+            await popup(update, context, tr(L(update), "form_cancelled"))
         # PH-03/UI-009: فرمِ رسیدِ پرداخت باز می‌ماند ⇒ مشتری باید بداند هنوز می‌تواند
         # رسید را بفرستد (پیش از این، فرم بی‌صدا می‌پرید و عکسِ رسید «ناشناخته» رد می‌شد).
         if (context.user_data.get("await") or {}).get("kind") == "receipt":

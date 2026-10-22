@@ -287,21 +287,21 @@ def _hard_split(text, limit):
     clean = sanitize_html(text)
     if not clean: return []
     if len(clean) <= limit: return [clean]
-    chunks, cur, stack = [], [], []
+    chunks, cur, entries = [], [], []
     cur_len = content_len = 0
 
     def suffix_len():
-        return sum(len(name) + 3 for _, name in stack)
+        return sum(len(e[0]) + 3 for e in entries if e[2])
 
     def reopen():
-        return "".join(tag for tag, _ in stack)
+        return "".join(e[1] for e in entries if e[2])
 
     def flush():
         nonlocal cur, cur_len, content_len
         if content_len:
-            out = "".join(cur) + "".join("</%s>" % name for _, name in reversed(stack))
+            out = "".join(cur) + "".join("</%s>" % e[0] for e in reversed(entries) if e[2])
             if strip_tags(out).strip(): chunks.append(out)
-        cur = [reopen()] if stack else []
+        cur = [reopen()] if entries else []
         cur_len = len(reopen())
         content_len = 0
 
@@ -309,27 +309,30 @@ def _hard_split(text, limit):
         if not token: continue
         m = _SPLIT_TAG_FULL.fullmatch(token)
         if m:
-            closing, name = m.group(1), m.group(2).lower()
-            if not closing:
-                if cur_len + len(token) + suffix_len() + len(name) + 3 > limit:
+            name = m.group(2).lower()
+            if name not in ALLOWED: continue
+            if not m.group(1):
+                keep = cur_len + len(token) + suffix_len() + len(name) + 4 <= limit
+                if not keep and content_len:
                     flush()
-                if cur_len + len(token) + suffix_len() + len(name) + 3 <= limit:
-                    cur.append(token); cur_len += len(token); stack.append((token, name))
-            elif any(n == name for _, n in stack):
-                extra = len(token) - (len(name) + 3)
-                if cur_len + extra + suffix_len() > limit:
-                    flush()
-                if cur_len + extra + suffix_len() <= limit:
+                    keep = cur_len + len(token) + suffix_len() + len(name) + 4 <= limit
+                if keep:
                     cur.append(token); cur_len += len(token)
-                    while stack:
-                        _, n = stack.pop()
-                        if n == name: break
+                entries.append([name, token, keep])
+            elif entries and entries[-1][0] == name:
+                entry = entries.pop()
+                if entry[2]:
+                    if cur_len + len(token) + suffix_len() > limit:
+                        flush()
+                    cur.append(token); cur_len += len(token)
         else:
             for unit in _SPLIT_UNIT.findall(token):
                 if cur_len + len(unit) + suffix_len() > limit:
                     flush()
-                if cur_len + len(unit) + suffix_len() > limit and stack:
-                    stack.clear(); cur = []; cur_len = content_len = 0
+                if cur_len + len(unit) + suffix_len() > limit:
+                    for e in entries: e[2] = False
+                    cur, cur_len = [], 0
+                    content_len = 0
                 if cur_len + len(unit) + suffix_len() <= limit:
                     cur.append(unit); cur_len += len(unit); content_len += len(unit)
     if content_len: flush()

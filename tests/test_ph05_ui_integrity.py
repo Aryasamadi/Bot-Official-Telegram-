@@ -207,6 +207,19 @@ def test_split_html_preserves_content_when_escaping_expands_past_the_limit():
     _assert_complete_and_valid(mixed, limit)
 
 
+def test_split_html_stays_valid_when_long_tags_and_deep_nesting_do_not_fit():
+    limit = 40
+    long_url = "https://example.com/" + "p" * 200
+    samples = [
+        '<b><a href="' + long_url + '">' + "x" * 300 + "</a></b>",
+        "<blockquote expandable><b><i><u>" + "y" * 300 + "</u></i></b></blockquote>",
+        "<b>" * 12 + "z" * 300 + "</b>" * 12,
+        '<b><i><u><a href="' + long_url + '">' + "م" * 300 + "</a></u></i></b>",
+    ]
+    for text in samples:
+        _assert_complete_and_valid(text, limit)
+
+
 @pytest.mark.parametrize("limit", [50, 512, 4096])
 def test_split_html_preserves_plain_escaped_html_and_boundary_content(limit):
     samples = [

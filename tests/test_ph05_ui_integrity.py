@@ -220,6 +220,23 @@ def test_split_html_stays_valid_when_long_tags_and_deep_nesting_do_not_fit():
         _assert_complete_and_valid(text, limit)
 
 
+def test_split_html_stays_valid_when_a_kept_long_link_forces_a_nested_tag_out():
+    """رگرسیونِ واقعیِ 6ec627e: تگِ inner که جا نمی‌شود نباید تگِ outerِ هم‌نام را ببندد."""
+    limit = 100
+    long_url = "https://example.com/" + "p" * 55
+    text = '<b><a href="' + long_url + '"><b>' + "x" * 300 + "</b></a></b>"
+    _assert_complete_and_valid(text, limit)
+
+
+def test_split_html_stays_valid_when_a_nested_blockquote_cannot_fit():
+    """رگرسیونِ 6ec627e: closing تگِ blockquoteِ ردشده نباید اجدادِ باز را ببندد."""
+    limit = 70
+    text = ("<blockquote expandable><b><i><blockquote>"
+            + "q" * 300
+            + "</blockquote></i></b></blockquote>")
+    _assert_complete_and_valid(text, limit)
+
+
 @pytest.mark.parametrize("limit", [50, 512, 4096])
 def test_split_html_preserves_plain_escaped_html_and_boundary_content(limit):
     samples = [

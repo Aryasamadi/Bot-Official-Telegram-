@@ -128,7 +128,7 @@ safe fix. Each phase is **self-contained** and ends in a mergeable, revertable s
 | **Required tests** | New: no rendered user string may match `\{[a-z_]+\}`; a plan with a 100-character name must still render; `split_html` never emits an empty or over-limit chunk (property test over 0..20 000 characters); every `tr(lang,"X")` literal exists in `TXT`; fa/en placeholder sets are identical for every key; every `*2` execute route writes a `log_event`; `s:auto`, `s:plan_free` and `s:uassign` require confirmation; every screen reachable from the router is reachable from the home screen; `docs/PERMISSIONS.md` section 8 lists exactly the real two-phase routes. |
 | **Acceptance criteria** | (1) No user-visible message contains an unresolved placeholder. (2) No screen can be rejected by Telegram for label or markup length. (3) Every destructive and every financial super-admin action is two-phase and audited. (4) The customer home screen exposes support, invite, help and language. (5) The fa/en dictionaries are structurally and semantically in parity. (6) `docs/PERMISSIONS.md` matches the code. |
 | **Rollback strategy** | Presentation-only; revert per file. The new home-screen buttons can be reverted without a data migration. |
-| **Status** | `OPEN` |
+| **Status** | `IMPLEMENTED_AWAITING_MERGE` (2026-10-21) — branch `feature/ph-05-ui-ux-integrity`, PR #32. 615 tests green, 17 new. 28 findings addressed (UI-001…UI-026، SEC-008/009/014/015/016، FIN-020). **Not merged.** |
 | **Owner approval required** | **YES** |
 
 ---

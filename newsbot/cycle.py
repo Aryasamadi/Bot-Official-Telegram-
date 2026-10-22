@@ -77,9 +77,33 @@ def _within_lookback(pub_iso, s, hours=None):
     return (now_utc() - d) <= timedelta(hours=h)
 
 def _pub_err(code, lang):
-    if code == "bot_not_admin": return DIAG["bot_not_admin"][1 if lang == "en" else 0]
-    if code == "duplicate": return "duplicate" if lang == "en" else "تکراری"
-    return code.replace("send_failed:", "")
+    """پیامِ خطای انتشار به زبانِ کاربر (PH-05/UI-016).
+
+    پیش از این فقط دو کد ترجمه می‌شدند و بقیه **خام** (مثل «not_ready») به کاربرِ
+    فارسی‌زبان نشان داده می‌شد."""
+    c = str(code or "").replace("send_failed:", "").strip()
+    if c == "bot_not_admin": return DIAG["bot_not_admin"][1 if lang == "en" else 0]
+    if c == "duplicate": return "duplicate" if lang == "en" else "تکراری"
+    en = {"not_ready": "the post is not ready yet", "no_channel": "no channel is linked",
+          "not_found": "the post was not found", "no_source": "no source is linked",
+          "empty": "there is nothing to publish", "no_media": "the media is missing",
+          "forbidden": "the bot cannot post in this channel",
+          "too_long": "the post is too long for Telegram",
+          "flood": "too many requests — try again shortly",
+          "no_plan": "you need an active plan", "quota": "today's quota is used up",
+          "locked": "this channel is busy", "cancelled": "the operation was cancelled",
+          "ai_error": "the AI service did not respond", "unreachable": "the source is unreachable"}
+    fa = {"not_ready": "مطلب هنوز آماده نیست", "no_channel": "هیچ کانالی وصل نیست",
+          "not_found": "مطلب پیدا نشد", "no_source": "هیچ منبعی وصل نیست",
+          "empty": "محتوایی برای انتشار نیست", "no_media": "رسانه موجود نیست",
+          "forbidden": "ربات اجازهٔ ارسال در این کانال را ندارد",
+          "too_long": "متن برای تلگرام خیلی بلند است",
+          "flood": "درخواست‌های زیاد — کمی بعد دوباره تلاش کنید",
+          "no_plan": "پلنِ فعال ندارید", "quota": "سهمیهٔ امروز تمام شده",
+          "locked": "این کانال مشغول است", "cancelled": "عملیات لغو شد",
+          "ai_error": "سرویس هوش مصنوعی پاسخ نداد", "unreachable": "منبع در دسترس نیست"}
+    if c in en: return en[c] if lang == "en" else fa[c]
+    return c
 
 def article_src_name(aid):
     """نام منبعِ تولیدکننده‌ی یک مقاله (برای نمایش به مدیر در تست فوری و چرخه‌ی خودکار)."""

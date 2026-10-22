@@ -275,15 +275,96 @@ def finish_ok(t):
     if re.search(r"[\w؀-ۿ،,؛:\u200c\u200d]$", e): return t.rstrip() + " …"
     return t
 
+_SPLIT_TAG = re.compile(r"(<[^>]*>)")
+_SPLIT_TAG_FULL = re.compile(r"<(/?)([a-zA-Z-]+)([^>]*)>")
+_SPLIT_UNIT = re.compile(r"&(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]*);|.", re.S)
+
+def _hard_split(text, limit):
+    """یک تکهٔ خیلی بلند را به تکه‌های معتبر می‌شکند (UI-005).
+
+    هر تکه HTML معتبر و ≤ limit است و **محتوا حذف نمی‌شود** (برخلافِ یک برشِ ساده)."""
+    limit = max(1, int(limit))
+    clean = sanitize_html(text)
+    if not clean: return []
+    if len(clean) <= limit: return [clean]
+    chunks, cur, entries = [], [], []
+    cur_len = content_len = 0
+
+    def suffix_len():
+        return sum(len(e[0]) + 3 for e in entries if e[2])
+
+    def reopen():
+        return "".join(e[1] for e in entries if e[2])
+
+    def flush():
+        nonlocal cur, cur_len, content_len
+        if content_len:
+            out = "".join(cur) + "".join("</%s>" % e[0] for e in reversed(entries) if e[2])
+            if strip_tags(out).strip(): chunks.append(out)
+        cur = [reopen()] if entries else []
+        cur_len = len(reopen())
+        content_len = 0
+
+    for token in _SPLIT_TAG.split(clean):
+        if not token: continue
+        m = _SPLIT_TAG_FULL.fullmatch(token)
+        if m:
+            name = m.group(2).lower()
+            if name not in ALLOWED: continue
+            if not m.group(1):
+                keep = cur_len + len(token) + suffix_len() + len(name) + 4 <= limit
+                if not keep and content_len:
+                    flush()
+                    keep = cur_len + len(token) + suffix_len() + len(name) + 4 <= limit
+                if keep:
+                    cur.append(token); cur_len += len(token)
+                entries.append([name, token, keep])
+            elif entries and entries[-1][0] == name:
+                entry = entries.pop()
+                if entry[2]:
+                    if cur_len + len(token) + suffix_len() > limit:
+                        flush()
+                    cur.append(token); cur_len += len(token)
+        else:
+            for unit in _SPLIT_UNIT.findall(token):
+                if cur_len + len(unit) + suffix_len() > limit:
+                    flush()
+                if cur_len + len(unit) + suffix_len() > limit:
+                    for e in entries: e[2] = False
+                    cur, cur_len = [], 0
+                    content_len = 0
+                if cur_len + len(unit) + suffix_len() <= limit:
+                    cur.append(unit); cur_len += len(unit); content_len += len(unit)
+    if content_len: flush()
+    return [c for c in chunks if c.strip()]
+
+
 def split_html(text, limit=None):
+    """متن را به تکه‌های معتبرِ تلگرام می‌شکند.
+
+    PH-05/UI-005: پیش از این، یک پاراگرافِ بلند ** intact** بیرون می‌آمد (بیش از حدِ
+    تلگرام ⇒ «message is too long») و تکهٔ خالی هم بیرون می‌آمد (⇒ «MESSAGE_TEXT_EMPTY»).
+    حالا: هیچ تکه‌ای خالی نیست و هیچ تکه‌ای از limit رد نمی‌شود."""
     limit = limit or config.MSG_LIMIT
+    text = text or ""
+    if not text.strip(): return []
     if len(text) <= limit: return [text]
     chunks, cur = [], ""
     for para in text.split("\n"):
-        if len(cur) + len(para) + 1 > limit: chunks.append(sanitize_html(cur)); cur = para
-        else: cur = f"{cur}\n{para}" if cur else para
+        if len(para) > limit:            # پاراگرافِ بلند ⇒ جدا و با برشِ سخت شکسته می‌شود
+            if cur: chunks.append(sanitize_html(cur)); cur = ""
+            chunks.extend(_hard_split(para, limit))
+            continue
+        if cur and len(cur) + len(para) + 1 > limit:
+            chunks.append(sanitize_html(cur)); cur = para
+        else:
+            cur = f"{cur}\n{para}" if cur else para
     if cur: chunks.append(sanitize_html(cur))
-    return chunks
+    out = []
+    for c in chunks:
+        if len(c) <= limit: out.append(c)
+        else: out.extend(_hard_split(c, limit))     # escape می‌تواند از سقف رد کند
+    return [c for c in out if c.strip()]
 
 def preview_text(html_text, n=100):
     t = re.sub(r"\s+", " ", strip_tags(html_text).replace("\n", " ")).strip()

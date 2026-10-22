@@ -67,14 +67,20 @@ def test_mandatory_channel_invalid_id_falls_back_to_username():
 # ══════════════════════════════════════════════════════════════════════════
 # ۲) رفرال — دستور /ref بدون دکمهٔ جدید
 # ══════════════════════════════════════════════════════════════════════════
-def test_ref_command_registered_and_no_home_button():
+def test_ref_command_registered_and_the_home_screen_offers_the_referral_route():
+    """PH-05/UI-014: صفحهٔ خانه باید **دسترسی** به دعوت/پشتیبانی/راهنما/زبان بدهد.
+
+    پیش از این، صفحهٔ خانه فقط یک دکمه (پلن‌ها) داشت و مسیرِ ``u:ref`` از هیچ صفحه‌ای
+    قابل‌دسترس نبود ⇒ مشتریِ غیرفنی نمی‌توانست پشتیبانی یا دعوت را پیدا کند."""
     from newsbot.ui_views_user import view_user_home
     from newsbot.ui_commands import cmd_ref
     assert callable(cmd_ref), "دستور /ref باید وجود داشته باشد"
 
     import inspect
     src = inspect.getsource(view_user_home)
-    assert "u:ref" not in src, "دکمهٔ رفرال نباید در منوی کاربر باشد"
+    assert "u:ref" in src, "دکمهٔ دعوت باید در صفحهٔ خانه باشد"
+    assert "u:man" in src, "دکمهٔ پشتیبانی باید در صفحهٔ خانه باشد"
+    assert "u:help" in src and "u:lang" in src, "دکمهٔ راهنما و زبان باید در صفحهٔ خانه باشد"
     assert "plans_btn" in src
 
 
@@ -136,8 +142,10 @@ def test_model_cap_covers_user_and_admin_models():
 # ۵) قاعدهٔ نمایش پیام بر اساس طول
 # ══════════════════════════════════════════════════════════════════════════
 def test_popup_threshold_constants():
+    """PH-05/UI-026: تلگرام تا ۲۰۰ کاراکتر را به‌صورت پاپ‌آپ می‌پذیرد ⇒ آستانه ۲۰۰ است
+    (پیش از این ۳۵ بود و حدود ۴۰ پیامِ مدیر به‌صورت پیامِ جداگانه می‌رسید)."""
     from newsbot.ui_widgets import POPUP_MAX_CHARS, POPUP_TEMP_SECONDS
-    assert POPUP_MAX_CHARS == 35
+    assert POPUP_MAX_CHARS == 200
     assert POPUP_TEMP_SECONDS == 10
 
 
@@ -188,11 +196,11 @@ def test_short_message_is_popup():
 
 
 def test_long_message_is_temp_with_10s():
-    """متن بلند (>=35) باید پیام خودحذف‌شوندهٔ ۱۰ثانیه‌ای باشد."""
+    """متنِ خیلی بلند (>۲۰۰) باید پیام خودحذف‌شوندهٔ ۱۰ثانیه‌ای باشد (PH-05/UI-026)."""
     import asyncio, time as _t
     from newsbot.ui_widgets import popup, _temp_messages
     qy = _FakeAns(); up = _Upd(qy); ctx = _Ctx()
-    long_txt = "این یک پیام بلند است که باید در چت به مدت ده ثانیه دیده شود"
+    long_txt = "این یک پیام خیلی بلند است که باید در چت به مدت ده ثانیه دیده شود " + ("ا" * 200)
     asyncio.run(popup(up, ctx, long_txt))
     assert not qy.shown, "پیام بلند نباید پاپ‌آپ شود"
     assert ctx.bot.sent, "پیام بلند باید در چت فرستاده شود"

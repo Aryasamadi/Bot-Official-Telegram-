@@ -143,6 +143,9 @@ def settle_publication(aid, ch, journal):
             conn.execute("UPDATE articles SET status='published',links=?,reason='' WHERE id=?", (json.dumps([link]), aid))
         # سهمیهٔ تست در reserve_publication اتمی رزرو شده است؛ اینجا دوباره شمرده نمی‌شود
         conn.execute("DELETE FROM pub_journal WHERE article_id=?", (aid,))
+        # PH-06/OBS-002: شاهدِ «انتشار موفق» برای dead-man/health — فقط پس از settle واقعی.
+        conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('last_successful_publish',?)",
+                     (json.dumps(now_iso(), ensure_ascii=False),))
     _trx(_go)
     if journal.get("test_user") is not None: rate_mark(f"test:{ch['id']}")
 

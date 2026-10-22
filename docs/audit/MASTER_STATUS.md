@@ -5,7 +5,7 @@
 
 | Field | Value |
 |---|---|
-| **Last audit timestamp** | 2026-10-20 (UTC) · **verification pass:** 2026-10-20 (phase `PH-00`) |
+| **Last audit timestamp** | 2026-10-20 (UTC) · **verification pass:** 2026-10-20 (phase `PH-00`) · **remediation update:** 2026-10-23 (`PH-06`) |
 | **Audited repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Remote** | `https://github.com/Aryasamadi/Bot-Official-Telegram-.git` |
 | **Audited branch** | `main` |
@@ -14,9 +14,9 @@
 | **Audit workspace** | `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (clean clone of `main` @ `08bc876`; audit docs written here) |
 | **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **1 CRITICAL** financial defect (now **reproduced**), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
 | **Audit completion** | **~94 %** (all 20 audit domains inspected; a second verification pass executed the FIN-001 reproduction and re-ran the suite; production runtime verification unavailable) |
-| **Current phase** | `PH-00`→`PH-08` merged → `PH-03` merged → `PH-05` **implemented (PR #32), awaiting merge** |
-| **Current phase status** | PRs #20–#31 merged · **#32** PH-05 UI/UX integrity (open) |
-| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` (open: #31 D1 schema ordering → #32 PH-05; then PH-06 → PH-07 → PH-09 → PH-10 → PH-11) |
+| **Current phase** | `PH-06` — Observability and alerting durability — **implemented on `feature/ph-06-observability-alerting`; PR pending** |
+| **Current phase status** | PH-01/02/03/04/05/08 merged · **PH-06 implemented (not yet PR/merged)** · PH-07/09/10/11 pending |
+| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` — after the PH-06 PR, proceed to PH-07 → PH-09 → PH-10 → PH-11 only on explicit instruction |
 | **Owner approval required** | `true` |
 
 ---
@@ -68,6 +68,23 @@
 
 **تست‌ها:** ۱۷ تستِ تازه در `tests/test_ph05_ui_integrity.py` — دقیقاً همان نُه تستی که نقشهٔ فاز PH-05 خواسته بود · کلِ مجموعه **۶۱۵ passed** · pyflakes ساکت · `final_verification` ۱۷/۱۷.
 
+## PH-06 (2026-10-23) — نظارت و پایداریِ اعلان — **IMPLEMENTED (branch `feature/ph-06-observability-alerting`، PR در انتظار)**
+
+| یافته | چه چیزی درست شد |
+|---|---|
+| **OBS-011 (تشدید)** | اعلانِ مدیر کلان اکنون **قبل از هر ارسال** در جدول `notifications` ثبت می‌شود؛ صف حافظه فقط wake-up است. سرریز/خاموشی/crash پیام را گم نمی‌کند و تحویل فقط با تأیید واقعی گیرنده mark می‌شود. |
+| **OBS-002 · OBS-003 · OBS-009** | `health_snapshot` سه‌حالته شد (`ok`/`degraded`/`unknown`)؛ خطای probe دیگر ۰/سالم نمی‌شود، حجم D1 نامعلوم است و `view_health` آخرین انتشار، دلایل خرابی و شمارنده‌های عملیاتی را نشان می‌دهد. |
+| **OBS-006** | `last_successful_publish` فقط در `settle_publication` واقعی نوشته می‌شود؛ `_deadman_check` در tick، «سبزِ بیکار» را با هشدار پایدار و suppression یک‌پنجره‌ای اعلام می‌کند. |
+| **OBS-004 · OBS-010 (جزئی)** | `log_event` حالا `exc_info`/`error_class` دارد؛ scheduler، cleanup و app.on_error traceback کامل را با redaction ثبت می‌کنند. |
+| **OBS-012** | `notified_at` فقط با `ok is not False` ثبت می‌شود؛ شکست، ردیف را `approved/notified_at=NULL` نگه می‌دارد و `_renotify_payments` دوباره می‌فرستد. `notify_user` نتیجهٔ واقعی wrapper را برمی‌گرداند. |
+| **OBS-015 · OBS-016 · SEC-011** | redaction fail-closed (`[REDACTION_FAILED]`)؛ کلید Gemini در هدر `x-goog-api-key`؛ loggerهای third-party روی WARNING؛ ID خام مدیر در log نمی‌آید. |
+| **OBS-005 · OPS-033** | پاداش ارجاع در تراکنش اتمیک پرداخت و تست idempotency؛ marker نهایی `iso_norm_v1` فقط با موفقیت همهٔ ستون‌ها نوشته می‌شود و ستون ناموفق retry می‌شود. |
+
+**تست‌ها:** ۱۷ تستِ تازه در `tests/test_ph06_observability.py` · کلِ مجموعه **۶۴۱ passed** · `pyflakes` ساکت · `final_verification` ۱۷/۱۷.
+**باقی‌مانده/صادقانه:** OBS-001 (export متریک خارجی)، OBS-003/OBS-008 (پوشش/مقصد log)، OBS-010 (threading کامل error_class)، بخشی از OBS-014 (سن قفل‌ها)، D1 unsupported برای OBS-005 و اثبات نصب systemd drop-in برای OPS-033. **هیچ merge/deploy انجام نشده است.**
+
+---
+
 ## 1. Findings summary
 
 | Severity | Count |
@@ -81,9 +98,9 @@
 
 | Status | Count |
 |---|---|
-| OPEN | 100 |
-| FIXED_UNVERIFIED | 3 (OBS-007 — بخشِ «اتصال به پرداخت» رفع شد، هم‌ترازیِ نگه‌داری هنوز در PH-09 است) |
-| VERIFIED_FIXED | 77 (شامل یافته‌های مالی، UI-017، TEST-005، OPS-028، DOC-001، ۶ یافتهٔ PH-03 و ۲۸ یافتهٔ PH-05) |
+| OPEN | 90 |
+| FIXED_UNVERIFIED | 12 (شامل OBS-002/004/006/012/015/016 و SEC-011؛ OBS-007 هم‌ترازیِ نگه‌داری هنوز در PH-09 است) |
+| VERIFIED_FIXED | 78 (شامل یافته‌های مالی، UI-017، TEST-005، OPS-028، DOC-001، ۶ یافتهٔ PH-03، ۲۸ یافتهٔ PH-05 و OBS-005) |
 | BLOCKED | 0 (رفعِ OPS-001 به خوانشِ تولید مسدود است) |
 | DEFERRED | 5 (SEC-003…SEC-006 + FIN-015) |
 | WONT_FIX | 0 |

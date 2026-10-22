@@ -24,12 +24,16 @@ ALERT_MAX_ATTEMPTS = 8
 ALERT_BACKOFF_SEC = (60, 300, 900, 3600, 7200, 14400, 21600)
 
 
-def alert_enqueue(text, kb=None, kind="super"):
-    """اعلانِ تحویل‌نشده را durable می‌کند (دیتابیس) ⇒ بعداً زمان‌بند دوباره می‌فرستد."""
+def alert_enqueue(text, kb=None, kind="super", next_attempt_at=None):
+    """اعلانِ تحویل‌نشده را durable می‌کند (دیتابیس) ⇒ بعداً زمان‌بند دوباره می‌فرستد.
+
+    ``next_attempt_at`` اختیاری است: مسیرِ ارسالِ فوری چند ثانیه فرصت می‌دهد تا worker
+    اول تلاش کند و زمان‌بند همان پیام را موازی نفرستد."""
     payload = json.dumps({"kb": kb}, ensure_ascii=False) if kb else ""
+    due = time.time() if next_attempt_at is None else float(next_attempt_at)
     return q("INSERT INTO notifications(kind,text,payload,attempts,next_attempt_at,dead,last_error,created_at) "
              "VALUES(?,?,?,0,?,0,'',?)",
-             (kind, text or "", payload, time.time(), now_iso()), commit=True)
+             (kind, text or "", payload, due, now_iso()), commit=True)
 
 
 def alert_pending(limit=20):

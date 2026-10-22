@@ -3,13 +3,16 @@
 FIX v4: توکن ربات (قالب 123456789:AA...) هم ماسک می‌شود.
 FIX v5 (SEC-02/OPS-14): ماسک رازها روی RecordFactory سراسری اجرا می‌شود —
 همهٔ فراخوان‌های log.* (نه فقط log_event) و متن استثناها/stack پیش از هر handler ماسک می‌شوند."""
+import hashlib
 import logging
 import re
 import traceback
 from contextvars import ContextVar
 
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
-logging.getLogger("httpx").setLevel(logging.WARNING)
+# OBS-016: کتابخانه‌های پرحرف ممکن است URL/هدر حساس را در DEBUG چاپ کنند؛ سقفِ سخت.
+for _noisy in ("httpx", "httpcore", "urllib3", "telegram", "telegram.ext", "apscheduler"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 log = logging.getLogger("core")
 
 _logctx = ContextVar("logctx", default=None)   # {op, channel, article, source, model, stage}
@@ -46,16 +49,36 @@ _orig_record_factory = logging.getLogRecordFactory()
 
 def _redact_record(*args, **kwargs):
     rec = _orig_record_factory(*args, **kwargs)
+    # OBS-015: مسیر ماسک نباید fail-open باشد. اگر هر مرحله خطا داد، متنِ امنِ جایگزین
+    # می‌گذاریم — نه پیامِ خامِ حاوی راز.
     try:
-        rec.msg = redact(rec.getMessage())
+        try:
+            original = rec.getMessage()
+        except Exception:
+            original = str(rec.msg)
+        try:
+            rec.msg = redact(original)
+        except Exception:
+            rec.msg = "[REDACTION_FAILED]"
         rec.args = ()
         if rec.exc_info and rec.exc_info[0] is not None:
             # exc_text از قبل ست می‌شود تا formatter خودش traceback خام نسازد (exc_info حفظ می‌شود)
-            rec.exc_text = redact("".join(traceback.format_exception(*rec.exc_info)))
+            try:
+                rec.exc_text = redact("".join(traceback.format_exception(*rec.exc_info)))
+            except Exception:
+                rec.exc_text = "[REDACTION_FAILED]"
+                rec.exc_info = None
         if rec.stack_info:
-            rec.stack_info = redact(rec.stack_info)
+            try:
+                rec.stack_info = redact(rec.stack_info)
+            except Exception:
+                rec.stack_info = "[REDACTION_FAILED]"
     except Exception:
-        pass
+        rec.msg = "[REDACTION_FAILED]"
+        rec.args = ()
+        rec.exc_text = "[REDACTION_FAILED]"
+        rec.exc_info = None
+        rec.stack_info = ""
     return rec
 
 if not getattr(logging, "_newsbot_redact_factory", False):
@@ -84,7 +107,31 @@ def metrics_text(lang="fa"):
     return (f"📈 <b>کارکرد</b> ✅{d.get('posts_ok', 0)} ❌{d.get('posts_fail', 0)} · 🌐 شکست منبع {d.get('source_fail', 0)}\n"
             f"🤖 شکست مدل {', '.join(f'{k}:{v}' for k, v in fails) or '—'} · ⏱ چرخه ~{cyc / 1000:.1f}s · 📝 صف {d.get('queue', 0)}")
 
-def log_event(level, msg, admin_id=None):
+def _actor_ref(admin_id):
+    """SEC-011: شناسهٔ خامِ مدیر در لاگ نباید بنشیند؛ یک اثرانگشتِ کوتاه کافی است."""
+    if admin_id is None:
+        return "-"
+    try:
+        return "actor:" + hashlib.sha256(str(admin_id).encode("utf-8")).hexdigest()[:12]
+    except Exception:
+        return "actor:?"
+
+
+def log_event(level, msg, admin_id=None, exc_info=False, error_class=None):
+    """لاگِ ساختاریافته با زمینه؛ traceback اختیاری و کلاسِ خطا (OBS-004).
+
+    ``exc_info=True`` را در بلوک ``except`` صدا بزنید تا stack trace (ماسک‌شده) ثبت شود.
+    """
     d = _logctx.get() or {}
     ctx = " ".join(f"{k}={v}" for k, v in d.items())
-    (log.error if level == "ERROR" else log.warning if level == "WARN" else log.info)(redact(f"[{admin_id}]{f' [{ctx}]' if ctx else ''} {msg}"))
+    tail = f" error_class={error_class}" if error_class else ""
+    prefix = f"[{_actor_ref(admin_id)}]{f' [{ctx}]' if ctx else ''} {msg}{tail}"
+    try:
+        text = redact(prefix)
+    except Exception:
+        text = "[REDACTION_FAILED]"
+    fn = log.error if level == "ERROR" else log.warning if level == "WARN" else log.info
+    try:
+        fn(text, exc_info=exc_info)
+    except Exception:
+        log.error("[LOG_EVENT_FAILED]")

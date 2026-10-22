@@ -480,6 +480,7 @@ def normalize_iso_columns(conn, chunk=2000):
     except sqlite3.Error:
         return 0
     changed = 0
+    failed = []
     for tbl, col in _ISO_COLS:
         marker = f"iso_norm_v1:{tbl}.{col}"
         try:
@@ -507,11 +508,18 @@ def normalize_iso_columns(conn, chunk=2000):
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (marker, "1"))
             try: conn.commit()
             except sqlite3.Error: pass
-        except sqlite3.Error:
+        except sqlite3.Error as e:
+            # OPS-033: marker نهایی فقط وقتی نوشته می‌شود که **همهٔ** ستون‌ها موفق باشند؛
+            # وگرنه ستونِ ناموفق در استارت بعدی دوباره تلاش می‌شود (نه اینکه برای همیشه رد شود).
+            failed.append(f"{tbl}.{col}:{type(e).__name__}")
             continue
-    conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('iso_norm_v1',?)", (str(changed),))
-    try: conn.commit()
-    except sqlite3.Error: pass
+    if not failed:
+        conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('iso_norm_v1',?)", (str(changed),))
+        try: conn.commit()
+        except sqlite3.Error: pass
+    else:
+        log.warning("ISO canonicalization incomplete; will retry %d column(s): %s",
+                    len(failed), ", ".join(failed[:5]))
     if changed: log.info("ISO canonicalization: %d value(s) rewritten", changed)
     return changed
 

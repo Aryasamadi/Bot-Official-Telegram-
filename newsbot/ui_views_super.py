@@ -35,62 +35,138 @@ def rss_mb():
         return pages * (os.sysconf("SC_PAGE_SIZE") / 1048576.0)
     except Exception: return 0.0
 
-async def view_health(update, context):
-    """سلامت سیستم در یک پیام: تیک، کانال، مدل، دیتابیس، ژورنال معلق، حافظه."""
-    lang = L(update); fa = lang != "en"
-    hb = gget("heartbeat"); hb_age = int((now_utc() - parse_dt(hb)).total_seconds()) if hb else -1
-    size = os.path.getsize(config.DB_FILE) / 1048576.0 if os.path.exists(config.DB_FILE) else 0
-    try: integ = q("PRAGMA quick_check(1)", one=True)[0]
-    except Exception as e: integ = f"error {type(e).__name__}"
-    models = list_models(); ok = sum(1 for m in models if m["active"] and m["status"] == "ok")
-    try: pending = q("SELECT COUNT(*) c FROM pub_journal", one=True)["c"]
-    except Exception: pending = 0
-    try: unnot = len(pay_unnotified(50))         # PH-01/OBS-014: پرداخت‌های تأییدشدهٔ اعلام‌نشده
-    except Exception: unnot = 0
-    # PH-03/OBS-013 · OBS-011: رسیدهایی که هیچ مدیری ندیده + صفِ اعلانِ نرسیده
-    try: superunnot = pay_super_unnotified_count()
-    except Exception: superunnot = 0
+def health_snapshot():
+    """PH-06/OBS-002/OBS-003/OBS-009 — یک تصویرِ صادق از سلامت.
+
+    خطاهای probe دیگر به صفر/«سالم» تبدیل نمی‌شوند: هر شکست به `unknown`/`degraded`
+    می‌رسد و در `reasons` می‌آید. حجم DB روی D1 «نامعلوم» است، نه صفر.
+    """
+    errors = []
+    def probe(label, fn, default=None):
+        try:
+            return fn()
+        except Exception as e:
+            errors.append(f"{label}:{type(e).__name__}")
+            return default
+
+    hb = probe("heartbeat", lambda: gget("heartbeat"))
+    auto = probe("automation", lambda: gget("automation_enabled", True), True)
+    last_pub = probe("last_publish", lambda: gget("last_successful_publish"))
+    integ = probe("integrity", lambda: q("PRAGMA quick_check(1)", one=True)[0])
+    chans = probe("channels", lambda: q("SELECT COUNT(*) c FROM channels", one=True)["c"], None)
+    ready = probe("ready", lambda: q("SELECT COUNT(*) c FROM articles WHERE status='ready'", one=True)["c"], None)
+    pending = probe("journal", lambda: q("SELECT COUNT(*) c FROM pub_journal", one=True)["c"], None)
+    unnot = probe("pay_unnotified", lambda: len(pay_unnotified(50)), None)
+    superunnot = probe("super_unnotified", pay_super_unnotified_count, None)
+    alert_pending_n = alert_dead_n = None
     try:
         from newsbot.core_alerts import alert_counts
         alert_pending_n, alert_dead_n = alert_counts()
-    except Exception:
-        alert_pending_n = alert_dead_n = 0
-    chans = q("SELECT COUNT(*) c FROM channels", one=True)["c"]; ready = q("SELECT COUNT(*) c FROM articles WHERE status='ready'", one=True)["c"]
+    except Exception as e:
+        errors.append(f"alerts:{type(e).__name__}")
+    models = probe("models", list_models, [])
+    models = models or []
+    ok = sum(1 for m in models if m["active"] and m["status"] == "ok")
+    if config.DB_BACKEND == "d1":
+        size_mb = None
+    else:
+        size_mb = probe("db_size", lambda: os.path.getsize(config.DB_FILE) / 1048576.0 if os.path.exists(config.DB_FILE) else 0.0)
+    hb_age = None
+    if hb:
+        try:
+            hb_age = int((now_utc() - parse_dt(hb)).total_seconds())
+        except Exception as e:
+            errors.append(f"heartbeat_age:{type(e).__name__}")
+    last_pub_age = None
+    if last_pub:
+        try:
+            last_pub_age = int((now_utc() - parse_dt(last_pub)).total_seconds())
+        except Exception as e:
+            errors.append(f"last_publish_age:{type(e).__name__}")
+
+    reasons = []
+    status = "ok"
+    critical_errors = any(not x.startswith(("models:", "pay_", "super_", "journal:", "ready:", "db_size:")) for x in errors)
+    if critical_errors or hb is None or chans is None or integ is None:
+        status = "unknown"
+        reasons.append("heartbeat/db probe unavailable" if hb is None or critical_errors else "database unavailable")
+    elif hb_age is not None and hb_age > config.TICK_SECONDS * 4:
+        status = "degraded"; reasons.append("heartbeat stale")
+    elif str(integ).lower() != "ok":
+        status = "degraded"; reasons.append(f"integrity={integ}")
+    if models and ok == 0:
+        status = "degraded" if status != "unknown" else status; reasons.append("no healthy model")
+    if alert_dead_n:
+        status = "degraded" if status != "unknown" else status; reasons.append(f"dead alerts={alert_dead_n}")
+    if unnot:
+        status = "degraded" if status != "unknown" else status; reasons.append(f"unnotified payments={unnot}")
+    if superunnot:
+        status = "degraded" if status != "unknown" else status; reasons.append(f"unseen receipts={superunnot}")
+    if pending:
+        status = "degraded" if status != "unknown" else status; reasons.append(f"pending journals={pending}")
+    if auto and chans and last_pub is None and status == "ok":
+        status = "unknown"; reasons.append("no successful publish recorded")
+    if auto and chans and last_pub_age is not None and last_pub_age > int(config.DEADMAN_STALE_HOURS) * 3600:
+        status = "degraded" if status != "unknown" else status; reasons.append(f"last publish {last_pub_age // 3600}h ago")
+    if errors and status == "ok":
+        status = "degraded"; reasons.append("probe errors: " + ", ".join(errors))
+    return {"status": status, "reasons": reasons, "errors": errors, "heartbeat_age": hb_age,
+            "last_publish_age": last_pub_age, "auto": bool(auto), "db_size_mb": size_mb,
+            "db_integrity": integ, "channels": chans, "ready": ready, "pending_journals": pending,
+            "unnotified_payments": unnot, "super_unnotified": superunnot,
+            "alerts_pending": alert_pending_n, "alerts_dead": alert_dead_n,
+            "models_ok": ok, "models_total": len(models)}
+
+
+async def view_health(update, context):
+    """سلامت سیستم در یک پیام: وضعیت سه‌حالته + تیک، انتشار، کانال، مدل، دیتابیس."""
+    lang = L(update); fa = lang != "en"
+    s = health_snapshot()
+    status = s["status"]
+    status_txt = {"ok": "OK — سالم" if fa else "OK", "degraded": "DEGRADED — نیازمند بررسی" if fa else "DEGRADED",
+                  "unknown": "UNKNOWN — داده کافی نیست" if fa else "UNKNOWN"}[status]
+    reasons = "؛ ".join(s["reasons"]) if fa else "; ".join(s["reasons"])
+    hb_age = s["heartbeat_age"]
+    tick_txt = (f"{hb_age} ثانیه پیش" if fa else f"{hb_age}s ago") if hb_age is not None else ("نامعلوم" if fa else "unknown")
+    lp_age = s["last_publish_age"]
+    lp_txt = (f"{lp_age // 3600} ساعت پیش" if fa else f"{lp_age // 3600}h ago") if lp_age is not None else ("ثبت نشده" if fa else "not recorded")
+    size_txt = f"{s['db_size_mb']:.1f} MB" if s["db_size_mb"] is not None else ("نامعلوم (D1)" if fa else "unknown (D1)")
+    integ = s["db_integrity"] if s["db_integrity"] is not None else ("نامعلوم" if fa else "unknown")
     head = "🩺 <b>System health</b>" if not fa else "🩺 <b>سلامت سیستم</b>"
-    # چیدمان مینیمال: هر سنجه یک خط، با فاصله بین گروه‌های مرتبط
-    healthy = 0 <= hb_age < config.TICK_SECONDS * 4
-    tick_fa = f"{hb_age} ثانیه پیش" if hb_age >= 0 else "هنوز ثبت نشده"
-    tick_en = f"{hb_age}s ago" if hb_age >= 0 else "not recorded yet"
     body = (
-        f"\n\n{'OK' if healthy else 'STALE'} — {'سالم' if healthy else 'کهنه'}"
-        f"\n\n⚙️ آخرین تیک: {tick_fa}"
+        f"\n\n{status_txt}"
+        f"\n💡 دلیل: {reasons or '—'}"
+        f"\n\n⚙️ آخرین تیک: {tick_txt}"
         f"\n⏱ بازهٔ اجرای تیک: {config.TICK_SECONDS} ثانیه"
         f"\n🔄 چرخه‌های هم‌زمان: {config.CYCLE_CONCURRENCY}"
-        f"\n\n📡 کانال‌های ثبت‌شده: {chans}"
-        f"\n📥 موارد آماده در صف: {ready}"
-        f"\n📌 موارد معلق ژورنال: {pending}"
-        f"\n🧾 پرداخت‌های تأییدشدهٔ اعلام‌نشده: {unnot}"
-        f"\n📨 رسیدهای اعلام‌نشده به مدیر: {superunnot}"
-        f"\n🔔 اعلان‌های نرسیده: {alert_pending_n} (مرده: {alert_dead_n})"
-        f"\n\n🤖 وضعیت مدل‌های هوش مصنوعی: {ok}/{len(models)} سالم"
-        f"\n\n💾 حجم دیتابیس: {size:.1f} MB"
+        f"\n⏳ آخرین انتشار موفق: {lp_txt}"
+        f"\n\n📡 کانال‌های ثبت‌شده: {s['channels'] if s['channels'] is not None else 'نامعلوم'}"
+        f"\n📥 موارد آماده در صف: {s['ready'] if s['ready'] is not None else 'نامعلوم'}"
+        f"\n📌 موارد معلق ژورنال: {s['pending_journals'] if s['pending_journals'] is not None else 'نامعلوم'}"
+        f"\n🧾 پرداخت‌های تأییدشدهٔ اعلام‌نشده: {s['unnotified_payments'] if s['unnotified_payments'] is not None else 'نامعلوم'}"
+        f"\n📨 رسیدهای اعلام‌نشده به مدیر: {s['super_unnotified'] if s['super_unnotified'] is not None else 'نامعلوم'}"
+        f"\n🔔 اعلان‌های نرسیده: {s['alerts_pending'] if s['alerts_pending'] is not None else 'نامعلوم'} (مرده: {s['alerts_dead'] if s['alerts_dead'] is not None else 'نامعلوم'})"
+        f"\n\n🤖 وضعیت مدل‌های هوش مصنوعی: {s['models_ok']}/{s['models_total']} سالم"
+        f"\n\n💾 حجم دیتابیس: {size_txt}"
         f"\n🧠 مصرف حافظهٔ فرایند: {rss_mb():.0f} MB"
         f"\n🧩 صحت یکپارچگی دیتابیس: {integ}"
         f"\n🔁 فاصلهٔ بازیابی خودکار: {config.RECOVER_EVERY_MIN} دقیقه"
         f"\n\n🏷 نسخهٔ کد: {_code_version()}"
     ) if fa else (
-        f"\n\n{'OK' if healthy else 'STALE'}"
-        f"\n\n⚙️ Last tick: {tick_en}"
+        f"\n\n{status_txt}"
+        f"\n💡 Reason: {reasons or '—'}"
+        f"\n\n⚙️ Last tick: {tick_txt}"
         f"\n⏱ Tick interval: {config.TICK_SECONDS}s"
         f"\n🔄 Concurrent cycles: {config.CYCLE_CONCURRENCY}"
-        f"\n\n📡 Registered channels: {chans}"
-        f"\n📥 Ready in queue: {ready}"
-        f"\n📌 Pending journals: {pending}"
-        f"\n🧾 Unnotified approved payments: {unnot}"
-        f"\n📨 Receipts not seen by an admin: {superunnot}"
-        f"\n🔔 Undelivered alerts: {alert_pending_n} (dead: {alert_dead_n})"
-        f"\n\n🤖 AI models healthy: {ok}/{len(models)}"
-        f"\n\n💾 Database size: {size:.1f} MB"
+        f"\n⏳ Last successful publish: {lp_txt}"
+        f"\n\n📡 Registered channels: {s['channels'] if s['channels'] is not None else 'unknown'}"
+        f"\n📥 Ready in queue: {s['ready'] if s['ready'] is not None else 'unknown'}"
+        f"\n📌 Pending journals: {s['pending_journals'] if s['pending_journals'] is not None else 'unknown'}"
+        f"\n🧾 Unnotified approved payments: {s['unnotified_payments'] if s['unnotified_payments'] is not None else 'unknown'}"
+        f"\n📨 Receipts not seen by an admin: {s['super_unnotified'] if s['super_unnotified'] is not None else 'unknown'}"
+        f"\n🔔 Undelivered alerts: {s['alerts_pending'] if s['alerts_pending'] is not None else 'unknown'} (dead: {s['alerts_dead'] if s['alerts_dead'] is not None else 'unknown'})"
+        f"\n\n🤖 AI models healthy: {s['models_ok']}/{s['models_total']}"
+        f"\n\n💾 Database size: {size_txt}"
         f"\n🧠 Process memory: {rss_mb():.0f} MB"
         f"\n🧩 Database integrity: {integ}"
         f"\n🔁 Auto-recovery interval: {config.RECOVER_EVERY_MIN} min"
@@ -316,9 +392,17 @@ async def _decide_pay_locked(update, context, rid, approve, from_list, lang):
                 rl = lang_of_currency(ref_cur) or rl          # واحدِ پاداش = واحدِ پرداخت
                 await notify_user_fn(ref_id, tr(rl, "ref_reward", amount=fmt_amt(amt, rl)))
             except Exception: log.exception("referral notify failed rid=%s", rid)
-        await notify_user_fn(r["user_id"], tr(ul, "pay_approved", name=esc(plan_txt(p, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=fmt_date(exp, admin_offset(r["user_id"])))))
-        try: pay_mark_notified(rid)
-        except Exception: pass
+        try:
+            ok = await notify_user_fn(r["user_id"], tr(ul, "pay_approved", name=esc(plan_txt(p, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=fmt_date(exp, admin_offset(r["user_id"])))))
+        except Exception as e:
+            ok = False
+            log.warning("payment approval notice failed (%s)", type(e).__name__)
+        if ok is not False:
+            try: pay_mark_notified(rid)
+            except Exception as e: log_event("WARN", f"payment notified marker failed rid={rid} ({type(e).__name__})")
+        else:
+            # OBS-012: پول/پلن اعمال شده ولی پیام نرفته ⇒ ردیف «اعلام‌نشده» بماند تا زمان‌بند بفرستد.
+            log_event("WARN", f"payment approval notice deferred rid={rid}")
         await popup(update, context, tr(lang, "s_pay_done_ok"))
     else:
         pay_set(rid, "rejected"); await notify_user_fn(r["user_id"], tr(ul, "pay_rejected")); await popup(update, context, tr(lang, "s_pay_done_no"))

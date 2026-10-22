@@ -1,3 +1,15 @@
+## 2026-10-23 — PH-06 — نظارت و پایداریِ اعلان — **IMPLEMENTED (branch `feature/ph-06-observability-alerting`، PR در انتظار)**
+
+- **OBS-011** — مدلِ persist-first: اعلان پیش از ارسال در `notifications` ثبت می‌شود؛ صف حافظه فقط wake-up است. تحویل با تعداد واقعی گیرنده mark می‌شود، پیام مرده حذف نمی‌شود.
+- **OBS-002 · OBS-003 · OBS-009** — `health_snapshot` سه‌حالته و `view_health` بازنویسی‌شده: خطای probe ⇒ `unknown`/`degraded`، D1 size ⇒ نامعلوم، نمایش آخرین انتشار موفق و دلایل.
+- **OBS-006** — `last_successful_publish` در `settle_publication` و dead-man switch با `DEADMAN_STALE_HOURS` و suppression.
+- **OBS-004 · OBS-010** — `log_event(exc_info, error_class)` و traceback در scheduler/cleanup/app؛ error_class در مسیرهای اصلی.
+- **OBS-012** — marker پرداخت فقط بعد از تحویل واقعی؛ شکست در DB می‌ماند و زمان‌بند دوباره می‌فرستد؛ `notify_user` نتیجهٔ واقعی را برمی‌گرداند.
+- **OBS-015 · OBS-016 · SEC-011** — redaction fail-closed؛ کلید Gemini در هدر؛ loggerهای third-party pin؛ حذف ID خام مدیر.
+- **OBS-005 · OPS-033** — تست رگرسیون اتمیک/idempotent ارجاع؛ marker `iso_norm_v1` فقط با موفقیت همهٔ ستون‌ها و retry ستون ناموفق.
+- **تست‌ها:** ۱۷ تستِ تازه در `tests/test_ph06_observability.py` · **۶۴۱ passed** · `pyflakes` ساکت · `final_verification` ۱۷/۱۷.
+- **Deployment:** هیچ merge/deploy انجام نشد. **Verification:** کد و تست سبز؛ اثر تولید و نصب drop-in در OPS-033 تأیید نشده است.
+
 ## 2026-10-21 — PH-05 — یکپارچگیِ رابطِ کاربری و مسیرِ مشتری — **IMPLEMENTED (PR #32)**
 
 - **UI-005** — `split_html` نه تکهٔ خالی می‌دهد نه تکهٔ بیش‌ازحد (پیش از این «نسخهٔ کامل» و دیپ‌لینک‌ها کاملاً شکست می‌خوردند).

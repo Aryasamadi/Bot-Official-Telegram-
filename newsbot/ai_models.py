@@ -139,7 +139,8 @@ async def _call_model(m, system, user):
         return _ai_text(" ".join(parts)), _usage_dict(j.get("usage"), "input_tokens", "output_tokens")
     if kind == "gemini":
         model = model.replace("models/", ""); root = base if re.search(r"/v1(beta)?$", base) else base + "/v1beta"
-        r = await _post(f"{root}/models/{model}:generateContent", params={"key": key}, json={"system_instruction": {"parts": [{"text": system}]}, "contents": [{"role": "user", "parts": [{"text": user}]}], "generationConfig": {"temperature": temp, "maxOutputTokens": mx}})
+        # SEC-011/OBS-016: کلید در هدر می‌رود، نه query string (URL در لاگ/پروکسی ثبت می‌شود).
+        r = await _post(f"{root}/models/{model}:generateContent", headers={"x-goog-api-key": key}, json={"system_instruction": {"parts": [{"text": system}]}, "contents": [{"role": "user", "parts": [{"text": user}]}], "generationConfig": {"temperature": temp, "maxOutputTokens": mx}})
         j = _provider_json(r); cands = j.get("candidates")
         if not isinstance(cands, list) or not cands or not isinstance(cands[0], dict): raise AIResponseError("malformed provider candidates")
         content = cands[0].get("content")

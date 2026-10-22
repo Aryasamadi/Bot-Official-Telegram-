@@ -626,18 +626,26 @@ async def wiz_prompt(update, context):
 # پیاده‌سازی تلگرامی اعلان‌های هسته + خانه
 # ══════════════════════════════════════════════════════════════════════════
 async def notify_supers(text, kb=None):
+    """تعداد گیرنده‌های موفق را برمی‌گرداند؛ صفر یعنی هیچ مدیری پیام را ندید (شکست واقعی)."""
+    delivered = 0
     for sid in config.SUPER_ADMIN_IDS:
         try:
             await BOT.send_message(sid, redact(text), parse_mode=HTML, reply_markup=kbm(kb) if kb and isinstance(kb[0][0], tuple) else (InlineKeyboardMarkup(kb) if kb else None), disable_web_page_preview=True)
-        except Exception as e: log.warning(f"notify {sid}: {e}")
+            delivered += 1
+        except Exception as e:
+            log.warning("notify super failed (%s)", type(e).__name__)
+    return delivered
 
 async def notify_user_fn(uid, text, kb=None):
+    """True فقط وقتی تلگرام ارسال را تأیید کرده است؛ outbox/زمان‌بند به این نتیجه وابسته است."""
     try:
         await BOT.send_message(uid, text, parse_mode=HTML, reply_markup=kbm(kb), disable_web_page_preview=True)
+        return True
     except Exception as e:
-        log.warning(f"notify user {uid}: {e}")
+        log.warning("notify user failed (%s)", type(e).__name__)
         if config.SCHED_NOTIF_FAILURES.get():
             raise   # scheduled-warning mode: propagate so _plan_notifications releases remind_key
+        return False
 
 async def go_home(update, context):
     uid = update.effective_user.id; context.user_data.pop("await", None)

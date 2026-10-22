@@ -191,6 +191,9 @@ MAX_CYCLES_PER_TICK = _env_int("MAX_CYCLES_PER_TICK", 4)
 RECOVER_EVERY_MIN = _env_int("RECOVER_EVERY_MIN", 5)
 STALE_UPDATE_MAX_MIN = _env_int("STALE_UPDATE_MAX_MIN", 60)
 TICK_SECONDS = _env_int("TICK_SECONDS", 120)
+# PH-06/OBS-002: اگر اتوماسیون روشن است و کانالی وجود دارد ولی هیچ انتشار موفقی در این
+# بازه ثبت نشده، «سبزِ بیکار» را با یک هشدار durable به مدیر کلان اعلام کن.
+DEADMAN_STALE_HOURS = _env_int("DEADMAN_STALE_HOURS", 24, 1, 720)
 TEST_COOLDOWN_SEC = _env_int("TEST_COOLDOWN_SEC", 120)
 CB_RATE = _env_float("CB_RATE", 0.6)
 ABUSE_RATE_SEC = _env_float("ABUSE_RATE_SEC", 1.0)

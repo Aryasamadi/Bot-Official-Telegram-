@@ -8,7 +8,7 @@ from newsbot import config
 from newsbot.db import q, gget, gset, arun
 from newsbot.logutils import log, log_event, metrics_text
 from newsbot.timeutils import now_utc, now_iso, parse_dt, fmt_date, ago_text, off_label
-from newsbot.notify import notify_user
+from newsbot.notify import notify_user, notify_super
 from newsbot.core_users import expiring_users, list_admins, count_users, admin_limits, usage_today, is_super, remaining, channel_posts_today
 from newsbot.core_plans import get_plan, plan_txt, list_plans, recover_stuck_payments
 from newsbot.core_channels import list_channels, get_settings, get_channel, in_quiet
@@ -30,7 +30,9 @@ async def _plan_notifications():
             lang = u["lang"] or "fa"; p = await arun(get_plan, u["plan_id"]); name = html.escape(plan_txt(p, "name", lang)) if p else "—"
             # کلید در DB رزرو شده؛ اگر ارسال واقعاً ناموفق باشد، claim آزاد می‌شود تا تیک بعدی دوباره تلاش کند
             try:
-                await notify_user(u["id"], (f"⏳ پلن «{name}» حدود <b>{int(left)} ساعت</b> دیگر تمام می‌شود." if lang == "fa" else f"⏳ Plan “{name}” ends in about <b>{int(left)}h</b>."), [[("🔄 تمدید / ارتقا" if lang == "fa" else "🔄 Renew / Upgrade", "u:plans")]])
+                ok = await notify_user(u["id"], (f"⏳ پلن «{name}» حدود <b>{int(left)} ساعت</b> دیگر تمام می‌شود." if lang == "fa" else f"⏳ Plan “{name}” ends in about <b>{int(left)}h</b>."), [[("🔄 تمدید / ارتقا" if lang == "fa" else "🔄 Renew / Upgrade", "u:plans")]])
+                if ok is False:
+                    raise RuntimeError("user notification not delivered")
             except Exception:
                 await arun(q, "UPDATE users SET remind_key=NULL WHERE id=? AND remind_key=?", (u["id"], key), commit=True)
         expired = await arun(q, "SELECT * FROM users WHERE plan_id IS NOT NULL AND plan_expires <=? AND next_plan_id IS NULL AND (remind_key IS NULL OR remind_key!='expired') AND banned=0", (now_iso(),))
@@ -39,7 +41,9 @@ async def _plan_notifications():
             # الگوی «فقط بعد از موفقیت ثبت شود» (مثل rate_free/rate_mark): به‌جای ثبت remind_key پیش از ارسال،
             # تا وقتی ارسال موفق نشده کلید مصرف نمی‌شود و تیک بعدی دوباره تلاش می‌کند.
             try:
-                await notify_user(u["id"], ("🔴 <b>پلن شما تمام شد؛ انتشار خودکار متوقف است.</b>" if lang == "fa" else "🔴 <b>Your plan expired; automatic publishing is paused.</b>"), [[("🔄 تمدید / ارتقا" if lang == "fa" else "🔄 Renew / Upgrade", "u:plans")]])
+                ok = await notify_user(u["id"], ("🔴 <b>پلن شما تمام شد؛ انتشار خودکار متوقف است.</b>" if lang == "fa" else "🔴 <b>Your plan expired; automatic publishing is paused.</b>"), [[("🔄 تمدید / ارتقا" if lang == "fa" else "🔄 Renew / Upgrade", "u:plans")]])
+                if ok is False:
+                    raise RuntimeError("user notification not delivered")
             except Exception:
                 continue   # ارسال ناموفق → کلید «expired» ثبت نشد تا تیک بعدی دوباره هشدار بدهد
             await arun(q, "UPDATE users SET remind_key='expired' WHERE id=?", (u["id"],), commit=True)
@@ -66,7 +70,9 @@ async def _scheduled(bot, uid, ch, s):
     try:
         res = await run_channel_cycle(bot, uid, ch["id"])
         if res["published"]: await _report_published(uid, ch, s, res)
-    except Exception as e: log_event("ERROR", f"چرخه {ch['title']}: {e}", uid)
+    except Exception as e:
+        log_event("ERROR", f"چرخه {ch['title']}: {type(e).__name__}: {e}", uid,
+                  exc_info=True, error_class=type(e).__name__)
 
 def _recover_state():
     """بازیابی دوره‌ای (ژورنال انتشار + پرداخت گیرکرده + رول‌بک مزایای منقضی) — روی ترد دیتابیس، بیرون از حلقه."""
@@ -95,7 +101,9 @@ async def _renotify_payments(bot=None):
             uid = r["user_id"]; lang = user_lang(uid) or "fa"
             p = await arun(get_plan, r["plan_id"])
             when = tr(lang, "pay_when_now", d=fmt_date(r["decided_at"], 0)) if r["decided_at"] else ""
-            await notify_user_fn(uid, tr(lang, "pay_approved", name=html.escape(plan_txt(p, "name", lang) if p else ""), when=when))
+            ok = await notify_user_fn(uid, tr(lang, "pay_approved", name=html.escape(plan_txt(p, "name", lang) if p else ""), when=when))
+            if ok is False:
+                raise RuntimeError("user notification not delivered")
             await arun(pay_mark_notified, r["id"])
         except Exception as e:
             log_event("WARN", f"payment re-notify failed rid={r['id']}: {type(e).__name__}: {e}")
@@ -144,21 +152,50 @@ async def _notify_super_about_receipt(bot, r):
 async def _retry_alerts():
     """PH-03/OBS-011 — اعلان‌های نرسیدهٔ مدیر کلان را دوباره می‌فرستد.
 
-    پیام‌هایی که از سقفِ تلاش گذشته‌اند «مرده» می‌شوند (نه حذف) تا در بخشِ سلامت دیده شوند."""
-    import json as _json
-    from newsbot.core_alerts import alert_pending, alert_mark_delivered, alert_mark_failed
-    from newsbot import runtime
-    if not runtime.NOTIFY_SUPER: return
-    for a in await arun(alert_pending, 10):
-        kb = None
+    تحویل فقط وقتی «موفق» ثبت می‌شود که wrapper واقعاً دستِ‌کم یک گیرنده را تأیید کند؛
+    پیام‌هایی که از سقفِ تلاش گذشته‌اند «مرده» می‌شوند (نه حذف) تا در سلامت دیده شوند."""
+    from newsbot.notify import deliver_pending_alerts
+    delivered, failed = await deliver_pending_alerts(10)
+    if failed:
+        log_event("WARN", f"{failed} alert(s) not delivered; will retry with backoff")
+    return delivered, failed
+
+async def _deadman_check():
+    """PH-06/OBS-002 — «سبز اما بیکار»: اتوماسیون روشن و کانال هست، ولی انتشار موفق قدیمی است.
+
+    هشدار حداکثر یک‌بار در هر پنجرهٔ DEADMAN_STALE_HOURS فرستاده می‌شود تا مدیر غرق
+    پیام تکراری نشود. اگر هنوز هیچ انتشار موفقی ثبت نشده باشد (نصب تازه) هشدار نمی‌دهیم.
+    """
+    if not await arun(gget, "automation_enabled", True):
+        return False
+    row = await arun(q, "SELECT COUNT(*) c FROM channels", one=True)
+    if not row or not row["c"]:
+        return False
+    last = await arun(gget, "last_successful_publish")
+    if not last:
+        return False
+    try:
+        age = (now_utc() - parse_dt(last)).total_seconds()
+    except Exception:
+        return False
+    stale_sec = int(config.DEADMAN_STALE_HOURS) * 3600
+    if age < stale_sec:
+        return False
+    prev = await arun(gget, "last_deadman_alert")
+    if prev:
         try:
-            if a["payload"]:
-                kb = (_json.loads(a["payload"]) or {}).get("kb")
-            await runtime.NOTIFY_SUPER(a["text"], kb)
-            await arun(alert_mark_delivered, a["id"])
-        except Exception as e:
-            dead = await arun(alert_mark_failed, a["id"], str(e))
-            log_event("ERROR" if dead else "WARN", f"alert re-notify failed id={a['id']}: {type(e).__name__}: {e}")
+            if (now_utc() - parse_dt(prev)).total_seconds() < stale_sec:
+                return False
+        except Exception:
+            pass
+    await arun(gset, "last_deadman_alert", now_iso())
+    hours = max(1, int(age // 3600))
+    await notify_super(f"🟠 <b>اتوماسیون سبز است ولی انتشار ندارد</b>\n"
+                       f"آخرین انتشار موفق {hours} ساعت پیش بود (آستانه: {config.DEADMAN_STALE_HOURS} ساعت).\n"
+                       f"کانال‌ها، منابع و صف را بررسی کنید.")
+    log_event("WARN", f"dead-man: no successful publish for {hours}h")
+    return True
+
 
 async def scheduler_tick(bot):
     if _tick_lock.locked(): return
@@ -169,15 +206,34 @@ async def scheduler_tick(bot):
             # با فاصله‌ی زمانی اجرا می‌شود، نه هر تیک؛ کوئری روی pub_journal با PK است ⇒ ارزان.
             if (time.time() - float(await arun(gget, "last_recover", 0))) >= config.RECOVER_EVERY_MIN * 60:
                 await arun(_recover_state)
-        except Exception as e: log_event("ERROR", f"publication recovery: {e}")
-        try: await probe_down_models()
-        except Exception as e: log_event("WARN", f"probe_down_models failed: {type(e).__name__}: {e}")
-        try: await _renotify_payments(bot)
-        except Exception as e: log_event("ERROR", f"payment re-notify failed: {e}")
-        try: await _retry_alerts()
-        except Exception as e: log_event("ERROR", f"alert re-notify failed: {e}")
-        try: await _plan_notifications()
-        except Exception as e: log_event("ERROR", f"plan notifications: {e}")
+        except Exception as e:
+            log_event("ERROR", f"publication recovery: {type(e).__name__}: {e}",
+                      exc_info=True, error_class=type(e).__name__)
+        try:
+            await probe_down_models()
+        except Exception as e:
+            log_event("WARN", f"probe_down_models failed: {type(e).__name__}: {e}",
+                      exc_info=True, error_class=type(e).__name__)
+        try:
+            await _renotify_payments(bot)
+        except Exception as e:
+            log_event("ERROR", f"payment re-notify failed: {type(e).__name__}: {e}",
+                      exc_info=True, error_class=type(e).__name__)
+        try:
+            await _retry_alerts()
+        except Exception as e:
+            log_event("ERROR", f"alert re-notify failed: {type(e).__name__}: {e}",
+                      exc_info=True, error_class=type(e).__name__)
+        try:
+            await _deadman_check()
+        except Exception as e:
+            log_event("ERROR", f"dead-man check failed: {type(e).__name__}: {e}",
+                      exc_info=True, error_class=type(e).__name__)
+        try:
+            await _plan_notifications()
+        except Exception as e:
+            log_event("ERROR", f"plan notifications: {type(e).__name__}: {e}",
+                      exc_info=True, error_class=type(e).__name__)
         if not await arun(gget, "automation_enabled", True): return
         due = []
         skipped = []
@@ -214,8 +270,10 @@ async def scheduler_tick(bot):
 
 def _do_cleanup():
     from newsbot.core_articles import cleanup
-    try: cleanup()
-    except Exception as e: log_event("ERROR", f"cleanup: {e}")
+    try:
+        cleanup()
+    except Exception as e:
+        log_event("ERROR", f"cleanup: {type(e).__name__}: {e}", exc_info=True, error_class=type(e).__name__)
 
 def report_text(uid=None, cid=None, lang="fa"):
     from newsbot.core_channels import get_settings as _gs

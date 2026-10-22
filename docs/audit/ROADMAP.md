@@ -146,7 +146,7 @@ safe fix. Each phase is **self-contained** and ends in a mergeable, revertable s
 | **Required tests** | New: the redaction factory fails **closed** (a raising `redact()` must not leak the raw record); scheduler errors carry a traceback; `/health` renders `unknown`/`degraded` for a failed probe instead of `0`; `last_successful_publish` is exposed and goes stale correctly; a super-notification queue overflow lands in a dead-letter table; the super-admin ID is not written to the journal. |
 | **Acceptance criteria** | (1) `/health` distinguishes `ok` / `degraded` / `unknown` and reports the last successful publish. (2) Every scheduler and cycle error carries a traceback. (3) No alert is dropped without a dead-letter record. (4) A "green but idle" bot is detectable. (5) The financial audit trail can answer "who paid what, when, and what was credited" (jointly with PH-01/OBS-007). (6) The journal contains no secret and no raw super-admin ID. |
 | **Rollback strategy** | Additive. The `/health` panel can be extended or reverted independently; the dead-letter table can be left empty and ignored. |
-| **Status** | `OPEN` |
+| **Status** | `IMPLEMENTED_AWAITING_MERGE` (2026-10-23) — branch `feature/ph-06-observability-alerting`. **641 tests green**, 17 new in `tests/test_ph06_observability.py`; `final_verification.py` 17/17; `pyflakes` clean. **PR pending; not merged.** Residual, explicitly not over-claimed: external metrics (OBS-001), structured log sink/coverage (OBS-003/OBS-008), full error-class threading (OBS-010), in-memory lock-age view (OBS-014), D1 referral limitation for OBS-005, and production install of the OPS-033 systemd drop-in. |
 | **Owner approval required** | **YES** |
 
 ---

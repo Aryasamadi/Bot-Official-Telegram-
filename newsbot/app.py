@@ -38,26 +38,31 @@ def init_core():
     from newsbot.secret_store import migrate_ai_keys   # SEC-09 (فاز ۱۲): رمزنگاری کلیدهای AI در حالت سکون
     migrate_ai_keys()
     if gget("automation_enabled") is None: gset("automation_enabled", True)
-    log.info(f"core v4 ready | backend={config.DB_BACKEND} | CF KV: {'on' if config.CF_ENABLED else 'local'} | super: {config.SUPER_ADMIN_IDS} | AI×{config.AI_CONCURRENCY} FETCH×{config.FETCH_CONCURRENCY} CYCLE×{config.CYCLE_CONCURRENCY}")
+    log.info("core v4 ready | backend=%s | CF KV: %s | super_admins=%d | AI×%s FETCH×%s CYCLE×%s",
+             config.DB_BACKEND, "on" if config.CF_ENABLED else "local", len(config.SUPER_ADMIN_IDS),
+             config.AI_CONCURRENCY, config.FETCH_CONCURRENCY, config.CYCLE_CONCURRENCY)
 
 
 async def job_tick(context: ContextTypes.DEFAULT_TYPE):
-    try: await scheduler_tick(context.bot)
-    except Exception as e: log_event("ERROR", f"scheduler: {e}")
+    try:
+        await scheduler_tick(context.bot)
+    except Exception as e:
+        log_event("ERROR", f"scheduler tick failed: {type(e).__name__}: {e}",
+                  exc_info=True, error_class=type(e).__name__)
 
 
 async def post_init(app: Application):
     me = await app.bot.get_me(); runtime.BOT_USERNAME = me.username
     runtime.NOTIFY_SUPER = notify_supers; runtime.NOTIFY_USER = notify_user_fn
     set_bot(app.bot)   # FIX v4: لایه‌ی UI بدون APP سراسری، بطری را از این‌جا می‌گیرد
-    from newsbot.notify import ensure_super_worker   # ARCH-09 (فاز ۱۳): صف + ری‌ترای اعلان‌های سوپر
+    from newsbot.notify import ensure_super_worker, notify_super   # ARCH-09/PH-06: outbox پایدار اعلان‌ها
     ensure_super_worker()
     await app.bot.set_my_commands([BotCommand("start", "منوی اصلی"), BotCommand("create", "پنل مدیریت"), BotCommand("ref", "دعوت دوستان"), BotCommand("man", "پشتیبانی"), BotCommand("lang", "زبان"), BotCommand("about", "درباره"), BotCommand("help", "راهنما"), BotCommand("cancel", "لغو عملیات")], language_code="fa")
     await app.bot.set_my_commands([BotCommand("start", "Main menu"), BotCommand("create", "Admin panel"), BotCommand("ref", "Invite friends"), BotCommand("man", "Support"), BotCommand("lang", "Language"), BotCommand("about", "About"), BotCommand("help", "Help"), BotCommand("cancel", "Cancel")])
     app.job_queue.run_repeating(job_tick, interval=config.TICK_SECONDS, first=15, name="tick")
     _dup = await arun(gget, "db_dup_warn")
     if _dup:
-        await notify_supers("⚠️ <b>ایندکس یکتای دیتابیس ساخته نشد</b>\n"
+        await notify_super("⚠️ <b>ایندکس یکتای دیتابیس ساخته نشد</b>\n"
                             f"ردیف تکراری در: <code>{html.escape(', '.join(str(x) for x in _dup))}</code>\n"
                             "محافظت از ثبت کانال/منبع تکراری روی این نصب خاموش است. بررسی دستی:\n"
                             "<code>SELECT chat_id, COUNT(*) FROM channels GROUP BY chat_id HAVING COUNT(*) >1;</code>\n"
@@ -68,7 +73,7 @@ async def post_init(app: Application):
         from newsbot.core_referrals import referral_cfg   # REF-3: درصد زندهٔ پنل (نه فقط پیش‌فرض env)
         extra.append(f"referral {referral_cfg()[0]:g}%")
     if config.MANDATORY_CHANNEL_ID or config.MANDATORY_CHANNEL_USERNAME: extra.append("mandatory-channel ON")
-    await notify_supers(f"🚀 @{me.username} راه‌اندازی شد · 🤖 مدل‌های فعال {len(await arun(list_models, True))} · backend {config.DB_BACKEND} · CF KV {'✅' if config.CF_ENABLED else '❌'} · تیک هر {config.TICK_SECONDS}s" + (f" · {' · '.join(extra)}" if extra else ""))
+    await notify_super(f"🚀 @{me.username} راه‌اندازی شد · 🤖 مدل‌های فعال {len(await arun(list_models, True))} · backend {config.DB_BACKEND} · CF KV {'✅' if config.CF_ENABLED else '❌'} · تیک هر {config.TICK_SECONDS}s" + (f" · {' · '.join(extra)}" if extra else ""))
     app.bot_data["_watchdog_task"] = watchdog.start()
     watchdog.notify_ready()
 
@@ -107,8 +112,11 @@ async def post_shutdown(app: Application):
 
 async def on_error(update, context):
     log.exception("خطا: %s", context.error)
-    try: log_event("ERROR", f"unhandled: {context.error}")
-    except Exception: pass
+    try:
+        log_event("ERROR", f"unhandled: {type(context.error).__name__}: {context.error}",
+                  exc_info=True, error_class=type(context.error).__name__)
+    except Exception:
+        log.error("[ON_ERROR_LOG_FAILED]")
 
 
 def preflight(check=False):

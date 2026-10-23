@@ -682,7 +682,8 @@
       "verification": "STATIC",
       "status": "OPEN",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-001"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-001",
+      "fix_applied": "PH-06 بخشِ «اعلانِ گم‌شده» را بست (outbox پایدار، dead-letter و نمایش در health). export متریک خارجی (Prometheus/Grafana) طبق DECISIONS عمداً خارج از دامنه ماند و این یافته کامل بسته نشده است."
     },
     {
       "id": "OBS-002",
@@ -690,10 +691,11 @@
       "severity": "HIGH",
       "priority": "P1",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TEST",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-002"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-002",
+      "fix_applied": "PH-06: health_snapshot با probeهای tri-state و view_health بازنویسی شد؛ خطای probe به unknown/degraded می‌رسد، حجم D1 نامعلوم است و آخرین انتشار موفق/دلایل خرابی نمایش داده می‌شود. تست: tests/test_ph06_observability.py."
     },
     {
       "id": "OBS-003",
@@ -712,10 +714,11 @@
       "severity": "HIGH",
       "priority": "P1",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TEST",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-004"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-004",
+      "fix_applied": "PH-06: log_event پارامتر exc_info/error_class گرفت و مسیرهای scheduler_tick، _scheduled، cleanup و app.on_error traceback کامل را با redaction ثبت می‌کنند. تست: tests/test_ph06_observability.py::test_obs004_log_event_keeps_redacted_traceback."
     },
     {
       "id": "OBS-005",
@@ -723,10 +726,11 @@
       "severity": "HIGH",
       "priority": "P1",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TEST",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-005"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-005",
+      "fix_applied": "PH-01: اعطای پاداش ارجاع به داخل تراکنش اتمیک pay_approve_atomic منتقل شد و ref_key=pay:<rid> از اعطای دوباره جلوگیری می‌کند. PH-06: تست رگرسیون اتمیک/یدمپوتنت اضافه شد. محدودیت: مسیر D1 برای این عملیات unsupported است و SQLite تست شده."
     },
     {
       "id": "OBS-006",
@@ -734,10 +738,11 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TEST",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-006"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-006",
+      "fix_applied": "PH-06: settle_publication مقدار last_successful_publish را در settings ثبت می‌کند؛ _deadman_check در هر tick با آستانهٔ DEADMAN_STALE_HOURS هشدار پایدار می‌فرستد و با last_deadman_alert تکرار را مهار می‌کند. نصب تازه بدون انتشار قبلی هشدار نمی‌دهد. تست: tests/test_ph06_observability.py."
     },
     {
       "id": "OBS-007",
@@ -768,10 +773,11 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TEST",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-009"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-009",
+      "fix_applied": "PH-06: هر probe خطا را در errors ثبت می‌کند و مقدار نامعلوم برمی‌گرداند؛ خطای DB => unknown، D1 size => None، و view_health «نامعلوم» را جای ۰ نشان می‌دهد. تست: tests/test_ph06_observability.py::test_obs002_health_is_unknown_not_green_when_db_probe_fails و test_obs003_d1_size_is_unknown_not_zero."
     },
     {
       "id": "OBS-010",
@@ -782,7 +788,8 @@
       "verification": "STATIC",
       "status": "OPEN",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-010"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-010",
+      "fix_applied": "PH-06: مسیرهای scheduler/app خطا را با error_class و traceback ثبت می‌کنند. نرمال‌سازی سراسری error_class در cycle/AI و persist کردن reason همچنان باقی است (PH-08/PH-10)."
     },
     {
       "id": "OBS-011",
@@ -802,10 +809,11 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TEST",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-03",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-012"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-012",
+      "fix_applied": "PH-06: مسیر تأیید پرداخت فقط با ok is not False مارک notified_at می‌زند؛ در شکست ردیف approved/notified_at=NULL می‌ماند و _renotify_payments در tick بعدی دوباره می‌فرستد. notify_user_fn نیز True/False واقعی برمی‌گرداند. تست: tests/test_ph06_observability.py::test_obs012_payment_is_marked_notified_only_after_success."
     },
     {
       "id": "OBS-013",
@@ -828,7 +836,8 @@
       "verification": "STATIC",
       "status": "OPEN",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-014"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-014",
+      "fix_applied": "PH-06: last_successful_publish، pending journals، پرداخت‌های اعلام‌نشده، رسیدهای دیده‌نشده و اعلان‌های مرده به health اضافه شدند. سن قفل‌های درون‌حافظه‌ای و صفحهٔ اختصاصی صف هنوز پیاده نشده‌اند."
     },
     {
       "id": "OBS-015",
@@ -836,10 +845,11 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "CONFIRMED SECURITY ISSUE",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TEST",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-015"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-015",
+      "fix_applied": "PH-06: مسیر except در redaction fail-closed شد و به‌جای رکورد خام، [REDACTION_FAILED] و args پاک‌شده منتشر می‌شود. تست: tests/test_ph06_observability.py::test_obs015_redaction_failure_is_fail_closed."
     },
     {
       "id": "OBS-016",
@@ -847,10 +857,11 @@
       "severity": "LOW",
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TEST",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-016"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-016",
+      "fix_applied": "PH-06: کلید Gemini با هدر x-goog-api-key ارسال می‌شود و loggerهای httpx/httpcore/urllib3/telegram/telegram.ext/apscheduler روی WARNING pin شدند. تست: tests/test_ph06_observability.py::test_obs016_gemini_key_travels_in_a_header_not_the_url."
     },
     {
       "id": "OPS-001",
@@ -1229,8 +1240,8 @@
       "severity": "CRITICAL",
       "priority": "P0",
       "category": "CONFIRMED BUG",
-      "verification": "REPRODUCED",
-      "status": "OPEN",
+      "verification": "TEST",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-04",
       "evidence_ref": "docs/audit/FINDINGS.md#ops-033",
       "evidence": [
@@ -1239,7 +1250,7 @@
         "deploy/systemd/10-restart-always.conf",
         "docs/DEPLOY_RUNBOOK.md:180-199"
       ],
-      "fix_applied": "PHASE-04: chunked + resumable + out-of-transaction migration, plus a systemd start limit. In PR #26."
+      "fix_applied": "PHASE-04: chunked + resumable + out-of-transaction migration, plus a systemd start limit. In PR #26. PH-06: تست بازگشتی نشان می‌دهد شکست یک ستون marker نهایی iso_norm_v1 را نمی‌نویسد و ستون در اجرای بعدی retry می‌شود. نصب drop-in روی host هنوز unverified است."
     },
     {
       "id": "PERF-001",
@@ -1744,10 +1755,11 @@
       "severity": "INFO",
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TEST",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#sec-011"
+      "evidence_ref": "docs/audit/FINDINGS.md#sec-011",
+      "fix_applied": "PH-06: startup فقط تعداد super admin را log می‌کند و log_event برای actor از هش SHA-256 کوتاه استفاده می‌کند؛ ID خام در notify_supers/notify_user_fn نیز log نمی‌شود. تست: tests/test_ph06_observability.py::test_sec011_raw_super_id_is_not_logged."
     },
     {
       "id": "SEC-012",
@@ -2507,9 +2519,10 @@
         "SEC-011",
         "DB-008"
       ],
-      "status": "OPEN",
+      "status": "IMPLEMENTED_AWAITING_MERGE",
       "owner_approval_required": true,
-      "objective": "Make health, failures and money movements observable with alerting that cannot be lost."
+      "objective": "Make health, failures and money movements observable with alerting that cannot be lost.",
+      "execution_note": "2026-10-23: روی شاخهٔ feature/ph-06-observability-alerting پیاده‌سازی شد. ۶۴۱ تست سبز (۱۷ تست تازه در tests/test_ph06_observability.py)، pyflakes ساکت، final_verification ۱۷/۱۷. پوشش: health سه‌حالته، outbox پایدار اعلان مدیر، dead-man switch، last_successful_publish، redaction fail-closed، حذف ID خام و کلید Gemini از URL. باقی‌مانده/صادقانه: OBS-001 (metrics خارجی)، OBS-003/008/010 (log sink/ساختار کامل)، بخشی از OBS-014 (سن قفل‌ها)، D1 unsupported برای OBS-005 و اثبات نصب systemd drop-in در OPS-033."
     },
     {
       "id": "PH-07",

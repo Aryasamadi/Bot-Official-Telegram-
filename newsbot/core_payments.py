@@ -6,9 +6,11 @@ PHASE 4: pay_approve_atomic — تأیید پرداخت در یک تراکنش (
 نشانِ applied_at برای idempotency بازیابی (PAY-3).
 """
 import json
+from datetime import timedelta
 from newsbot import config
 from newsbot.db import q, db, _lock, _trx
-from newsbot.timeutils import now_iso
+from newsbot.logutils import log_event
+from newsbot.timeutils import now_iso, now_utc, parse_dt
 
 
 class PayError(Exception):
@@ -62,6 +64,33 @@ def pay_approved_recent(limit=8):
              "WHERE r.status='approved' ORDER BY r.id DESC LIMIT ?", (int(limit or 8),))
 
 def pay_get(rid): return q("SELECT * FROM pay_requests WHERE id=?", (rid,), one=True)
+
+def pay_recover_processing(rid):
+    """On-demand recovery for a *stale* ``processing`` row (FIN-022).
+
+    The scheduler already calls ``recover_stuck_payments()`` every few minutes, but an
+    operator can hit the button before that tick.  Returning a stale row to ``pending``
+    here makes the next click work instead of falsely claiming it was already handled.
+    A **fresh** claim is never stolen: the UPDATE is CAS on the exact ``claimed_at``
+    value and only runs when the claim is older than ``PAY_STUCK_MIN``.
+    """
+    r = pay_get(rid)
+    if not r or r["status"] != "processing": return r
+    if ("applied_at" in r.keys() and r["applied_at"]): return r
+    claimed = r["claimed_at"] if "claimed_at" in r.keys() else None
+    if not claimed: return r
+    try: claimed_dt = parse_dt(claimed)
+    except Exception: claimed_dt = None
+    if not claimed_dt: return r
+    if claimed_dt > now_utc() - timedelta(minutes=config.PAY_STUCK_MIN): return r
+    with _lock:
+        cur = db().execute("UPDATE pay_requests SET status='pending', claimed_at=NULL "
+                           "WHERE id=? AND status='processing' AND applied_at IS NULL AND claimed_at=?",
+                           (rid, claimed))
+        db().commit()
+    if cur.rowcount:
+        log_event("WARN", f"payment #{rid} returned to pending from stale processing")
+    return pay_get(rid)
 
 def pay_set(rid, status): q("UPDATE pay_requests SET status=?, decided_at=? WHERE id=?", (status, now_iso(), rid), commit=True)
 

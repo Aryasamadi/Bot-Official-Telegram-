@@ -297,3 +297,34 @@ def test_double_receipt_blocked_by_pending_guard():
     assert pay_pending_for(uid, pid) is None
     pay_create(uid, pid, note="first")
     assert pay_pending_for(uid, pid) is not None            # guard دومی را می‌بندد
+
+def test_unknown_approval_error_is_not_reported_as_already_handled():
+    from newsbot.ui_i18n import tr
+    from newsbot.ui_views_super import _pay_failure_text
+    assert _pay_failure_text("fa", PayAlreadyDecided(1)) == tr("fa", "s_pay_seen")
+    assert _pay_failure_text("fa", PayQuoteStale(1)) == tr("fa", "s_pay_stale")
+    failed = _pay_failure_text("fa", RuntimeError("injected"))
+    assert failed == tr("fa", "s_pay_failed")
+    assert failed != tr("fa", "s_pay_seen")
+
+def test_fresh_processing_receipt_is_not_called_already_handled():
+    from newsbot.ui_i18n import tr
+    from newsbot.ui_views_super import _pay_decision_ready
+    uid = 410016; _mk_user(uid)
+    pid = _paid_plan(20.0)
+    rid, _ = _req(uid, pid)
+    q("UPDATE pay_requests SET status='processing', claimed_at=? WHERE id=?", (now_iso(), rid), commit=True)
+    r, why = _pay_decision_ready("fa", rid)
+    assert r is None and why == tr("fa", "s_pay_processing") and why != tr("fa", "s_pay_seen")
+
+def test_stale_processing_receipt_recovers_and_can_be_approved():
+    from newsbot.ui_views_super import _pay_decision_ready
+    uid = 410017; _mk_user(uid)
+    pid = _paid_plan(20.0)
+    rid, _ = _req(uid, pid)
+    stale = (now_utc() - timedelta(minutes=config.PAY_STUCK_MIN + 1)).isoformat()
+    q("UPDATE pay_requests SET status='processing', claimed_at=? WHERE id=?", (stale, rid), commit=True)
+    r, why = _pay_decision_ready("fa", rid)
+    assert why is None and r["status"] == "pending"
+    pay_approve_atomic(rid)
+    assert pay_get(rid)["status"] == "approved"

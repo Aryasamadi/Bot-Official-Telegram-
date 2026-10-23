@@ -28,13 +28,18 @@
 # Overridable for tests: APP_DIR, BACKUP_DIR, SERVICE, KEEP_BACKUPS, HEALTH_TRIES.
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/bot-ai-automatic}"
+APP_DIR="${APP_DIR:-/opt/bot-official-telegram}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/backups}"
-SERVICE="${SERVICE:-bot-ai-automatic}"
+SERVICE="${SERVICE:-newsbot.service}"
 KEEP_BACKUPS="${KEEP_BACKUPS:-7}"
 # بودجهٔ سلامت: برابرِ TimeoutStartSec یونیت (پیش‌فرض ۱۸۰ ثانیه). با Type=notify
 # سرویس تا دریافتِ READY=1 در حالتِ activating می‌ماند، پس ۱۰ ثانیه کافی نبود.
 HEALTH_TRIES="${HEALTH_TRIES:-180}"
+# Support the live VPS layout (venv/ + data/newsbot.db) while retaining legacy sandbox compatibility.
+VENV_DIR="${VENV_DIR:-$APP_DIR/venv}"
+if [ ! -x "$VENV_DIR/bin/python" ] && [ -x "$APP_DIR/.venv/bin/python" ]; then VENV_DIR="$APP_DIR/.venv"; fi
+DB_PATH="${DB_PATH:-$APP_DIR/data/newsbot.db}"
+if [ ! -f "$DB_PATH" ] && [ -f "$APP_DIR/newsbot.db" ]; then DB_PATH="$APP_DIR/newsbot.db"; fi
 RESTARTED=0
 RESTART_EPOCH=0
 
@@ -53,8 +58,8 @@ preflight() {
   command -v systemctl >/dev/null 2>&1 || die "systemctl not found in PATH"
   [ -d "$APP_DIR/.git" ] || die "not a git checkout: $APP_DIR"
   [ -f "$APP_DIR/.env" ] || die ".env missing in $APP_DIR"
-  [ -x "$APP_DIR/.venv/bin/python" ] || die ".venv/bin/python missing in $APP_DIR"
-  [ -x "$APP_DIR/.venv/bin/pip" ] || die ".venv/bin/pip missing in $APP_DIR"
+  [ -x "$VENV_DIR/bin/python" ] || die "venv/bin/python missing in $VENV_DIR"
+  [ -x "$VENV_DIR/bin/pip" ] || die "venv/bin/pip missing in $VENV_DIR"
   # OPS-08: یونیت باید وجود داشته باشد و EnvironmentFile آن *اختیاری* نباشد.
   # (با «-» اختیاری است و نبودِ .env ⇒ حلقهٔ ری‌استارت تا ابد.)
   local info frag
@@ -69,7 +74,7 @@ preflight() {
 
 # Online SQLite backup (safe under WAL — `cp` of a live DB is not) + verification.
 backup_db() {
-  local db="$APP_DIR/newsbot.db"
+  local db="$DB_PATH"
   if [ ! -f "$db" ]; then
     log "no database yet — skipping backup"
     return 0
@@ -102,9 +107,10 @@ if ok != "ok" or d_objs != s_objs:
 PY
   chmod 600 "$dest" || return 1
   # OPS-10: پوشهٔ آرشیوِ مقالاتِ قدیمی (کنارِ دیتابیس) هم باید پشتیبانی شود
-  if [ -d "$APP_DIR/backups" ]; then
+  local archive_dir="$(dirname "$db")/backups"
+  if [ -d "$archive_dir" ]; then
     mkdir -p "$BACKUP_DIR/archive" || return 1
-    cp -p "$APP_DIR"/backups/*.db "$BACKUP_DIR/archive/" 2>/dev/null || true
+    cp -p "$archive_dir"/*.db "$BACKUP_DIR/archive/" 2>/dev/null || true
     log "archive folder mirrored to $BACKUP_DIR/archive"
   fi
   # فقط KEEP_BACKUPS بکاپ اخیر نگه داشته می‌شود
@@ -127,15 +133,15 @@ sync_to() {
 install_deps() {
   cd "$APP_DIR" || return 1
   log "installing pinned requirements"
-  .venv/bin/pip install --quiet -r requirements.txt || return 1
+  "$VENV_DIR/bin/pip" install --quiet -r requirements.txt || return 1
   return 0
 }
 
 # دروازهٔ پیش از restart — شکست یعنی سرویس قدیمی دست‌نخورده می‌ماند
 gate() {
   cd "$APP_DIR" || return 1
-  .venv/bin/python -m compileall -q newsbot run.py || return 1
-  .venv/bin/python run.py --check || return 1
+  "$VENV_DIR/bin/python" -m compileall -q newsbot run.py || return 1
+  "$VENV_DIR/bin/python" run.py --check || return 1
   return 0
 }
 

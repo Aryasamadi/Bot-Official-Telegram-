@@ -2580,7 +2580,7 @@
       "status": "IMPLEMENTED_AWAITING_MERGE",
       "owner_approval_required": true,
       "objective": "Remove blocking calls from the event loop and establish a reproducible pipeline baseline.",
-      "execution_note": "2026-10-23: پیاده‌سازی شد روی شاخهٔ feature/ph-07-event-loop (پایه: main = ef53c35 شامل PH-06). ۱۲ تستِ تازه در tests/test_ph07_event_loop.py؛ ۶۵۳ تست سبز؛ pyflakes ساکت؛ final_verification ۱۷/۱۷. ۱۱ یافته بسته شد؛ PERF-005 و OPS-015 باز ماندند (خارج از محدودهٔ این تغییر). ادغام/استقرار نشده؛ منتظر تأیید مالک."
+      "execution_note": "2026-10-23: پیاده‌سازی شد روی شاخهٔ feature/ph-07-event-loop (پایه: main = ef53c35 شامل PH-06). ۱۲ تستِ تازه در tests/test_ph07_event_loop.py؛ ۶۵۳ تست سبز؛ pyflakes ساکت؛ final_verification ۱۷/۱۷. ۱۱ یافته بسته شد؛ PERF-005 و OPS-015 باز ماندند (خارج از محدودهٔ این تغییر). PR #35 باز است؛ ادغام/استقرار انجام نشده و منتظر تأیید مالک است."
     },
     {
       "id": "PH-08",

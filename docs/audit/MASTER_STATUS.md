@@ -14,8 +14,8 @@
 | **Audit workspace** | `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (clean clone of `main` @ `08bc876`; audit docs written here) |
 | **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **2 CRITICAL** defects (FIN-001 financial + OPS-033 restart loop), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
 | **Audit completion** | **~94 %** (all 20 audit domains inspected; a second verification pass executed the FIN-001 reproduction and re-ran the suite; production runtime verification unavailable) |
-| **Current phase** | `PH-07` — Event-loop correctness and performance — **implemented on `feature/ph-07-event-loop`; PR pending** |
-| **Current phase status** | PRs #20–#33 merged · **#34** payment hotfix (open) · **PH-07 implemented (not yet PR/merged)** · PH-09/10/11 pending |
+| **Current phase** | `PH-07` — Event-loop correctness and performance — **implemented on `feature/ph-07-event-loop`; PR #35 open** |
+| **Current phase status** | PRs #20–#33 merged · **#34** payment hotfix (open) · **#35 PH-07 (open, not merged)** · PH-09/10/11 pending |
 | **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` — after the PH-07 PR, proceed to PH-09 → PH-10 → PH-11 only on explicit instruction |
 | **Owner approval required** | `true` |
 
@@ -85,7 +85,7 @@
 
 ---
 
-## PH-07 (2026-10-23) — حلقهٔ رویداد و کارایی — **IMPLEMENTED (PR pending، ادغام/استقرار نشده)**
+## PH-07 (2026-10-23) — حلقهٔ رویداد و کارایی — **IMPLEMENTED (PR #35 باز، ادغام/استقرار نشده)**
 
 | یافته | چه چیزی درست شد |
 |---|---|

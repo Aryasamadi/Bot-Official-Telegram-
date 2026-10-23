@@ -1,6 +1,6 @@
-## 2026-10-23 — PH-07 — درستیِ حلقهٔ رویداد و کارایی — **IMPLEMENTED (PR pending)**
+## 2026-10-23 — PH-07 — درستیِ حلقهٔ رویداد و کارایی — **IMPLEMENTED (PR #35)**
 
-**شاخه:** `feature/ph-07-event-loop` · **ادغام/استقرار:** انجام نشد.
+**شاخه:** `feature/ph-07-event-loop` · **PR:** #35 (باز) · **ادغام/استقرار:** انجام نشد.
 
 | یافته | اصلاح |
 |---|---|
@@ -537,7 +537,7 @@ attempted, so no finding is `VERIFIED_FIXED`.
 | PH-04 | OPEN | – | – | – | – | – | – |
 | PH-05 | OPEN | – | – | – | – | – | – |
 | PH-06 | OPEN | – | – | – | – | – | – |
-| PH-07 | IMPLEMENTED_AWAITING_MERGE | 2026-10-23 | 2026-10-23 | 11 (PERF-001/002/003/004/006/007، DB-006/009، PIPE-016، NET-005/008) → VERIFIED_FIXED | branch `feature/ph-07-event-loop` · PR pending | no | yes (653 tests) |
+| PH-07 | IMPLEMENTED_AWAITING_MERGE | 2026-10-23 | 2026-10-23 | 11 (PERF-001/002/003/004/006/007، DB-006/009، PIPE-016، NET-005/008) → VERIFIED_FIXED | branch `feature/ph-07-event-loop` · PR #35 (باز) | no | yes (653 tests) |
 | PH-08 | OPEN | – | – | – | – | – | – |
 | PH-09 | OPEN | – | – | – | – | – | – |
 | PH-10 | OPEN | – | – | – | – | – | – |

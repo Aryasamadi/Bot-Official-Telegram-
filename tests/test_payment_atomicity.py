@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """فاز ۴ — یکپارچگی مالی: تأیید اتمیک پرداخت، دابل‌پرداخت موازی، قطع حین تراکنش، idempotency بازیابی.
 پوشش: PAY-1 · DB-04 · DB-16 (حذف rollback دستی MAX(id)) · PAY-3 · GAP-01 · GAP-06 · GAP-14 · UISEC-10 (free_claim)."""
+import asyncio
 import threading
 import pytest
 from datetime import timedelta
@@ -297,3 +298,76 @@ def test_double_receipt_blocked_by_pending_guard():
     assert pay_pending_for(uid, pid) is None
     pay_create(uid, pid, note="first")
     assert pay_pending_for(uid, pid) is not None            # guard دومی را می‌بندد
+
+def test_unknown_approval_error_is_not_reported_as_already_handled():
+    from newsbot.ui_i18n import tr
+    from newsbot.ui_views_super import _pay_failure_text
+    assert _pay_failure_text("fa", PayAlreadyDecided(1)) == tr("fa", "s_pay_seen")
+    assert _pay_failure_text("fa", PayQuoteStale(1)) == tr("fa", "s_pay_stale")
+    failed = _pay_failure_text("fa", RuntimeError("injected"))
+    assert failed == tr("fa", "s_pay_failed")
+    assert failed != tr("fa", "s_pay_seen")
+
+def test_fresh_processing_receipt_is_not_called_already_handled():
+    from newsbot.ui_i18n import tr
+    from newsbot.ui_views_super import _pay_decision_ready
+    uid = 410016; _mk_user(uid)
+    pid = _paid_plan(20.0)
+    rid, _ = _req(uid, pid)
+    q("UPDATE pay_requests SET status='processing', claimed_at=? WHERE id=?", (now_iso(), rid), commit=True)
+    r, why = asyncio.run(_pay_decision_ready("fa", rid))
+    assert r is None and why == tr("fa", "s_pay_processing") and why != tr("fa", "s_pay_seen")
+
+def test_stale_processing_receipt_recovers_and_can_be_approved():
+    from newsbot.ui_views_super import _pay_decision_ready
+    uid = 410017; _mk_user(uid)
+    pid = _paid_plan(20.0)
+    rid, _ = _req(uid, pid)
+    stale = (now_utc() - timedelta(minutes=config.PAY_STUCK_MIN + 1)).isoformat()
+    q("UPDATE pay_requests SET status='processing', claimed_at=? WHERE id=?", (stale, rid), commit=True)
+    r, why = asyncio.run(_pay_decision_ready("fa", rid))
+    assert why is None and r["status"] == "pending"
+    pay_approve_atomic(rid)
+    assert pay_get(rid)["status"] == "approved"
+
+def test_payment_decision_path_keeps_db_off_the_event_loop(monkeypatch):
+    """PERF-001/DB-006: the approval decision path must not query on the loop thread."""
+    import newsbot.core_payments as paymod
+    import newsbot.db as dbmod
+    from newsbot.ui_views_super import _pay_decision_ready
+    uid = 410018; _mk_user(uid)
+    pid = _paid_plan(20.0)
+    rid, _ = _req(uid, pid)
+    loop_thread = threading.get_ident()
+    seen = []
+    real_q = dbmod.q
+    def spy_q(*a, **k):
+        seen.append(threading.get_ident())
+        return real_q(*a, **k)
+    monkeypatch.setattr(dbmod, "q", spy_q)
+    monkeypatch.setattr(paymod, "q", spy_q)
+    real_db = paymod.db
+    def spy_db(*a, **k):
+        seen.append(threading.get_ident())
+        return real_db(*a, **k)
+    monkeypatch.setattr(paymod, "db", spy_db)
+    r, why = asyncio.run(_pay_decision_ready("fa", rid))
+    assert r is not None and why is None
+    assert seen, "no DB call was observed"
+    assert all(t != loop_thread for t in seen), "a DB call ran on the event-loop thread"
+
+def test_payment_decision_functions_have_no_direct_sync_db_calls():
+    """Static guard: decide_pay/_decide_pay_locked/_pay_decision_ready must use arun()."""
+    import ast
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "newsbot" / "ui_views_super.py").read_text(encoding="utf-8-sig")
+    tree = ast.parse(src)
+    targets = {"decide_pay", "_decide_pay_locked", "_pay_decision_ready"}
+    primitives = {"q", "gget", "gset", "_trx", "_safe_fields", "db"}
+    bad = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name in targets:
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in primitives:
+                    bad.append(f"{node.name}:{call.lineno} {call.func.id}()")
+    assert not bad, "sync DB calls remain in the payment decision path: " + ", ".join(bad)

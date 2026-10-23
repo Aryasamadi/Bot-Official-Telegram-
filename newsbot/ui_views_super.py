@@ -6,7 +6,7 @@ NEW v4: پس از تأیید پرداخت، اعتبار ارجاع (referral) �
 """
 import os
 from newsbot import config
-from newsbot.db import q, gget
+from newsbot.db import q, gget, arun
 from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc, parse_dt, fmt_date, ago_text
 from newsbot.core_users import list_users, get_user, admin_limits, admin_offset, usage_today, is_super, user_lang
@@ -352,15 +352,18 @@ async def view_s_texts(update, context):
     kb.append([B(tr(lang, "back"), "s:home")])
     await render(update, context, text, kb)
 
-def _pay_decision_ready(lang, rid):
+async def _pay_decision_ready(lang, rid):
     """Return (row, None) only when the receipt is genuinely still pending.
 
     A ``processing`` row is not "already handled": either another admin has a fresh
     claim (wait) or the claim is stale and is returned to pending on demand (FIN-022).
+
+    Every DB access runs through ``arun`` so the decision path never blocks the
+    event-loop thread (PERF-001/DB-006); the outcome is identical to a direct call.
     """
-    r = pay_get(rid)
+    r = await arun(pay_get, rid)
     if r and r["status"] == "processing":
-        r = pay_recover_processing(rid)
+        r = await arun(pay_recover_processing, rid)
     if not r: return None, tr(lang, "notfound")
     if r["status"] == "processing": return None, tr(lang, "s_pay_processing")
     if r["status"] != "pending": return None, tr(lang, "s_pay_seen")
@@ -376,7 +379,7 @@ def _pay_failure_text(lang, e):
     return tr(lang, "s_pay_failed")
 
 async def decide_pay(update, context, rid, approve, from_list):
-    lang = L(update); r, why = _pay_decision_ready(lang, rid)
+    lang = L(update); r, why = await _pay_decision_ready(lang, rid)
     if not r: await popup(update, context, why); return await view_s_pays(update, context) if from_list else None
     from newsbot.concurrency import user_op_lock
     async with user_op_lock(r["user_id"]):   # BIZ-05: یک عملیات مالی در لحظه برای هر کاربر
@@ -384,17 +387,18 @@ async def decide_pay(update, context, rid, approve, from_list):
 
 async def _decide_pay_locked(update, context, rid, approve, from_list, lang):
     # دوباره وضعیت را بخوان؛ شاید در صفِ قفل، تصمیم دیگری ثبت شده باشد
-    r, why = _pay_decision_ready(lang, rid)
+    r, why = await _pay_decision_ready(lang, rid)
     if not r: await popup(update, context, why); return await view_s_pays(update, context) if from_list else None
-    ul = user_lang(r["user_id"]) or "fa"; p = get_plan(r["plan_id"])
+    ul = (await arun(user_lang, r["user_id"])) or "fa"; p = await arun(get_plan, r["plan_id"])
     if not p or p["is_free"] or ("active" in p.keys() and not p["active"]):
-        pay_set(rid, "pending"); await popup(update, context, tr(lang, "notfound")); return await view_s_pays(update, context) if from_list else None
+        await arun(pay_set, rid, "pending"); await popup(update, context, tr(lang, "notfound")); return await view_s_pays(update, context) if from_list else None
     if approve:
         # PHASE 4: claim + تخفیف + کیف پول/سابقه + واگذاری پلن + approved در یک تراکنش (PAY-1/DB-04).
         # PH-01: قیمت دوباره محاسبه و در صورت اختلافِ مؤثر، تأیید متوقف می‌شود (Q-2a)؛
         # پاداشِ ارجاع هم درونِ همین تراکنش اعطا می‌شود (FIN-009) و اینجا فقط اعلام می‌گردد.
+        # PERF-001/DB-006: the whole transaction runs on the DB worker pool, never on the event loop.
         try:
-            exp, queued, ref_reward = pay_approve_atomic(rid, by_uid=update.effective_user.id)
+            exp, queued, ref_reward = await arun(pay_approve_atomic, rid, by_uid=update.effective_user.id)
         except PayError as e:
             await popup(update, context, _pay_failure_text(lang, e))
             return await view_s_pays(update, context) if from_list else None
@@ -405,25 +409,26 @@ async def _decide_pay_locked(update, context, rid, approve, from_list, lang):
         if ref_reward:
             try:
                 ref_id, amt, ref_cur = ref_reward
-                rl = user_lang(ref_id) or "fa"
+                rl = (await arun(user_lang, ref_id)) or "fa"
                 from newsbot.core_wallet import lang_of_currency
                 rl = lang_of_currency(ref_cur) or rl          # واحدِ پاداش = واحدِ پرداخت
                 await notify_user_fn(ref_id, tr(rl, "ref_reward", amount=fmt_amt(amt, rl)))
             except Exception: log.exception("referral notify failed rid=%s", rid)
         try:
-            ok = await notify_user_fn(r["user_id"], tr(ul, "pay_approved", name=esc(plan_txt(p, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=fmt_date(exp, admin_offset(r["user_id"])))))
+            _offset = await arun(admin_offset, r["user_id"])
+            ok = await notify_user_fn(r["user_id"], tr(ul, "pay_approved", name=esc(plan_txt(p, "name", ul)), when=tr(ul, "pay_when_queued" if queued else "pay_when_now", d=fmt_date(exp, _offset))))
         except Exception as e:
             ok = False
             log.warning("payment approval notice failed (%s)", type(e).__name__)
         if ok is not False:
-            try: pay_mark_notified(rid)
+            try: await arun(pay_mark_notified, rid)
             except Exception as e: log_event("WARN", f"payment notified marker failed rid={rid} ({type(e).__name__})")
         else:
             # OBS-012: پول/پلن اعمال شده ولی پیام نرفته ⇒ ردیف «اعلام‌نشده» بماند تا زمان‌بند بفرستد.
             log_event("WARN", f"payment approval notice deferred rid={rid}")
         await popup(update, context, tr(lang, "s_pay_done_ok"))
     else:
-        pay_set(rid, "rejected"); await notify_user_fn(r["user_id"], tr(ul, "pay_rejected")); await popup(update, context, tr(lang, "s_pay_done_no"))
+        await arun(pay_set, rid, "rejected"); await notify_user_fn(r["user_id"], tr(ul, "pay_rejected")); await popup(update, context, tr(lang, "s_pay_done_no"))
     log_event("INFO", f"پرداخت #{rid} {'تأیید' if approve else 'رد'} شد", update.effective_user.id)
     if from_list: return await view_s_pays(update, context)
     try: await update.callback_query.edit_message_reply_markup(None)

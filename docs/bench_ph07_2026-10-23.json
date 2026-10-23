@@ -1,0 +1,136 @@
+{
+  "ts": "2026-10-23T11:34:29.138041+00:00",
+  "python": "3.13.2",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "sqlite": "3.45.3",
+  "ops": 2000,
+  "reps": 3,
+  "blocks": {
+    "users_insert": {
+      "n": 2000,
+      "seconds": 0.2961,
+      "per_sec": 6754.3,
+      "min_per_sec": 5463.5,
+      "max_per_sec": 6841.6,
+      "runs": [
+        {
+          "seconds": 0.3661,
+          "per_sec": 5463.5
+        },
+        {
+          "seconds": 0.2961,
+          "per_sec": 6754.3
+        },
+        {
+          "seconds": 0.2923,
+          "per_sec": 6841.6
+        }
+      ]
+    },
+    "users_select": {
+      "n": 2000,
+      "seconds": 0.0327,
+      "per_sec": 61097.4,
+      "min_per_sec": 58118.2,
+      "max_per_sec": 63484.6,
+      "runs": [
+        {
+          "seconds": 0.0327,
+          "per_sec": 61097.4
+        },
+        {
+          "seconds": 0.0344,
+          "per_sec": 58118.2
+        },
+        {
+          "seconds": 0.0315,
+          "per_sec": 63484.6
+        }
+      ]
+    },
+    "articles_insert": {
+      "n": 2000,
+      "seconds": 0.767,
+      "per_sec": 2607.6,
+      "min_per_sec": 2577.2,
+      "max_per_sec": 2731.1,
+      "runs": [
+        {
+          "seconds": 0.776,
+          "per_sec": 2577.2
+        },
+        {
+          "seconds": 0.7323,
+          "per_sec": 2731.1
+        },
+        {
+          "seconds": 0.767,
+          "per_sec": 2607.6
+        }
+      ]
+    },
+    "referral_credit_trx": {
+      "n": 400,
+      "seconds": 0.5245,
+      "per_sec": 762.7,
+      "min_per_sec": 652.0,
+      "max_per_sec": 823.8,
+      "runs": [
+        {
+          "seconds": 0.5245,
+          "per_sec": 762.7
+        },
+        {
+          "seconds": 0.6135,
+          "per_sec": 652.0
+        },
+        {
+          "seconds": 0.4856,
+          "per_sec": 823.8
+        }
+      ]
+    },
+    "concurrent_cycle": {
+      "n": 20,
+      "seconds": 0.0237,
+      "per_sec": 845.6,
+      "min_per_sec": 372.7,
+      "max_per_sec": 947.2,
+      "runs": [
+        {
+          "seconds": 0.0537,
+          "per_sec": 372.7
+        },
+        {
+          "seconds": 0.0211,
+          "per_sec": 947.2
+        },
+        {
+          "seconds": 0.0237,
+          "per_sec": 845.6
+        }
+      ]
+    },
+    "mocked_http_pipeline": {
+      "n": 200,
+      "seconds": 0.2863,
+      "per_sec": 698.6,
+      "min_per_sec": 551.5,
+      "max_per_sec": 712.4,
+      "runs": [
+        {
+          "seconds": 0.2807,
+          "per_sec": 712.4
+        },
+        {
+          "seconds": 0.3626,
+          "per_sec": 551.5
+        },
+        {
+          "seconds": 0.2863,
+          "per_sec": 698.6
+        }
+      ]
+    }
+  }
+}

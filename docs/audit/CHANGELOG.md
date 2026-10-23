@@ -1,4 +1,26 @@
-## 2026-10-23 — PH-06 — نظارت و پایداریِ اعلان — **IMPLEMENTED (branch `feature/ph-06-observability-alerting`، PR در انتظار)**
+## 2026-10-23 — PH-07 — درستیِ حلقهٔ رویداد و کارایی — **IMPLEMENTED (PR pending)**
+
+**شاخه:** `feature/ph-07-event-loop` · **ادغام/استقرار:** انجام نشد.
+
+| یافته | اصلاح |
+|---|---|
+| **PERF-001** | فراخوانی‌های مستقیم DB در `async def`ها به `await arun(...)` منتقل شدند؛ تستِ AST + تستِ اجرا روی ترد کارگر. |
+| **PERF-002** | پاک‌سازی قفل‌ها بدون DB، دوره‌ای (هر ۶۴ دسترسی)، TTL ۹۰۰ثانیه‌ای و سقف سخت ۵۱۲. |
+| **PERF-003** | `DB_POOL_SIZE` (۸) + استخر نگهداری جدا `MAINT_POOL_SIZE` (۱) و `arun_maint`. |
+| **PERF-004** | بنچمارک هم‌روند/HTTP ساختگی، سه تکرار، min/median/max، JSON خام و ماشین مشخص. |
+| **PERF-006** | `view_health` بدون subprocess/RSS/DB روی حلقه. |
+| **PERF-007** | سمافور انتشار `PUBLISH_CONCURRENCY=2` + بودجهٔ `MAX_PUBLISHES_PER_TICK=8`. |
+| **DB-006 · DB-009** | fail-fast بدون `time.sleep` روی حلقه؛ WAL یک‌بار + گزارش حالتِ واقعی. |
+| **PIPE-016** | `CYCLE_SEM` قبل از قفل کانال. |
+| **NET-005 · NET-008** | `HTTPXRequest` با استخر ۳۲/timeoutهای صریح؛ کش DNS TTL=۵s و سقف ۵۱۲. |
+
+**تست‌ها:** ۱۲ تستِ تازه در `tests/test_ph07_event_loop.py` · **۶۵۳ passed** · pyflakes ساکت ·
+`final_verification` ۱۷/۱۷.
+**بازمانده:** PERF-005 و OPS-015 خارج از محدودهٔ این تغییر باز ماندند.
+**بنچمارک:** `docs/bench_ph07_2026-10-23.json` · نتایج و محدودیت‌ها در `docs/PERFORMANCE.md`.
+**استقرار:** هیچ. اجرای deploy تأیید/شروع نشد.
+
+## 2026-10-23 — PH-06 — نظارت و پایداریِ اعلان — **IMPLEMENTED (PR #33، merged)**
 
 - **OBS-011** — مدلِ persist-first: اعلان پیش از ارسال در `notifications` ثبت می‌شود؛ صف حافظه فقط wake-up است. تحویل با تعداد واقعی گیرنده mark می‌شود، پیام مرده حذف نمی‌شود.
 - **OBS-002 · OBS-003 · OBS-009** — `health_snapshot` سه‌حالته و `view_health` بازنویسی‌شده: خطای probe ⇒ `unknown`/`degraded`، D1 size ⇒ نامعلوم، نمایش آخرین انتشار موفق و دلایل.
@@ -8,7 +30,7 @@
 - **OBS-015 · OBS-016 · SEC-011** — redaction fail-closed؛ کلید Gemini در هدر؛ loggerهای third-party pin؛ حذف ID خام مدیر.
 - **OBS-005 · OPS-033** — تست رگرسیون اتمیک/idempotent ارجاع؛ marker `iso_norm_v1` فقط با موفقیت همهٔ ستون‌ها و retry ستون ناموفق.
 - **تست‌ها:** ۱۷ تستِ تازه در `tests/test_ph06_observability.py` · **۶۴۱ passed** · `pyflakes` ساکت · `final_verification` ۱۷/۱۷.
-- **Deployment:** هیچ merge/deploy انجام نشد. **Verification:** کد و تست سبز؛ اثر تولید و نصب drop-in در OPS-033 تأیید نشده است.
+- **Deployment:** merge در `main` (PR #33)؛ استقرارِ تولید انجام نشد. **Verification:** اثر تولید و نصب drop-in در OPS-033 تأیید نشده است.
 
 ## 2026-10-21 — PH-05 — یکپارچگیِ رابطِ کاربری و مسیرِ مشتری — **IMPLEMENTED (PR #32)**
 
@@ -515,7 +537,7 @@ attempted, so no finding is `VERIFIED_FIXED`.
 | PH-04 | OPEN | – | – | – | – | – | – |
 | PH-05 | OPEN | – | – | – | – | – | – |
 | PH-06 | OPEN | – | – | – | – | – | – |
-| PH-07 | OPEN | – | – | – | – | – | – |
+| PH-07 | IMPLEMENTED_AWAITING_MERGE | 2026-10-23 | 2026-10-23 | 11 (PERF-001/002/003/004/006/007، DB-006/009، PIPE-016، NET-005/008) → VERIFIED_FIXED | branch `feature/ph-07-event-loop` · PR pending | no | yes (653 tests) |
 | PH-08 | OPEN | – | – | – | – | – | – |
 | PH-09 | OPEN | – | – | – | – | – | – |
 | PH-10 | OPEN | – | – | – | – | – | – |

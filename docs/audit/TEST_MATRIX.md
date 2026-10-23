@@ -1,6 +1,13 @@
 # TEST MATRIX — commit `08bc876`
 
-## 1. Test execution status (observed in this audit)
+> **PH-07 refresh (2026-10-23):** on `feature/ph-07-event-loop` (base `main` @ `ef53c35`, which
+> includes PH-06), the suite is **653 passed** (`12` new tests in
+> `tests/test_ph07_event_loop.py`), pyflakes is silent, and
+> `tools/final_verification.py` is **17/17**. `tools/benchmark.py --ops 2000 --reps 3` was
+> executed and its raw JSON is at `docs/bench_ph07_2026-10-23.json`. The audit baseline below
+> (455 tests, commit `08bc876`) is preserved for traceability; PH-07 rows in §4 are marked done.
+
+## 1. Test execution status (audit baseline)
 
 | Field | Value |
 |---|---|
@@ -136,9 +143,9 @@
 | `/health` renders `unknown`/`degraded` for a failed probe instead of `0` | OBS-002, OBS-009 | PH-06 |
 | `last_successful_publish` is exposed and goes stale correctly | OBS-006 | PH-06 |
 | The super-admin ID is not written to the journal | SEC-011 | PH-06 |
-| `q()` never executes on the event-loop thread (AST + runtime) | PERF-001, DB-006 | PH-07 |
-| 300 channels keep the queries per `ch_lock()` bounded | PERF-002 | PH-07 |
-| The Telegram client's pool limits are asserted | NET-005 | PH-07 |
+| `q()` never executes on the event-loop thread (AST + runtime) | PERF-001, DB-006 | PH-07 — **DONE** (`test_ph07_event_loop.py`) |
+| 300 channels keep the queries per `ch_lock()` bounded | PERF-002 | PH-07 — **DONE** (`test_ph07_event_loop.py`) |
+| The Telegram client's pool limits are asserted | NET-005 | PH-07 — **DONE** (`test_ph07_event_loop.py`) |
 | A 13th chunk call returns `ai_budget`; the call counter never resets | PIPE-001 | PH-08 |
 | A cached entry older than the TTL is a miss; changed text ⇒ a different cache key | PIPE-003, PIPE-004 | PH-08 |
 | A long article consumes more than one AI unit; a personal model test consumes quota | PIPE-006, PIPE-007 | PH-08 |

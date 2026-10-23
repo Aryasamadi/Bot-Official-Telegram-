@@ -16,7 +16,7 @@ from newsbot import runtime
 from newsbot.logutils import log, log_event, log_ctx, bump
 from newsbot.timeutils import now_iso
 from newsbot.net_http import http, public_url_strict, UA_BROWSER, UA_FEED, gen_deeplink_key, save_deeplink, retry_after_seconds
-from newsbot.concurrency import FETCH_SEM, ch_lock
+from newsbot.concurrency import FETCH_SEM, publish_sem, ch_lock
 from newsbot.db import arun
 from newsbot.discover import _ext_kind
 from newsbot.core_channels import get_channel, get_settings, msg_link
@@ -176,6 +176,12 @@ async def _send_media(bot, chat_id, caption, pm, media):
         raise
 
 async def send_post(bot, chat_id, text, media=None):
+    """PH-07/PERF-007: bound all Bot API uploads with one global semaphore."""
+    async with publish_sem():
+        return await _send_post_locked(bot, chat_id, text, media)
+
+
+async def _send_post_locked(bot, chat_id, text, media=None):
     """رسانه + کپشنِ یک‌تکه (کپشن همیشه زیر محدودیت ۱۰۲۴ تلگرام می‌ماند) · خطای پارس → تنزل تدریجی فرمت (معمولی → ساده).
     هیچ‌وقت پست را به دو پیام نمی‌شکند: ادامهٔ محتوا فقط از راه «بیشتر» داخل ربات دیده می‌شود."""
     variants = [(text, "HTML"), (downgrade_html(text), "HTML"), (strip_tags(text), None)]

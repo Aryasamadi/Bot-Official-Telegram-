@@ -8,6 +8,7 @@ FIX v4:
 import asyncio, html, os, re
 from telegram import BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from telegram.request import HTTPXRequest
 from newsbot import config
 from newsbot import runtime
 from newsbot import watchdog
@@ -201,12 +202,20 @@ def _acquire_single_instance_lock():
     return f
 
 
+def build_telegram_request():
+    """PH-07/NET-005: size the Bot API pool explicitly for concurrent uploads/UI traffic."""
+    return HTTPXRequest(connection_pool_size=config.TELEGRAM_POOL_SIZE,
+                        read_timeout=60, write_timeout=600, connect_timeout=30,
+                        pool_timeout=30, media_write_timeout=600)
+
+
 def main():
     global APP
     preflight()
     _acquire_single_instance_lock()
     init_core(); _bld = Application.builder().token(config.BOT_TOKEN)
     if config.API_BASE: _bld = _bld.base_url(config.API_BASE)          # سرور محلی Bot API (اختیاری) → پشتیبانی از فایل‌های تا ۲ گیگ
+    _bld = _bld.request(build_telegram_request())
     APP = _bld.post_init(post_init).post_shutdown(post_shutdown).concurrent_updates(True).build()
     for cmd, fn in (("start", cmd_start), ("create", cmd_create), ("admin", cmd_admin), ("man", cmd_man), ("help", cmd_help), ("about", cmd_about), ("lang", cmd_lang), ("ref", cmd_ref), ("cancel", cmd_cancel), ("health", cmd_health)): APP.add_handler(CommandHandler(cmd, managed_command(fn)))
     APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.COMMAND, managed_command(cmd_unknown)))

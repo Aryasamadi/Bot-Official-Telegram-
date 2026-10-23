@@ -1,6 +1,6 @@
 # ROADMAP — Bot-Official-Telegram- Remediation Plan
 
-**Baseline:** commit `08bc87655dc910a98076acd749ddf8f3e6bdca2c` (branch `main`) · **180 findings, all OPEN**
+**Baseline:** commit `08bc87655dc910a98076acd749ddf8f3e6bdca2c` (branch `main`) · the original snapshot recorded **180 findings, all OPEN**; the current register contains **185 findings** and reconciled statuses.
 **Status of this document:** the owner controls execution. **Nothing in this roadmap may be started without
 an explicit owner instruction naming the phase ID.**
 
@@ -146,7 +146,7 @@ safe fix. Each phase is **self-contained** and ends in a mergeable, revertable s
 | **Required tests** | New: the redaction factory fails **closed** (a raising `redact()` must not leak the raw record); scheduler errors carry a traceback; `/health` renders `unknown`/`degraded` for a failed probe instead of `0`; `last_successful_publish` is exposed and goes stale correctly; a super-notification queue overflow lands in a dead-letter table; the super-admin ID is not written to the journal. |
 | **Acceptance criteria** | (1) `/health` distinguishes `ok` / `degraded` / `unknown` and reports the last successful publish. (2) Every scheduler and cycle error carries a traceback. (3) No alert is dropped without a dead-letter record. (4) A "green but idle" bot is detectable. (5) The financial audit trail can answer "who paid what, when, and what was credited" (jointly with PH-01/OBS-007). (6) The journal contains no secret and no raw super-admin ID. |
 | **Rollback strategy** | Additive. The `/health` panel can be extended or reverted independently; the dead-letter table can be left empty and ignored. |
-| **Status** | `IMPLEMENTED_AWAITING_MERGE` (2026-10-23) — branch `feature/ph-06-observability-alerting`. **641 tests green**, 17 new in `tests/test_ph06_observability.py`; `final_verification.py` 17/17; `pyflakes` clean. **PR pending; not merged.** Residual, explicitly not over-claimed: external metrics (OBS-001), structured log sink/coverage (OBS-003/OBS-008), full error-class threading (OBS-010), in-memory lock-age view (OBS-014), D1 referral limitation for OBS-005, and production install of the OPS-033 systemd drop-in. |
+| **Status** | `COMPLETE` (2026-10-23) — branch `feature/ph-06-observability-alerting`, merged in `main` via PR #33 (`ef53c35`). **641 tests green**, 17 new in `tests/test_ph06_observability.py`; `final_verification.py` 17/17; `pyflakes` clean. Residual, explicitly not over-claimed: external metrics (OBS-001), structured log sink/coverage (OBS-003/OBS-008), full error-class threading (OBS-010), in-memory lock-age view (OBS-014), D1 referral limitation for OBS-005, and production install of the OPS-033 systemd drop-in. **Merged, but not deployed.** |
 | **Owner approval required** | **YES** |
 
 ---
@@ -156,7 +156,8 @@ safe fix. Each phase is **self-contained** and ends in a mergeable, revertable s
 | Field | Value |
 |---|---|
 | **Objective** | Remove the blocking database and process calls from the event loop, bound the lock-pruning cost, and establish a reproducible performance baseline for the pipeline. |
-| **Findings addressed** | PERF-001, PERF-002, PERF-003, PERF-004, PERF-005, PERF-006, PERF-007, DB-006, DB-009, PIPE-016, NET-005, NET-008 |
+| **Findings addressed** | PERF-001, PERF-002, PERF-003, PERF-004, PERF-006, PERF-007, DB-006, DB-009, PIPE-016, NET-005, NET-008 |
+| **Explicitly out of scope** | PERF-005 (startup source scan) and OPS-015 (watchdog on the same event-loop thread) remain open; PH-07 does not claim them as fixed. |
 | **Priority** | P2 |
 | **Dependencies** | `PH-01` (which adds DB work in the approval path) and `PH-08` (which changes the AI path). Best scheduled after both. |
 | **Risk** | Medium — moving calls onto the 4-worker DB pool can shift the bottleneck rather than remove it. Mitigations: the pool size becomes configurable; the pool is monitored; the change is measured before and after with the new baseline from PERF-004. |
@@ -164,7 +165,8 @@ safe fix. Each phase is **self-contained** and ends in a mergeable, revertable s
 | **Required tests** | New: no `q()` executes on the event-loop thread (a static AST check plus a runtime assertion); a busy retry does not block the loop; 300 channels keep the queries per `ch_lock()` bounded; a long `archive_backup` does not delay an `arun` call; the Telegram client's pool limits are asserted. Extend `tools/benchmark.py` with a concurrent cycle simulation and a mocked-HTTP pipeline; commit the raw JSON and state the machine. |
 | **Acceptance criteria** | (1) Zero synchronous DB calls remain in `async def` bodies. (2) The lock prune is amortised and bounded. (3) A reproducible baseline exists for the discovery->publish pipeline, not only for SQLite inserts. (4) The Telegram connection pool is explicitly sized. (5) The published `docs/PERFORMANCE.md` numbers are re-measured and state their machine. |
 | **Rollback strategy** | The pool size is a config value and can be reverted without a code change; the AST check will catch any regression. |
-| **Status** | `OPEN` |
+| **Status** | `IMPLEMENTED_AWAITING_MERGE` (2026-10-23) — branch `feature/ph-07-event-loop`. **Not merged, not deployed.** |
+| **Implementation evidence** | ۱۲ تست در `tests/test_ph07_event_loop.py` · کل مجموعه **۶۵۳ passed** (پایه: `main` = `ef53c35` شامل PH-06) · pyflakes ساکت · `final_verification` ۱۷/۱۷. **PERF-005** (اسکنِ استارتاپ) و **OPS-015** (watchdog روی همان حلقه) خارج از این تغییر باز ماندند. دو بلوک بنچمارک جدید + JSON خام در `docs/PERFORMANCE.md` / `docs/bench_ph07_2026-10-23.json`. شاخه روی `main` (با PH-06 ادغام‌شده) بازسازی شد و PH-01/PH-08 ادغام‌نشده را در بر نمی‌گیرد؛ ترتیب ادغام باید هنگام PR بررسی شود. |
 | **Owner approval required** | **YES** |
 
 ---

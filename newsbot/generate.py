@@ -4,7 +4,7 @@ FIX v4: بودجه‌ی هر مقاله با ai_models.budget_reset() (ContextVa
 """
 import asyncio, hashlib, json, re
 from newsbot import config
-from newsbot.db import q
+from newsbot.db import q, arun
 from newsbot.logutils import log, redact
 from datetime import timedelta
 from newsbot.timeutils import now_iso, now_utc, iso_fixed, url_hash
@@ -104,7 +104,7 @@ async def _summarize_chunks(s, full, on_queue=None, owner_id=None, _depth=0):
         ck = chunk_cache_key(s, per_chunk, chunk)
         if config.AI_CACHE_TTL_DAYS > 0:
             _cut = iso_fixed(now_utc() - timedelta(days=config.AI_CACHE_TTL_DAYS))   # PH-08/PIPE-003
-            _hit = q("SELECT value FROM ai_cache WHERE key=? AND created_at>=?", (ck, _cut), one=True)
+            _hit = await arun(q, "SELECT value FROM ai_cache WHERE key=? AND created_at>=?", (ck, _cut), one=True)
             if _hit:
                 try:
                     _t = json.loads(_hit["value"]).get("t")
@@ -118,7 +118,7 @@ async def _summarize_chunks(s, full, on_queue=None, owner_id=None, _depth=0):
             if attempt: raw = chunk[:per_chunk]
         lines.append(raw or "")
         if config.AI_CACHE_TTL_DAYS > 0 and (raw or "").strip():
-            try: q("INSERT OR REPLACE INTO ai_cache(key,value,created_at) VALUES(?,?,?)", (ck, json.dumps({"t": raw}, ensure_ascii=False), now_iso()), commit=True)
+            try: await arun(q, "INSERT OR REPLACE INTO ai_cache(key,value,created_at) VALUES(?,?,?)", (ck, json.dumps({"t": raw}, ensure_ascii=False), now_iso()), commit=True)
             except Exception: log.warning("chunk-cache write failed", exc_info=True)
     merged = "\n".join(x for x in lines if x and x.strip())
     if len(merged) <= config.AI_INPUT_TEXT_CHARS or _depth >= config.AI_MERGE_MAX_DEPTH: return merged, None
@@ -143,7 +143,7 @@ async def generate(s, art, on_queue=None, owner_id=None):
     if config.AI_CACHE_TTL_DAYS > 0:
         # PH-08/PIPE-003: TTL must be enforced at READ time, not only by the hourly sweep.
         _cut = iso_fixed(now_utc() - timedelta(days=config.AI_CACHE_TTL_DAYS))
-        _hit = q("SELECT value FROM ai_cache WHERE key=? AND created_at>=?", (ckey, _cut), one=True)
+        _hit = await arun(q, "SELECT value FROM ai_cache WHERE key=? AND created_at>=?", (ckey, _cut), one=True)
         if _hit:
             try:
                 _c = json.loads(_hit["value"])
@@ -187,7 +187,7 @@ async def generate(s, art, on_queue=None, owner_id=None):
         salvaged = True
     j["scores"] = scores; j["score"] = weighted_score(s, scores)
     if config.AI_CACHE_TTL_DAYS > 0 and not salvaged:   # فقط خروجیِ کاملاً معتبر کش میشود (مسیر salvage و is_ad کش نمیشوند)
-        try: q("INSERT OR REPLACE INTO ai_cache(key,value,created_at) VALUES(?,?,?)", (ckey, json.dumps({"j": j, "model": model}, ensure_ascii=False), now_iso()), commit=True)
+        try: await arun(q, "INSERT OR REPLACE INTO ai_cache(key,value,created_at) VALUES(?,?,?)", (ckey, json.dumps({"j": j, "model": model}, ensure_ascii=False), now_iso()), commit=True)
         except Exception: log.warning("ai_cache write failed", exc_info=True)
     return j, model, None
 

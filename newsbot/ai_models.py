@@ -9,7 +9,7 @@ from datetime import timedelta
 from urllib.parse import urlparse
 import httpx
 from newsbot import config
-from newsbot.db import q, gget, _safe_fields
+from newsbot.db import q, gget, arun, _safe_fields
 from newsbot.secret_store import decrypt as _sec_decrypt, encrypt as _sec_encrypt   # SEC-09 (فاز ۱۲)
 from newsbot.logutils import log, log_event, bump, redact
 from newsbot.timeutils import now_utc, now_iso, parse_dt
@@ -356,7 +356,7 @@ async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, 
             return None, None, "ai_none"
         personal = [selected] + [m for m in personal if m["id"] != selected_id]
     shared = [m for m in list_models(active_only=True) if _model_ready(m)]
-    test_id = gget("test_model_id")
+    test_id = await arun(gget, "test_model_id")
     test = [m for m in shared if m["id"] == test_id]
     shared = [m for m in shared if m["id"] != test_id]
     return await _try_models([("personal", personal), ("test", test), ("public", shared)], system, user,
@@ -371,7 +371,7 @@ async def test_model(mid):
 
 async def probe_down_models():
     """چند مدل خراب در هر تیک آزمایش می‌شود تا بازیابی به چند ده دقیقه کشیده نشود."""
-    rows = q("SELECT * FROM ai_models WHERE active=1 AND status='down' ORDER BY COALESCE(last_fail,'') LIMIT ?", (config.MODEL_PROBE_BATCH,))
+    rows = await arun(q, "SELECT * FROM ai_models WHERE active=1 AND status='down' ORDER BY COALESCE(last_fail,'') LIMIT ?", (config.MODEL_PROBE_BATCH,))
     for m in rows:
         lf = parse_dt(m["last_fail"])
         if lf and (now_utc() - lf) < timedelta(minutes=config.MODEL_PROBE_MIN): continue

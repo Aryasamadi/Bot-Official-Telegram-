@@ -12,11 +12,11 @@
 | **Audited commit SHA** | `08bc87655dc910a98076acd749ddf8f3e6bdca2c` ("Fix referral invitation copy and fallback", 2026-10-19T20:03:08Z) |
 | **Production commit SHA** | **UNKNOWN — NOT VERIFIED.** No VPS/host access was available: this environment has **no `~/.ssh`, no ssh config, no `gh` CLI and no VPS environment variables**. The repository contains no deployment ledger; `.deployed_sha` is written on the host and never committed. The only in-repo evidence of the running SHA is the super-admin `/health` panel (`newsbot/ui_views_super.py:36-60`). See `FINDINGS.md` §13.1. |
 | **Audit workspace** | `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (clean clone of `main` @ `08bc876`; audit docs written here) |
-| **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **1 CRITICAL** financial defect (now **reproduced**), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
+| **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **2 CRITICAL** defects (FIN-001 financial + OPS-033 restart loop), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
 | **Audit completion** | **~94 %** (all 20 audit domains inspected; a second verification pass executed the FIN-001 reproduction and re-ran the suite; production runtime verification unavailable) |
-| **Current phase** | `PH-06` — Observability and alerting durability — **implemented on `feature/ph-06-observability-alerting`; PR pending** |
-| **Current phase status** | PH-01/02/03/04/05/08 merged · **PH-06 implemented (not yet PR/merged)** · PH-07/09/10/11 pending |
-| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` — after the PH-06 PR, proceed to PH-07 → PH-09 → PH-10 → PH-11 only on explicit instruction |
+| **Current phase** | `PH-07` — Event-loop correctness and performance — **implemented on `feature/ph-07-event-loop`; PR pending** |
+| **Current phase status** | PRs #20–#33 merged · **#34** payment hotfix (open) · **PH-07 implemented (not yet PR/merged)** · PH-09/10/11 pending |
+| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` — after the PH-07 PR, proceed to PH-09 → PH-10 → PH-11 only on explicit instruction |
 | **Owner approval required** | `true` |
 
 ---
@@ -68,7 +68,7 @@
 
 **تست‌ها:** ۱۷ تستِ تازه در `tests/test_ph05_ui_integrity.py` — دقیقاً همان نُه تستی که نقشهٔ فاز PH-05 خواسته بود · کلِ مجموعه **۶۱۵ passed** · pyflakes ساکت · `final_verification` ۱۷/۱۷.
 
-## PH-06 (2026-10-23) — نظارت و پایداریِ اعلان — **IMPLEMENTED (branch `feature/ph-06-observability-alerting`، PR در انتظار)**
+## PH-06 (2026-10-23) — نظارت و پایداریِ اعلان — **IMPLEMENTED (PR #33، merged)**
 
 | یافته | چه چیزی درست شد |
 |---|---|
@@ -81,7 +81,26 @@
 | **OBS-005 · OPS-033** | پاداش ارجاع در تراکنش اتمیک پرداخت و تست idempotency؛ marker نهایی `iso_norm_v1` فقط با موفقیت همهٔ ستون‌ها نوشته می‌شود و ستون ناموفق retry می‌شود. |
 
 **تست‌ها:** ۱۷ تستِ تازه در `tests/test_ph06_observability.py` · کلِ مجموعه **۶۴۱ passed** · `pyflakes` ساکت · `final_verification` ۱۷/۱۷.
-**باقی‌مانده/صادقانه:** OBS-001 (export متریک خارجی)، OBS-003/OBS-008 (پوشش/مقصد log)، OBS-010 (threading کامل error_class)، بخشی از OBS-014 (سن قفل‌ها)، D1 unsupported برای OBS-005 و اثبات نصب systemd drop-in برای OPS-033. **هیچ merge/deploy انجام نشده است.**
+**باقی‌مانده/صادقانه:** OBS-001 (export متریک خارجی)، OBS-003/OBS-008 (پوشش/مقصد log)، OBS-010 (threading کامل error_class)، بخشی از OBS-014 (سن قفل‌ها)، D1 unsupported برای OBS-005 و اثبات نصب systemd drop-in برای OPS-033. **merge در `main` انجام شده؛ deploy انجام نشده است.**
+
+---
+
+## PH-07 (2026-10-23) — حلقهٔ رویداد و کارایی — **IMPLEMENTED (PR pending، ادغام/استقرار نشده)**
+
+| یافته | چه چیزی درست شد |
+|---|---|
+| **PERF-001** | همهٔ فراخوانی‌های مستقیم `q/gget/gset/_trx` در `async def` به `await arun(...)` منتقل شدند؛ AST guard + تستِ تردِ اجرا. |
+| **PERF-002** | قفل‌های کانال/مدل/کاربر با last-used یکنوا، TTL ۹۰۰ثانیه‌ای، پاک‌سازی هر ۶۴ دسترسی و سقف سخت ۵۱۲ — بدون هیچ کوئری DB. |
+| **PERF-003** | استخر عادی `DB_POOL_SIZE=8` و استخر نگهداری جدا `MAINT_POOL_SIZE=1`؛ cleanup/backup با `arun_maint`. |
+| **PERF-004** | بنچمارک با `concurrent_cycle` و `mocked_http_pipeline`، سه تکرار، min/median/max، JSON خام و ماشین مشخص در `docs/PERFORMANCE.md`. |
+| **PERF-006** | `view_health` دیگر subprocess/RSS/DB را روی حلقه اجرا نمی‌کند. |
+| **PERF-007** | `PUBLISH_CONCURRENCY` (پیش‌فرض ۲) + بودجهٔ `MAX_PUBLISHES_PER_TICK` (پیش‌فرض ۸). |
+| **DB-006 · DB-009** | قفل‌شدن DB روی حلقه fail-fast است (بدون `time.sleep`)؛ WAL یک‌بار تنظیم و حالتِ واقعی گزارش می‌شود. |
+| **PIPE-016** | `CYCLE_SEM` پیش از قفل کانال گرفته می‌شود. |
+| **NET-005 · NET-008** | `HTTPXRequest` با استخر ۳۲ و timeoutهای صریح؛ کش DNS با TTL ۵ثانیه و سقف ۵۱۲. |
+
+**تست‌ها:** ۱۲ تستِ تازه در `tests/test_ph07_event_loop.py` · کلِ مجموعه **۶۵۳ passed** · `pyflakes` ساکت · `final_verification` ۱۷/۱۷.
+**بازمانده:** PERF-005 (اسکنِ استارتاپ) و OPS-015 (watchdog) خارج از محدودهٔ این تغییر باز هستند.
 
 ---
 
@@ -89,7 +108,7 @@
 
 | Severity | Count |
 |---|---|
-| CRITICAL | **1** |
+| CRITICAL | **2** |
 | HIGH | **26** |
 | MEDIUM | **79** |
 | LOW | **66** |
@@ -98,9 +117,9 @@
 
 | Status | Count |
 |---|---|
-| OPEN | 90 |
+| OPEN | 79 |
 | FIXED_UNVERIFIED | 12 (شامل OBS-002/004/006/012/015/016 و SEC-011؛ OBS-007 هم‌ترازیِ نگه‌داری هنوز در PH-09 است) |
-| VERIFIED_FIXED | 78 (شامل یافته‌های مالی، UI-017، TEST-005، OPS-028، DOC-001، ۶ یافتهٔ PH-03، ۲۸ یافتهٔ PH-05 و OBS-005) |
+| VERIFIED_FIXED | 89 (شامل یافته‌های مالی، UI-017، TEST-005، OPS-028، DOC-001، ۶ یافتهٔ PH-03، ۲۸ یافتهٔ PH-05، OBS-005 و ۱۱ یافتهٔ PH-07) |
 | BLOCKED | 0 (رفعِ OPS-001 به خوانشِ تولید مسدود است) |
 | DEFERRED | 5 (SEC-003…SEC-006 + FIN-015) |
 | WONT_FIX | 0 |

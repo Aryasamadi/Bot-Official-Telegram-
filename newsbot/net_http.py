@@ -11,7 +11,7 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlparse
 import httpx
 from newsbot import config
-from newsbot.db import q
+from newsbot.db import q, arun
 from newsbot.logutils import log_event
 from newsbot.timeutils import now_iso
 from newsbot.concurrency import FETCH_SEM
@@ -149,38 +149,65 @@ async def egress_url_strict(url):
     if is_private_host(host): return True          # در فهرستِ سفید ⇒ رزولوشن لازم نیست
     return await asyncio.to_thread(public_url_strict, url)
 
-def public_url(u):
-    """آدرس بیرونی و امن است؟ DNS ناموفق یا هر IP غیرعمومی ⇒ رد می‌شود (SSRF fail-closed)."""
-    try: p = urlparse(str(u))
-    except Exception: return False
-    if p.scheme not in ("http", "https") or not p.hostname: return False
-    if is_private_host(p.hostname): return False
-    try: addrs = [i[4][0] for i in socket.getaddrinfo(p.hostname.rstrip(".").lower(), None, type=socket.SOCK_STREAM)]
-    except Exception: return False
-    if not addrs: return False
+_DNS_CACHE = {}
+_DNS_CACHE_TTL = 5.0
+_DNS_CACHE_MAX = 512
+
+
+def _resolve_addrs(host, fresh=False):
+    """Resolve once and cache briefly (PH-07/NET-008); callers still validate every IP."""
+    now = time.monotonic()
+    if not fresh:
+        hit = _DNS_CACHE.get(host)
+        if hit and now - hit[0] < _DNS_CACHE_TTL:
+            return hit[1]
+    addrs = tuple(sorted({i[4][0] for i in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)}))
+    if not addrs:
+        raise OSError("no addresses")
+    _DNS_CACHE[host] = (now, addrs)
+    if len(_DNS_CACHE) > _DNS_CACHE_MAX:
+        oldest = sorted(_DNS_CACHE.items(), key=lambda kv: kv[1][0])[:len(_DNS_CACHE) - _DNS_CACHE_MAX]
+        for k, _ in oldest:
+            _DNS_CACHE.pop(k, None)
+    return addrs
+
+
+def _all_public(addrs):
     for a in addrs:
         try: ip = ipaddress.ip_address(a)
         except Exception: return False
         if not ip.is_global: return False
     return True
 
+
+def public_url(u):
+    """آدرس بیرونی و امن است؟ DNS ناموفق یا هر IP غیرعمومی ⇒ رد می‌شود (SSRF fail-closed)."""
+    try: p = urlparse(str(u))
+    except Exception: return False
+    if p.scheme not in ("http", "https") or not p.hostname: return False
+    if is_private_host(p.hostname): return False
+    try: addrs = _resolve_addrs(p.hostname.rstrip(".").lower())
+    except Exception: return False
+    return bool(addrs) and _all_public(addrs)
+
+
 def public_url_strict(u):
     """FIX v4: رزولوشن دوباره‌ی DNS با بررسی سازگاری.
-    دو رزولوشن مستقل باید مجموعه‌ی IP یکسان و تماماً عمومی بدهند؛ وگرنه رد می‌شود.
-    این کار پنجره‌ی DNS rebinding را از «نامحدود» به میکروثانیه کاهش می‌دهد و
-    جابه‌جایی رکورد در همان لحظه‌ی بررسی را هم تشخیص می‌دهد."""
-    if not public_url(u): return False
-    try:
-        host = urlparse(str(u)).hostname.rstrip(".").lower()
-        a1 = sorted({i[4][0] for i in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)})
-        a2 = sorted({i[4][0] for i in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)})
+    یک رزولوشنِ تازه با رزولوشنِ cache‌شده مقایسه می‌شود؛ هر دو باید یک مجموعه‌ی
+    تماماً عمومی بدهند. این پنجره‌ی DNS rebinding را کوچک نگه می‌دارد و در همان
+    زمان از سه lookup به یک lookup تازه در هر فراخوانی می‌رسد (PH-07/NET-008)."""
+    try: p = urlparse(str(u))
     except Exception: return False
-    if not a1 or a1 != a2: return False
-    for a in a1:
-        try: ip = ipaddress.ip_address(a)
-        except Exception: return False
-        if not ip.is_global: return False
-    return True
+    if p.scheme not in ("http", "https") or not p.hostname: return False
+    if is_private_host(p.hostname): return False
+    host = p.hostname.rstrip(".").lower()
+    try:
+        cached = _resolve_addrs(host)
+        fresh = _resolve_addrs(host, fresh=True)
+    except Exception:
+        return False
+    if not cached or cached != fresh: return False
+    return _all_public(fresh)
 
 class FetchError(RuntimeError):
     """خطای HTTP با کد وضعیت؛ برای پیام اختصاصی ۴۰۳ هنگام افزودن منبع."""
@@ -305,14 +332,14 @@ async def save_deeplink(key, admin_id, payload):
     مرجع محلی `deeplinks` است؛ KV فقط آینه‌ی اختیاری برای بازیابی پس از تعویض VPS."""
     data = json.dumps(payload, ensure_ascii=False)
     if config.CF_ENABLED: await kv_put(key, data)
-    q("INSERT INTO deeplinks(key,admin_id,created_at,local_json) VALUES(?,?,?,?)", (key, admin_id, now_iso(), data), commit=True)
+    await arun(q, "INSERT INTO deeplinks(key,admin_id,created_at,local_json) VALUES(?,?,?,?)", (key, admin_id, now_iso(), data), commit=True)
     return key
 
 async def store_deeplink(admin_id, payload):
     return await save_deeplink(gen_deeplink_key(), admin_id, payload)
 
 async def load_deeplink(key):
-    r = q("SELECT value FROM kv_cache WHERE key=?", (key,), one=True)   # ردیف‌های قدیمی همچنان خوانده می‌شوند
+    r = await arun(q, "SELECT value FROM kv_cache WHERE key=?", (key,), one=True)   # ردیف‌های قدیمی همچنان خوانده می‌شوند
     if r: return json.loads(r["value"])
-    row = q("SELECT local_json FROM deeplinks WHERE key=?", (key,), one=True); data = row["local_json"] if row and row["local_json"] else (await kv_get(key) if config.CF_ENABLED else None)
+    row = await arun(q, "SELECT local_json FROM deeplinks WHERE key=?", (key,), one=True); data = row["local_json"] if row and row["local_json"] else (await kv_get(key) if config.CF_ENABLED else None)
     return json.loads(data) if data else None

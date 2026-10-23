@@ -6,7 +6,7 @@
 ARCH-01 (فاز ۸): مسیرهای async هیچ کوئری‌ای را روی حلقهٔ رویداد اجرا نمی‌کنند؛
 تابع همزمان با arun() به استخر تردهای اختصاصی دیتابیس سپرده می‌شود.
 """
-import asyncio, contextvars, functools, json, os, re, sqlite3, threading
+import asyncio, contextvars, functools, json, os, re, sqlite3, threading, time
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 from newsbot import config, SCHEMA_VERSION   # DB-25: تک‌منبعِ نسخه — newsbot/__init__.py
@@ -17,9 +17,15 @@ _lock = threading.RLock()      # فقط نوشتن‌ها را بین تردها
 _tls = threading.local()       # هر ترد کانکشن مخصوص خودش را دارد
 _SCHEMA_READY = False          # اسکیما/مایگریشن فقط یک‌بار در هر پروسه اجرا می‌شود
 
-_DB_POOL_SIZE = 4              # ARCH-01: تعداد تردهای اختصاصی دیتابیس (WAL چند-خواننده/تک-نویسنده را تحمل می‌کند)
+# PH-07/PERF-003: normal DB work and long maintenance (backup/VACUUM) use separate pools.
+_DB_POOL_SIZE = config.DB_POOL_SIZE
+_MAINT_POOL_SIZE = config.MAINT_POOL_SIZE
 _db_pool = None
 _db_pool_lock = threading.Lock()
+_maint_pool = None
+_maint_pool_lock = threading.Lock()
+_LOOP_GUARD_STRICT = False     # tests/dev can turn this on to fail fast on sync q() from the loop
+_JOURNAL_MODE = None
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT, name TEXT, role TEXT DEFAULT 'user', plan_id INTEGER, plan_expires TEXT, next_plan_id INTEGER, next_plan_days INTEGER, free_used INTEGER DEFAULT 0, banned INTEGER DEFAULT 0, lang TEXT, remind_key TEXT, premium INTEGER DEFAULT 0, created_at TEXT, last_seen TEXT);
@@ -412,6 +418,34 @@ class D1BatchConn:
     def rollback(self): self._stmts = []
     def close(self): pass
 
+def _ensure_wal_mode(conn):
+    """DB-009/PH-07: set WAL once at startup and verify/report the actual mode.
+
+    ``journal_mode`` is persistent, so setting it on every new connection only creates
+    unnecessary write-lock contention. A failed attempt must never be silent: the
+    backup/deploy assumptions depend on WAL actually being active.
+    """
+    global _JOURNAL_MODE
+    if config.DB_BACKEND == "d1":
+        _JOURNAL_MODE = "d1"
+        return _JOURNAL_MODE
+    requested = ""
+    try:
+        row = conn.execute("PRAGMA journal_mode=WAL").fetchone()
+        requested = (row[0] if row else "").lower()
+    except sqlite3.OperationalError as e:
+        log.warning("could not enable WAL journal mode: %s", e)
+    try:
+        row = conn.execute("PRAGMA journal_mode").fetchone()
+        _JOURNAL_MODE = (row[0] if row else "").lower()
+    except sqlite3.OperationalError as e:
+        _JOURNAL_MODE = ""
+        log.warning("could not read journal_mode: %s", e)
+    if _JOURNAL_MODE != "wal":
+        log.warning("database journal_mode=%r (requested %r); WAL is required for concurrent readers and WAL-safe backups",
+                    _JOURNAL_MODE, requested or "wal")
+    return _JOURNAL_MODE
+
 def _init_conn():
     """کانکشن بک‌اند فعال برای ترد جاری."""
     if config.DB_BACKEND == "d1":
@@ -420,7 +454,7 @@ def _init_conn():
         return D1Conn()
     conn = sqlite3.connect(config.DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
-    for pr in ("PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=15000", "PRAGMA cache_size=-16000", "PRAGMA temp_store=MEMORY"):
+    for pr in ("PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=15000", "PRAGMA cache_size=-16000", "PRAGMA temp_store=MEMORY"):
         try: conn.execute(pr)
         except sqlite3.OperationalError: pass
     return conn
@@ -572,6 +606,7 @@ def _ensure_schema(conn):
         if config.DB_BACKEND != "d1":
             try: os.chmod(config.DB_FILE, 0o600)   # کلیدهای API متن ساده در این فایل‌اند؛ دسترسی فقط برای مالک
             except Exception: pass
+            _ensure_wal_mode(conn)
         atomic = config.DB_BACKEND != "d1"
         if atomic: conn.execute("BEGIN IMMEDIATE")
         try:
@@ -641,20 +676,39 @@ def _db_executor():
                 _db_pool = ThreadPoolExecutor(max_workers=_DB_POOL_SIZE, thread_name_prefix="newsbot-db")
     return _db_pool
 
+def _maint_executor():
+    """استخر جدا برای بکاپ/VACUUM؛ کار طولانی نباید ظرفیت کوئری‌های عادی را اشغال کند."""
+    global _maint_pool
+    if _maint_pool is None:
+        with _maint_pool_lock:
+            if _maint_pool is None:
+                _maint_pool = ThreadPoolExecutor(max_workers=_MAINT_POOL_SIZE, thread_name_prefix="newsbot-maint")
+    return _maint_pool
+
+async def _run_in_pool(pool, fn, args, kwargs):
+    ctx = contextvars.copy_context()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(pool(), ctx.run, functools.partial(fn, *args, **kwargs))
+
 async def arun(fn, *args, **kwargs):
     """ARCH-01: اجرای یک تابع همزمانِ دیتابیس روی استخر تردهای اختصاصی تا حلقهٔ رویداد بلاک نشود.
 
     ContextVarها (زمینهٔ لاگ/عملیات/AI) مثل asyncio.to_thread منتقل می‌شوند تا لاگ‌ها و
     ردیابیِ عملیات داخل تابع هم درست بماند. هر ترد استخر کانکشن SQLite مخصوص خود را دارد (db()).
     """
-    ctx = contextvars.copy_context()
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_db_executor(), ctx.run, functools.partial(fn, *args, **kwargs))
+    return await _run_in_pool(_db_executor, fn, args, kwargs)
+
+async def arun_maint(fn, *args, **kwargs):
+    """PH-07/PERF-003: run maintenance (archive backup, VACUUM, cleanup) off the normal DB pool."""
+    return await _run_in_pool(_maint_executor, fn, args, kwargs)
 
 def close_db_pool():
-    """خاموشی: استخر تردهای دیتابیس بسته می‌شود (کارهای در صف لغو، در حال اجرا تمام می‌شوند).
+    """خاموشی: استخر تردهای دیتابیس و نگهداری بسته می‌شوند (کارهای در صف لغو، در حال اجرا تمام می‌شوند).
     بعد از این اگر فراخوانی arun برسد، استخر دوباره و به‌صورت lazy ساخته می‌شود."""
-    global _db_pool
+    global _db_pool, _maint_pool
+    if _maint_pool is not None:
+        _maint_pool.shutdown(wait=False, cancel_futures=True)
+        _maint_pool = None
     if _db_pool is not None:
         _db_pool.shutdown(wait=False, cancel_futures=True)
         _db_pool = None
@@ -664,8 +718,18 @@ class _NullLock:
     def __exit__(self, *a): return False
 _NUL = _NullLock()
 
+def _on_event_loop_thread():
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
 def q(sql, params=(), one=False, commit=False):
     """خواندن آزاد روی کانکشن همان ترد؛ نوشتن/commit زیر قفل سراسری نوشتن؛ retry فقط روی locked/busy."""
+    on_loop = _on_event_loop_thread()
+    if on_loop and _LOOP_GUARD_STRICT:
+        raise RuntimeError("blocking DB call on the event-loop thread; use 'await arun(...)' instead")
     for attempt in range(5):
         try:
             conn = db()
@@ -680,8 +744,11 @@ def q(sql, params=(), one=False, commit=False):
                 if _c is not None: _c.rollback()
             except Exception: pass
             if attempt == 4 or ("locked" not in msg and "busy" not in msg): raise
-            time_sleep = 0.02 * (2 ** attempt)   # ۲۰/۴۰/۸۰/۱۶ms — کوتاه، چون q() داخل حلقهٔ رویداد هم اجرا می‌شود
-            import time as _t; _t.sleep(time_sleep)
+            # PH-07/DB-006: never sleep on the event-loop thread. Callers in async code
+            # must use arun(); on contention, fail fast instead of stalling the whole bot.
+            if on_loop:
+                raise RuntimeError("database is busy and q() was called on the event-loop thread; use 'await arun(...)'") from e
+            time.sleep(0.02 * (2 ** attempt))   # 20/40/80/160 ms on worker threads only
         except sqlite3.Error:
             try:
                 _c = getattr(_tls, "conn", None)

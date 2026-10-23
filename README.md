@@ -240,6 +240,11 @@ INFO | در حال اجرا…
 | `FETCH_CONCURRENCY` | `8` | هم‌زمانی واکشی منابع |
 | `CYCLE_CONCURRENCY` | `2` | هم‌زمانی چرخه‌ها |
 | `MAX_CYCLES_PER_TICK` | `4` | سقف چرخه در هر tick |
+| `DB_POOL_SIZE` | `8` | اندازهٔ استخر تردهای عملیات DB |
+| `MAINT_POOL_SIZE` | `1` | استخر جدا برای نگهداری/بکاپ (بدون گرسنگی‌دادن مسیر اصلی) |
+| `PUBLISH_CONCURRENCY` | `2` | سقف آپلود هم‌زمان تلگرام |
+| `MAX_PUBLISHES_PER_TICK` | `8` | سقف انتشار خودکار در هر tick |
+| `TELEGRAM_POOL_SIZE` | `32` | اندازهٔ استخر HTTPX ربات تلگرام |
 | `MAX_QUEUE_SIZE` | `500` | سقف صف ready (backpressure) |
 | `RECOVER_EVERY_MIN` | `5` | فاصلهٔ بازیابی انتشارهای ناتمام |
 

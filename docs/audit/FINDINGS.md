@@ -2,8 +2,8 @@
 
 **Audited commit:** `08bc87655dc910a98076acd749ddf8f3e6bdca2c` (branch `main`)
 **Audit date:** 2026-10-20 · **Verification pass:** 2026-10-20 (PH-00) — see §13
-**Status:** 184 findings — 158 `OPEN`, 5 `DEFERRED`, 1 `FIXED_UNVERIFIED`, 20 `VERIFIED_FIXED`
-**Total findings: 184** — CRITICAL 1 · HIGH 26 · MEDIUM 79 · LOW 66 · INFO 12
+**Status:** 185 findings — 79 `OPEN`, 5 `DEFERRED`, 12 `FIXED_UNVERIFIED`, 89 `VERIFIED_FIXED`
+**Total findings: 185** — CRITICAL 2 · HIGH 26 · MEDIUM 79 · LOW 66 · INFO 12
 
 ## Category legend
 
@@ -317,7 +317,7 @@
 - **Fix:** encrypt on write, decrypt at the single read site (`newsbot/discover.py:272-278`), and extend the startup migration to `sources.api_key`.
 - **Regression test required:** yes — assert the raw column holds no plaintext and the request still carries the original value; the migration must be idempotent.
 - **Dependencies / risks:** existing plaintext rows must be migrated transactionally; `decrypt()` must fail closed (it already returns `""` on error).
-- **Status:** OPEN
+- **Status:** DEFERRED
 
 ## SEC-004 — SQLite WAL/SHM sidecars and in-app archive backups are created without restrictive permissions
 - **Severity / Priority / Category:** LOW · P2 · CONFIRMED SECURITY ISSUE
@@ -327,7 +327,7 @@
 - **Fix:** chmod the sidecars at connection open; chmod archive backups 0600 and create the directory 0700.
 - **Regression test required:** yes — assert the mode of the backup file and directory.
 - **Dependencies / risks:** negligible.
-- **Status:** OPEN
+- **Status:** DEFERRED
 
 ## SEC-005 — At-rest key encryption uses an unsalted single SHA-256 of an operator-chosen string
 - **Severity / Priority / Category:** LOW · P2 · DESIGN WEAKNESS
@@ -337,7 +337,7 @@
 - **Fix:** derive with `scrypt`/`pbkdf2_hmac` using a persisted random salt, or accept a base64 32-byte key; version the ciphertext prefix (`enc:v2:`) to keep old data readable.
 - **Regression test required:** yes — round-trip under the new KDF plus a compatibility path.
 - **Dependencies / risks:** changing the derivation invalidates existing ciphertexts without a version tag.
-- **Status:** OPEN
+- **Status:** DEFERRED
 
 ## SEC-006 — AI-key encryption is optional and silently degrades to plaintext
 - **Severity / Priority / Category:** LOW · P2 · DESIGN WEAKNESS
@@ -347,7 +347,7 @@
 - **Fix:** add `SECRETS_KEY` to the preflight warning list and report the number of plaintext rows at startup; make it fatal only for a fresh database.
 - **Regression test required:** yes — no `SECRETS_KEY` -> warning; with the key -> no warning.
 - **Dependencies / risks:** making it fatal breaks existing installs.
-- **Status:** OPEN
+- **Status:** DEFERRED
 
 ## SEC-007 — `ALLOW_PRIVATE_MODEL_HOSTS=1` removes **all** private-host filtering for AI providers
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -509,7 +509,7 @@
 - **Fix:** move the retry into `arun`-only paths, or replace the sleep with a non-blocking wait when the caller is on the event loop.
 - **Regression test required:** yes — assert the loop thread is not blocked during a busy retry.
 - **Dependencies / risks:** coupled to PERF-001 (move the remaining `q()` calls off the loop).
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-23, PH-07)** — روی ترد حلقهٔ رویداد، قفل‌شدن دیتابیس به `RuntimeError` فوری تبدیل می‌شود؛ `time.sleep` فقط روی تردهای استخر DB اجرا می‌شود. تستِ `test_busy_retry_does_not_sleep_on_event_loop`.
 
 ## DB-007 — No foreign keys anywhere: referential integrity is entirely application-enforced
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -539,7 +539,7 @@
 - **Fix:** set the mode once at startup and **verify** it (`PRAGMA journal_mode` -> assert `wal`); log a loud warning on failure instead of `pass`.
 - **Regression test required:** yes — open the DB with a competing lock and assert the mode is reported.
 - **Dependencies / risks:** a mode change on an existing database requires an exclusive lock.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-23, PH-07)** — WAL یک‌بار در `_ensure_schema` درخواست و سپس حالتِ واقعی خوانده/گزارش می‌شود (`_JOURNAL_MODE`)؛ خطا دیگر بی‌صدا نیست. تستِ `test_wal_mode_is_active`.
 
 ## DB-010 — `synchronous=NORMAL` trades durability for speed with no operator visibility
 - **Severity / Priority / Category:** INFO · P3 · DESIGN WEAKNESS
@@ -730,16 +730,16 @@
 
 | ID | Title | Sev/Pri | Category | Evidence | Actual vs Expected | Impact | Fix | Test | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| UI-013 | `docs/PERMISSIONS.md` section 8 misstates the two-phase list (omits `a:chdel2`, `a:qreset2`; claims "all" while `s:uassign`/`s:plan_free`/`s:auto` are one-phase) | LOW · P3 | DOC MISMATCH | `docs/PERMISSIONS.md:105` vs `newsbot/ui_dispatch.py:165,171,309,285,249` | The documented invariant does not match the code | Reviewers get a false picture of the safety model | Update the section to the real list | no | OPEN |
-| UI-015 | Six i18n keys are dead (`ref_btn`, `ref_title`, `ref_how`, `ref_line`, `ref_cap_line`, `ref_link`) | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/ui_i18n.py:71-76`; the referral copy is hard-coded in `newsbot/ui_views_user.py:46-78` | The admin-editable referral text cannot be edited and the copy bypasses i18n | The referral page cannot be localised by an admin | Delete the orphan keys or move `_referral_message` into `TXT` | no | OPEN |
-| UI-018 | No bidi isolation anywhere in user-facing Persian text (exactly one LRM character in the whole repo, and it is in a log line) | LOW · P3 | DESIGN WEAKNESS | `newsbot/app.py:145`; mixed strings at `newsbot/ui_i18n.py:50,100,128` | Latin/digit runs inside RTL paragraphs are not isolated -> visual reordering of amounts and units | Cosmetic but pervasive mis-ordering of prices/units | Add an `ltr()` helper applied to price/unit fields | no | OPEN |
-| UI-019 | The English plan view shows the **Persian** description and never shows `desc_en` | LOW · P3 | CONFIRMED BUG (i18n) | `newsbot/ui_i18n.py:237` — the `fa` tuple contains `{desc_en}`, the `en` tuple does not (the only placeholder mismatch in the 446-key dictionary) | An English super admin sees the Persian description under the label "Description" | Wrong-language content in the super panel | Add `{desc_en}` to the `en` tuple | yes — assert fa/en placeholder parity for every key | OPEN |
-| UI-020 | Typo in the `/help` copy ("مدیریق" instead of "مدیریت") | LOW · P3 | CONFIRMED BUG (copy) | `newsbot/ui_i18n.py:14` | Misspelling in the only in-app help text | Credibility | Correct the string | no | OPEN |
-| UI-021 | The super-admin user list "back" button always jumps to page 1 | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/ui_views_super.py:209` — `B(tr(lang,"back"), "s:users:0")` | The admin loses their place in a 10-row-per-page list | Navigation friction | Pass the page through the callback | no | OPEN |
-| UI-022 | Silent no-op routes give the user no feedback | LOW · P3 | DESIGN WEAKNESS | `newsbot/ui_dispatch.py:255-260` and `:245` — bare `return` | A tap produces no toast, no re-render, no error; the screen looks frozen | Confusing failure mode | Replace the bare returns with the `notfound` toast | yes | OPEN |
-| UI-023 | Missing empty states (discount list, admin list) | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/ui_views_super.py:179-183` | "No codes" is indistinguishable from a failed query | Minor confusion | Add `s_disc_none` | no | OPEN |
-| UI-025 | Long admin keyboards (9-10 rows) and a 51-character button label | LOW · P3 | DESIGN WEAKNESS | `newsbot/ui_views_super.py:173,244-247`; `newsbot/ui_views_admin.py:214` | Hard to scan on mobile; the schedule-mode button is a sentence | UX | Shorten labels to icon + short word; paginate the editors | no | OPEN |
-| UI-026 | Toasts longer than 35 characters become extra chat messages instead of popups | LOW · P3 | DESIGN WEAKNESS | `newsbot/ui_widgets.py:553-566` (`POPUP_MAX_CHARS = 35`) | ~40 admin toasts arrive as auto-deleted bubbles that fill the chat | Chat clutter | Raise the threshold (Telegram allows 200) or shorten the strings | no | OPEN |
+| UI-013 | `docs/PERMISSIONS.md` section 8 misstates the two-phase list (omits `a:chdel2`, `a:qreset2`; claims "all" while `s:uassign`/`s:plan_free`/`s:auto` are one-phase) | LOW · P3 | DOC MISMATCH | `docs/PERMISSIONS.md:105` vs `newsbot/ui_dispatch.py:165,171,309,285,249` | The documented invariant does not match the code | Reviewers get a false picture of the safety model | Update the section to the real list | no | **VERIFIED_FIXED** |
+| UI-015 | Six i18n keys are dead (`ref_btn`, `ref_title`, `ref_how`, `ref_line`, `ref_cap_line`, `ref_link`) | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/ui_i18n.py:71-76`; the referral copy is hard-coded in `newsbot/ui_views_user.py:46-78` | The admin-editable referral text cannot be edited and the copy bypasses i18n | The referral page cannot be localised by an admin | Delete the orphan keys or move `_referral_message` into `TXT` | no | **VERIFIED_FIXED** |
+| UI-018 | No bidi isolation anywhere in user-facing Persian text (exactly one LRM character in the whole repo, and it is in a log line) | LOW · P3 | DESIGN WEAKNESS | `newsbot/app.py:145`; mixed strings at `newsbot/ui_i18n.py:50,100,128` | Latin/digit runs inside RTL paragraphs are not isolated -> visual reordering of amounts and units | Cosmetic but pervasive mis-ordering of prices/units | Add an `ltr()` helper applied to price/unit fields | no | **VERIFIED_FIXED** |
+| UI-019 | The English plan view shows the **Persian** description and never shows `desc_en` | LOW · P3 | CONFIRMED BUG (i18n) | `newsbot/ui_i18n.py:237` — the `fa` tuple contains `{desc_en}`, the `en` tuple does not (the only placeholder mismatch in the 446-key dictionary) | An English super admin sees the Persian description under the label "Description" | Wrong-language content in the super panel | Add `{desc_en}` to the `en` tuple | yes — assert fa/en placeholder parity for every key | **VERIFIED_FIXED** |
+| UI-020 | Typo in the `/help` copy ("مدیریق" instead of "مدیریت") | LOW · P3 | CONFIRMED BUG (copy) | `newsbot/ui_i18n.py:14` | Misspelling in the only in-app help text | Credibility | Correct the string | no | **VERIFIED_FIXED** |
+| UI-021 | The super-admin user list "back" button always jumps to page 1 | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/ui_views_super.py:209` — `B(tr(lang,"back"), "s:users:0")` | The admin loses their place in a 10-row-per-page list | Navigation friction | Pass the page through the callback | no | **VERIFIED_FIXED** |
+| UI-022 | Silent no-op routes give the user no feedback | LOW · P3 | DESIGN WEAKNESS | `newsbot/ui_dispatch.py:255-260` and `:245` — bare `return` | A tap produces no toast, no re-render, no error; the screen looks frozen | Confusing failure mode | Replace the bare returns with the `notfound` toast | yes | **VERIFIED_FIXED** |
+| UI-023 | Missing empty states (discount list, admin list) | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/ui_views_super.py:179-183` | "No codes" is indistinguishable from a failed query | Minor confusion | Add `s_disc_none` | no | **VERIFIED_FIXED** |
+| UI-025 | Long admin keyboards (9-10 rows) and a 51-character button label | LOW · P3 | DESIGN WEAKNESS | `newsbot/ui_views_super.py:173,244-247`; `newsbot/ui_views_admin.py:214` | Hard to scan on mobile; the schedule-mode button is a sentence | UX | Shorten labels to icon + short word; paginate the editors | no | **VERIFIED_FIXED** |
+| UI-026 | Toasts longer than 35 characters become extra chat messages instead of popups | LOW · P3 | DESIGN WEAKNESS | `newsbot/ui_widgets.py:553-566` (`POPUP_MAX_CHARS = 35`) | ~40 admin toasts arrive as auto-deleted bubbles that fill the chat | Chat clutter | Raise the threshold (Telegram allows 200) or shorten the strings | no | **VERIFIED_FIXED** |
 
 ---
 
@@ -843,7 +843,7 @@
 - **Fix:** acquire `CYCLE_SEM` **before** the channel lock, then re-check the channel lock.
 - **Regression test required:** yes.
 - **Dependencies / risks:** low.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-23, PH-07)** — `run_channel_cycle` اول `CYCLE_SEM` را می‌گیرد، سپس قفل کانال را؛ تستِ ترتیب رخدادها در `test_cycle_takes_global_slot_before_channel_lock`.
 
 ## PIPE-017 — The per-channel daily cap is not enforced at reservation time (TOCTOU)
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG
@@ -927,16 +927,16 @@
 - **Fix:** `HTTPXRequest(connection_pool_size=32, read_timeout=60, write_timeout=600, pool_timeout=30)`.
 - **Regression test required:** yes — assert the pool limits, and a concurrency test that N uploads overlap.
 - **Dependencies / risks:** more open sockets to `api.telegram.org`.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-23, PH-07)** — `build_telegram_request()` اندازهٔ استخر را از `TELEGRAM_POOL_SIZE` (پیش‌فرض ۳۲) می‌دهد و در `Application` استفاده می‌شود؛ تستِ `test_telegram_pool_is_explicitly_sized` limits را بررسی می‌کند.
 
 ### NET-004, NET-006, NET-007, NET-008 — remaining networking findings
 
 | ID | Title | Sev/Pri | Category | Evidence | Actual vs Expected | Impact | Fix | Test | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| NET-004 | `is_private_host` missed multicast and the invalid-IP-literal forms | LOW · P3 | CONFIRMED BUG (measured) | `newsbot/net_http.py:80-87`; `_parse_ip_alt` rejects heads > 255 although `socket.inet_aton("0x7fffff.1")` is valid. **Measured:** `224.0.0.1` allowed, `ff02::1` allowed, `0x7fffff.1` allowed. Correctly blocked: `::ffff:127.0.0.1`, `fc00::/7`, `fe80::/10`, `100.64/10`, `0.0.0.0/8`, `198.18/15`, `192.0.2/24`, `2001:db8::/32`, `100::/64`, `metadata.google.internal`, `169.254.169.254`, and the decimal/octal/hex/short IPv4 forms | Low in practice (the fetch path also resolves and checks every IP); relevant for the input-time-only check (`newsbot/ui_inputs.py:59`) and the model path (NET-001) | Add `is_multicast`/`is_reserved`/`is_unspecified` checks; relax the `_parse_ip_alt` head limit | yes | OPEN |
+| NET-004 | `is_private_host` missed multicast and the invalid-IP-literal forms | LOW · P3 | CONFIRMED BUG (measured) | `newsbot/net_http.py:80-87`; `_parse_ip_alt` rejects heads > 255 although `socket.inet_aton("0x7fffff.1")` is valid. **Measured:** `224.0.0.1` allowed, `ff02::1` allowed, `0x7fffff.1` allowed. Correctly blocked: `::ffff:127.0.0.1`, `fc00::/7`, `fe80::/10`, `100.64/10`, `0.0.0.0/8`, `198.18/15`, `192.0.2/24`, `2001:db8::/32`, `100::/64`, `metadata.google.internal`, `169.254.169.254`, and the decimal/octal/hex/short IPv4 forms | Low in practice (the fetch path also resolves and checks every IP); relevant for the input-time-only check (`newsbot/ui_inputs.py:59`) and the model path (NET-001) | Add `is_multicast`/`is_reserved`/`is_unspecified` checks; relax the `_parse_ip_alt` head limit | yes | **VERIFIED_FIXED** |
 | NET-006 | Compression is disabled for all outbound traffic | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/net_http.py:27` — `Accept-Encoding: identity` on the shared client used for feeds, pages, media **and** AI provider calls | Every response is transferred uncompressed; expected `gzip, deflate` for text | ~3-5x more bytes for HTML/JSON feeds (not measured in this audit) | `Accept-Encoding: gzip, deflate` (httpx decodes transparently) | n/a | OPEN |
 | NET-007 | An API key embedded in the URL **path** is not covered by `redact()` | LOW · P3 | DESIGN WEAKNESS | `newsbot/discover.py:274-278` substitutes the key into the path (`{key}` placeholders); `newsbot/logutils.py:39` masks secrets only in the query string and in `key=value` forms; `newsbot/core_sources.py:61` stores `redact(err)[:200]` in `sources.last_error` | A path-embedded provider key is not masked anywhere and can reach the DB and the logs | Residual secret leakage into the DB and the logs | Mask the substituted key before it can reach any message, or forbid path substitution | yes — extend `tests/test_log_secret_leak.py` | OPEN |
-| NET-008 | `public_url_strict` costs three DNS lookups per hop, in a thread | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/net_http.py:109-115` — 3 x `socket.getaddrinfo` per hop, executed via `asyncio.to_thread` (`newsbot/net_http.py:154,164`), sharing the default executor with the CPU-bound trafilatura work (`newsbot/extract.py:179,188,197`) | 3x DNS amplification per request, on a shared executor | Resolver load and executor contention; not measured in this audit | Cache the resolution per (host, short TTL) and reuse it for the connection (see NET-003) | n/a | OPEN |
+| NET-008 | `public_url_strict` costs three DNS lookups per hop, in a thread | LOW · P3 | IMPROVEMENT OPPORTUNITY | `newsbot/net_http.py:109-115` — 3 x `socket.getaddrinfo` per hop, executed via `asyncio.to_thread` (`newsbot/net_http.py:154,164`), sharing the default executor with the CPU-bound trafilatura work (`newsbot/extract.py:179,188,197`) | 3x DNS amplification per request, on a shared executor | Resolver load and executor contention; not measured in this audit | Cache the resolution per (host, short TTL) and reuse it for the connection (see NET-003) | yes | **VERIFIED_FIXED (PH-07)** — `_DNS_CACHE` TTL=5s، سقف ۵۱۲؛ تستِ reuse |
 
 ---
 
@@ -950,7 +950,7 @@
 - **Fix:** wrap these call sites in `arun(...)`.
 - **Regression test required:** yes — assert no `q()` executes on the loop thread (mirror `tests/test_phase8_concurrency.py::test_arun_does_not_block_event_loop`).
 - **Dependencies / risks:** `arun` uses a 4-worker pool (PERF-003) — the offload must not become the new bottleneck.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-23, PH-07)** — همهٔ فراخوانی‌های مستقیم `q/gget/gset/_trx` در بدنهٔ `async def` به `await arun(...)` تبدیل شدند؛ AST guard و تستِ تردِ اجرا این را تضمین می‌کنند. اندازهٔ استخر نیز قابل‌تنظیم شد (`DB_POOL_SIZE`).
 
 ## PERF-002 — `ch_lock` / `model_lock` perform O(N) blocking DB queries per acquisition once > 200 entries exist
 - **Severity / Priority / Category:** MEDIUM · P2 · CONFIRMED BUG
@@ -960,7 +960,7 @@
 - **Fix:** prune at most N entries at most once per minute, and move the lookup off the loop.
 - **Regression test required:** yes — 300 channels => the number of queries per `ch_lock()` is bounded.
 - **Dependencies / risks:** none.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-23, PH-07)** — پاک‌سازی قفل‌ها کاملاً بدون DB و با last-used یکنوا/TTL/سقف سخت انجام می‌شود؛ تستِ ۱۵۰۰×۳ قفل با `q()` ممنوع.
 
 ## PERF-004 — `docs/PERFORMANCE.md` is a DB-only microbenchmark; the pipeline has no baseline
 - **Severity / Priority / Category:** MEDIUM · P2 · DOCUMENTATION MISMATCH
@@ -970,7 +970,7 @@
 - **Fix:** extend `tools/benchmark.py` with a concurrent cycle simulation over a temp DB and a mocked-HTTP pipeline; >= 3 repetitions with min/median/max; commit the raw JSON; state the machine.
 - **Regression test required:** n/a (harness work).
 - **Dependencies / risks:** the harness must stay offline to remain reproducible.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-23, PH-07)** — `tools/benchmark.py` دو بلوک هم‌روند (`concurrent_cycle`, `mocked_http_pipeline`) با سه تکرار و min/median/max دارد؛ JSON خام و ماشین در `docs/PERFORMANCE.md` ثبت شد.
 
 ## PERF-007 — No bound on the number of concurrent publishes across channels
 - **Severity / Priority / Category:** MEDIUM · P2 · DESIGN WEAKNESS
@@ -980,15 +980,15 @@
 - **Fix:** add a global publish semaphore and a per-tick publish budget.
 - **Regression test required:** yes.
 - **Dependencies / risks:** throttling changes throughput.
-- **Status:** OPEN
+- **Status:** **VERIFIED_FIXED (2026-10-23, PH-07)** — `publish_sem()` سقف آپلود هم‌زمان را روی همهٔ مسیرها اعمال می‌کند و زمان‌بند بودجهٔ `MAX_PUBLISHES_PER_TICK` را پیش از `flush_ready` مصرف می‌کند؛ تستِ peak ≤ ۲ با شش آپلود.
 
 ### PERF-003, PERF-005, PERF-006 — remaining performance findings
 
 | ID | Title | Sev/Pri | Category | Evidence | Actual vs Expected | Impact | Fix | Test | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| PERF-003 | The DB thread pool has 4 workers and is shared with long-running maintenance | LOW · P3 | DESIGN WEAKNESS | `newsbot/db.py:20` (`_DB_POOL_SIZE = 4`); `archive_backup` (`newsbot/core_articles.py:205-223`) and `VACUUM` (`:227-242`) run from `cleanup()` (`newsbot/scheduler.py:80`) | A 2 GB backup + VACUUM can starve the pool every cycle depends on | Cycle latency spikes during the hourly cleanup | Give maintenance its own executor, or bound the work | yes | OPEN |
+| PERF-003 | The DB thread pool has 4 workers and is shared with long-running maintenance | LOW · P3 | DESIGN WEAKNESS | `newsbot/db.py:20` (`_DB_POOL_SIZE = 4`); `archive_backup` (`newsbot/core_articles.py:205-223`) and `VACUUM` (`:227-242`) run from `cleanup()` (`newsbot/scheduler.py:80`) | A 2 GB backup + VACUUM can starve the pool every cycle depends on | Cycle latency spikes during the hourly cleanup | Give maintenance its own executor, or bound the work | yes | **VERIFIED_FIXED (PH-07)** — `arun_maint` + `MAINT_POOL_SIZE` جدا؛ تستِ عدم گرسنگی |
 | PERF-005 | Startup: a one-time full scan of 18 tables dominates `init_core` | LOW · P3 | DESIGN WEAKNESS | `newsbot/db.py:285-311` — 18 `(table, column)` pairs rewritten inside the schema transaction, guarded by `meta.iso_norm_v1` | The first boot after a DB-14 build rewrites every timestamp in one transaction (minutes on a large DB) | One-off long startup after upgrade | Batch the canonicalisation outside the schema transaction and report progress | yes | OPEN |
-| PERF-006 | `subprocess.run("git rev-parse")` blocks the event loop | LOW · P3 | CONFIRMED BUG | `newsbot/ui_views_super.py:87-93` (up to 3 s), called from `async def view_health` (`:36,65`) | A synchronous process spawn on the event loop | A 3 s stall of the whole bot when a super admin opens `/health` | `await asyncio.to_thread(_code_version)` or cache at startup | no | OPEN |
+| PERF-006 | `subprocess.run("git rev-parse")` blocks the event loop | LOW · P3 | CONFIRMED BUG | `newsbot/ui_views_super.py:87-93` (up to 3 s), called from `async def view_health` (`:36,65`) | A synchronous process spawn on the event loop | A 3 s stall of the whole bot when a super admin opens `/health` | `await asyncio.to_thread(_code_version)` or cache at startup | yes | **VERIFIED_FIXED (PH-07)** — `_code_version` و RSS خارج از حلقه |
 
 ---
 

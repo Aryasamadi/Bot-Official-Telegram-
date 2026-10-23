@@ -28,7 +28,7 @@
   },
   "audit": {
     "status": "complete",
-    "last_updated": "2026-10-21T00:00:00Z",
+    "last_updated": "2026-10-23T00:00:00Z",
     "auditor_roles": [
       "Principal Architect",
       "Senior Python Engineer",
@@ -49,7 +49,21 @@
       "xfailed": 0,
       "duration_seconds": 112.5,
       "order_independence_check": "455 passed in reverse alphabetical file order",
-      "repo_left_clean": true
+      "repo_left_clean": true,
+      "latest_run": {
+        "date": "2026-10-23",
+        "branch": "feature/ph-07-event-loop",
+        "base_commit": "ef53c359b4e59b2cf7275c0fd356abcee650bfd2",
+        "command": ".venv\\Scripts\\python.exe -m pytest -q -p no:cacheprovider",
+        "passed": 653,
+        "failed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "warnings": 3,
+        "duration_seconds": 693.58,
+        "pyflakes": "clean",
+        "final_verification": "17/17"
+      }
     },
     "domains": {
       "A_architecture_code_quality": "AUDITED_WITH_FINDINGS",
@@ -118,9 +132,9 @@
     "low": 66,
     "informational": 12,
     "total": 185,
-    "open": 100,
-    "fixed_unverified": 3,
-    "verified_fixed": 77,
+    "open": 79,
+    "fixed_unverified": 12,
+    "verified_fixed": 89,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0
@@ -187,10 +201,11 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "CONFIRMED BUG",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#db-006"
+      "evidence_ref": "docs/audit/FINDINGS.md#db-006",
+      "fix_applied": "روی تردِ حلقهٔ رویداد، ``q()`` در صورت قفل‌شدن دیتابیس بلافاصله ``RuntimeError`` می‌دهد و هیچ ``time.sleep`` اجرا نمی‌کند؛ retry نمایی فقط روی تردهای استخر DB باقی ماند. تست: ``test_busy_retry_does_not_sleep_on_event_loop``."
     },
     {
       "id": "DB-007",
@@ -221,10 +236,11 @@
       "severity": "LOW",
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
-      "phase": "PH-09",
-      "evidence_ref": "docs/audit/FINDINGS.md#db-009"
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
+      "phase": "PH-07",
+      "evidence_ref": "docs/audit/FINDINGS.md#db-009",
+      "fix_applied": "``journal_mode=WAL`` فقط یک‌بار در ``_ensure_schema`` درخواست و سپس حالتِ واقعی با ``PRAGMA journal_mode`` خوانده و در صورت شکست با هشدار گزارش می‌شود؛ ``_JOURNAL_MODE`` برای بازرسی نگه داشته می‌شود. تست: ``test_wal_mode_is_active``."
     },
     {
       "id": "DB-010",
@@ -635,10 +651,11 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "MISSING TEST / UNKNOWN BEHAVIOR",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#net-005"
+      "evidence_ref": "docs/audit/FINDINGS.md#net-005",
+      "fix_applied": "``build_telegram_request()`` یک ``HTTPXRequest`` با ``connection_pool_size=TELEGRAM_POOL_SIZE`` (پیش‌فرض ۳۲)، ``read_timeout=60``، ``write_timeout=600`` و ``pool_timeout=30`` می‌سازد و در ساخت ``Application`` استفاده می‌شود. تست: ``test_telegram_pool_is_explicitly_sized``."
     },
     {
       "id": "NET-006",
@@ -668,10 +685,11 @@
       "severity": "LOW",
       "priority": "P3",
       "category": "IMPROVEMENT OPPORTUNITY",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#net-008"
+      "evidence_ref": "docs/audit/FINDINGS.md#net-008",
+      "fix_applied": "``_DNS_CACHE`` با TTL پنج‌ثانیه‌ای و سقف ۵۱۲ میزبان، رزولوشن را بین hopها بازاستفاده می‌کند؛ ``public_url_strict`` همچنان یک رزولوشن تازه می‌گیرد و ناسازگاری مجموعه‌ها را رد می‌کند. تست: ``test_dns_resolution_is_cached``."
     },
     {
       "id": "OBS-001",
@@ -1032,11 +1050,12 @@
       "title": "Watchdog pings emitted from the same event loop they supervise",
       "severity": "LOW",
       "priority": "P3",
-      "category": "DESIGN WEAKNESS",
+      "category": "DESIGN_WEAKNESS",
       "verification": "STATIC",
       "status": "OPEN",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-015"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-015",
+      "note": "2026-10-23: عمداً خارج از محدودهٔ پیاده‌سازی PH-07 باقی ماند؛ watchdog هنوز روی همان حلقه ping می‌دهد و این فاز آن را بسته اعلام نمی‌کند."
     },
     {
       "id": "OPS-016",
@@ -1258,10 +1277,11 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "CONFIRMED BUG",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#perf-001"
+      "evidence_ref": "docs/audit/FINDINGS.md#perf-001",
+      "fix_applied": "همهٔ فراخوانی‌های مستقیم ``q/gget/gset/_trx`` در بدنهٔ ``async def`` به ``await arun(...)`` تبدیل شدند (AI، انتشار، شبکه، UI) و ``q()`` روی حلقهٔ رویداد در حالت سخت‌گیرانه fail-fast است. تست: AST guard + ``test_runtime_db_query_runs_on_worker_thread``."
     },
     {
       "id": "PERF-002",
@@ -1269,10 +1289,11 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "CONFIRMED BUG",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#perf-002"
+      "evidence_ref": "docs/audit/FINDINGS.md#perf-002",
+      "fix_applied": "قفل‌ها با last-used یکنوا و پاک‌سازی دوره‌ای (هر ۶۴ دسترسی، TTL ۹۰۰ ثانیه، سقف سخت ۵۱۲) بدون هیچ کوئری DB مدیریت می‌شوند. تست: ۱۵۰۰×۳ قفل بدون فراخوانی ``q``."
     },
     {
       "id": "PERF-003",
@@ -1280,10 +1301,11 @@
       "severity": "LOW",
       "priority": "P3",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#perf-003"
+      "evidence_ref": "docs/audit/FINDINGS.md#perf-003",
+      "fix_applied": "استخر عادی با ``DB_POOL_SIZE`` (پیش‌فرض ۸) و استخر نگهداری جدا با ``MAINT_POOL_SIZE`` (پیش‌فرض ۱) ساخته می‌شود؛ ``arun_maint`` برای cleanup/backup و ``arun`` برای مسیر عادی. تست: کار ۰٫۴ثانیه‌ای maintenance، تأخیر ``arun`` را زیر ۰٫۲ثانیه نگه می‌دارد."
     },
     {
       "id": "PERF-004",
@@ -1291,21 +1313,23 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "DOCUMENTATION MISMATCH",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#perf-004"
+      "evidence_ref": "docs/audit/FINDINGS.md#perf-004",
+      "fix_applied": "``tools/benchmark.py`` حالا شبیه‌سازی چرخهٔ هم‌زمان و مسیر mocked-HTTP را با سه تکرار و min/median/max اجرا می‌کند؛ گزارش خام در ``docs/bench_ph07_2026-10-23.json`` و نتایج/ماشین در ``docs/PERFORMANCE.md`` ثبت شد."
     },
     {
       "id": "PERF-005",
       "title": "Startup: a one-time full scan of 18 tables dominates init_core",
       "severity": "LOW",
       "priority": "P3",
-      "category": "DESIGN WEAKNESS",
+      "category": "DESIGN_WEAKNESS",
       "verification": "STATIC",
       "status": "OPEN",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#perf-005"
+      "evidence_ref": "docs/audit/FINDINGS.md#perf-005",
+      "note": "2026-10-23: عمداً خارج از محدودهٔ پیاده‌سازی PH-07 باقی ماند؛ اسکنِ استارتاپ اصلاح نشده و این فاز آن را بسته اعلام نمی‌کند."
     },
     {
       "id": "PERF-006",
@@ -1313,10 +1337,11 @@
       "severity": "LOW",
       "priority": "P3",
       "category": "CONFIRMED BUG",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#perf-006"
+      "evidence_ref": "docs/audit/FINDINGS.md#perf-006",
+      "fix_applied": "``view_health`` دیگر ``_code_version`` و خواندن RSS/DB را روی حلقه اجرا نمی‌کند: فراخوانی‌ها به ``asyncio.to_thread``/``arun`` منتقل شدند. تست: ``tests/test_ph06_observability.py`` و پروتکل async سلامت."
     },
     {
       "id": "PERF-007",
@@ -1324,10 +1349,11 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-07",
-      "evidence_ref": "docs/audit/FINDINGS.md#perf-007"
+      "evidence_ref": "docs/audit/FINDINGS.md#perf-007",
+      "fix_applied": "``publish_sem()`` سقف ``PUBLISH_CONCURRENCY`` را روی همهٔ آپلودها اعمال می‌کند و چرخهٔ زمان‌بند بودجهٔ ``MAX_PUBLISHES_PER_TICK`` را قبل از ``flush_ready`` مصرف می‌کند. تست: شش آپلود هم‌زمان با peak ≤ ۲."
     },
     {
       "id": "PIPE-001",
@@ -1506,10 +1532,11 @@
       "severity": "MEDIUM",
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
-      "verification": "STATIC",
-      "status": "OPEN",
-      "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-016"
+      "verification": "TESTED",
+      "status": "VERIFIED_FIXED",
+      "phase": "PH-07",
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-016",
+      "fix_applied": "``run_channel_cycle`` ابتدا ``CYCLE_SEM`` را می‌گیرد و سپس قفل کانال را بررسی/می‌گیرد؛ بنابراین کانال در انتظارِ نوبت، «مشغول» دیده نمی‌شود. تست: ترتیب رخدادها در ``test_cycle_takes_global_slot_before_channel_lock``."
     },
     {
       "id": "PIPE-017",
@@ -2486,9 +2513,10 @@
         "SEC-016",
         "FIN-020"
       ],
-      "status": "OPEN",
+      "status": "COMPLETE",
       "owner_approval_required": true,
-      "objective": "Make every screen render correctly and every destructive action confirmed and audited."
+      "objective": "Make every screen render correctly and every destructive action confirmed and audited.",
+      "execution_note": "2026-10-21: روی شاخهٔ feature/ph-05-ui-ux-integrity پیاده‌سازی و در PR #32 ادغام شد. ۶۱۵ تست سبز (۱۷ تست تازه در tests/test_ph05_ui_integrity.py)، pyflakes ساکت، final_verification ۱۷/۱۷. باقی‌مانده/صادقانه: OBS-005 در PH-06 پوشش داده شد؛ اثرِ تولید هنوز تأیید نشده است."
     },
     {
       "id": "PH-06",
@@ -2519,10 +2547,10 @@
         "SEC-011",
         "DB-008"
       ],
-      "status": "IMPLEMENTED_AWAITING_MERGE",
+      "status": "COMPLETE",
       "owner_approval_required": true,
       "objective": "Make health, failures and money movements observable with alerting that cannot be lost.",
-      "execution_note": "2026-10-23: روی شاخهٔ feature/ph-06-observability-alerting پیاده‌سازی شد. ۶۴۱ تست سبز (۱۷ تست تازه در tests/test_ph06_observability.py)، pyflakes ساکت، final_verification ۱۷/۱۷. پوشش: health سه‌حالته، outbox پایدار اعلان مدیر، dead-man switch، last_successful_publish، redaction fail-closed، حذف ID خام و کلید Gemini از URL. باقی‌مانده/صادقانه: OBS-001 (metrics خارجی)، OBS-003/008/010 (log sink/ساختار کامل)، بخشی از OBS-014 (سن قفل‌ها)، D1 unsupported برای OBS-005 و اثبات نصب systemd drop-in در OPS-033."
+      "execution_note": "2026-10-23: روی شاخهٔ feature/ph-06-observability-alerting پیاده‌سازی و در PR #33 ادغام شد (main = ef53c35). ۶۴۱ تست سبز (۱۷ تست تازه در tests/test_ph06_observability.py)، pyflakes ساکت، final_verification ۱۷/۱۷. پوشش: health سه‌حالته، outbox پایدار اعلان مدیر، dead-man switch، last_successful_publish، redaction fail-closed، حذف ID خام و کلید Gemini از URL. باقی‌مانده/صادقانه: OBS-001 (metrics خارجی)، OBS-003/008/010 (log sink/ساختار کامل)، بخشی از OBS-014 (سن قفل‌ها)، D1 unsupported برای OBS-005 و اثبات نصب systemd drop-in در OPS-033."
     },
     {
       "id": "PH-07",
@@ -2549,9 +2577,10 @@
         "NET-008",
         "OPS-015"
       ],
-      "status": "OPEN",
+      "status": "IMPLEMENTED_AWAITING_MERGE",
       "owner_approval_required": true,
-      "objective": "Remove blocking calls from the event loop and establish a reproducible pipeline baseline."
+      "objective": "Remove blocking calls from the event loop and establish a reproducible pipeline baseline.",
+      "execution_note": "2026-10-23: پیاده‌سازی شد روی شاخهٔ feature/ph-07-event-loop (پایه: main = ef53c35 شامل PH-06). ۱۲ تستِ تازه در tests/test_ph07_event_loop.py؛ ۶۵۳ تست سبز؛ pyflakes ساکت؛ final_verification ۱۷/۱۷. ۱۱ یافته بسته شد؛ PERF-005 و OPS-015 باز ماندند (خارج از محدودهٔ این تغییر). PR #35 باز است؛ ادغام/استقرار انجام نشده و منتظر تأیید مالک است."
     },
     {
       "id": "PH-08",
@@ -2700,11 +2729,11 @@
       "objective": "Make every document, count, badge and default match the code."
     }
   ],
-  "current_phase": "PH-08",
+  "current_phase": "PH-07",
   "current_phase_status": "IMPLEMENTED_AWAITING_MERGE",
   "owner_approval_required": true,
   "next_permitted_action": "AWAIT_OWNER_AUTHORIZATION",
-  "recommended_next_phase": "PH-05",
+  "recommended_next_phase": "PH-09",
   "recommended_first_remediation_phase": "PH-01",
   "documents": {
     "master_status": "docs/audit/MASTER_STATUS.md",

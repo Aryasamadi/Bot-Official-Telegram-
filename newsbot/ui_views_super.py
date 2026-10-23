@@ -4,7 +4,7 @@ NEW v4: پس از تأیید پرداخت، اعتبار ارجاع (referral) �
 شکست ارجاع هرگز جریان پرداخت را نمی‌شکند (فقط لاگ).
 فیلدهای ویرایشی (PLAN_FIELDS/MODEL_FIELDS/TEXT_KEYS/fl/_mic/_mname) از ui_views_admin می‌آیند.
 """
-import os
+import asyncio, os
 from newsbot import config
 from newsbot.db import q, gget, arun
 from newsbot.logutils import log, log_event, redact
@@ -121,7 +121,9 @@ def health_snapshot():
 async def view_health(update, context):
     """سلامت سیستم در یک پیام: وضعیت سه‌حالته + تیک، انتشار، کانال، مدل، دیتابیس."""
     lang = L(update); fa = lang != "en"
-    s = health_snapshot()
+    s = await asyncio.to_thread(health_snapshot)
+    rss = await asyncio.to_thread(rss_mb)
+    code_ver = await asyncio.to_thread(_code_version)
     status = s["status"]
     status_txt = {"ok": "OK — سالم" if fa else "OK", "degraded": "DEGRADED — نیازمند بررسی" if fa else "DEGRADED",
                   "unknown": "UNKNOWN — داده کافی نیست" if fa else "UNKNOWN"}[status]
@@ -148,10 +150,10 @@ async def view_health(update, context):
         f"\n🔔 اعلان‌های نرسیده: {s['alerts_pending'] if s['alerts_pending'] is not None else 'نامعلوم'} (مرده: {s['alerts_dead'] if s['alerts_dead'] is not None else 'نامعلوم'})"
         f"\n\n🤖 وضعیت مدل‌های هوش مصنوعی: {s['models_ok']}/{s['models_total']} سالم"
         f"\n\n💾 حجم دیتابیس: {size_txt}"
-        f"\n🧠 مصرف حافظهٔ فرایند: {rss_mb():.0f} MB"
+        f"\n🧠 مصرف حافظهٔ فرایند: {rss:.0f} MB"
         f"\n🧩 صحت یکپارچگی دیتابیس: {integ}"
         f"\n🔁 فاصلهٔ بازیابی خودکار: {config.RECOVER_EVERY_MIN} دقیقه"
-        f"\n\n🏷 نسخهٔ کد: {_code_version()}"
+        f"\n\n🏷 نسخهٔ کد: {code_ver}"
     ) if fa else (
         f"\n\n{status_txt}"
         f"\n💡 Reason: {reasons or '—'}"
@@ -167,10 +169,10 @@ async def view_health(update, context):
         f"\n🔔 Undelivered alerts: {s['alerts_pending'] if s['alerts_pending'] is not None else 'unknown'} (dead: {s['alerts_dead'] if s['alerts_dead'] is not None else 'unknown'})"
         f"\n\n🤖 AI models healthy: {s['models_ok']}/{s['models_total']}"
         f"\n\n💾 Database size: {size_txt}"
-        f"\n🧠 Process memory: {rss_mb():.0f} MB"
+        f"\n🧠 Process memory: {rss:.0f} MB"
         f"\n🧩 Database integrity: {integ}"
         f"\n🔁 Auto-recovery interval: {config.RECOVER_EVERY_MIN} min"
-        f"\n\n🏷 Code version: {_code_version()}"
+        f"\n\n🏷 Code version: {code_ver}"
     )
     await render(update, context, head + body, [[B(tr(lang, "back"), "s:home")]])
 
@@ -225,9 +227,15 @@ async def view_s_ref(update, context):
     await render(update, context, text, kb)
 
 async def view_super_home(update, context):
-    lang = L(update); models = list_models()
-    down = sum(1 for m in models if m["active"] and m["status"] == "down"); auto = gget("automation_enabled", True); n_pay = len(pay_pending())
-    text = tr(lang, "s_title", m=len(models), ms=tr(lang, "s_all_ok") if not down else tr(lang, "s_down", n=down), a=len(list_users("admin")), u=len(list_users()), p=n_pay, dc=len(disc_list()), due=gget("load_due", 0), hb=ago_text(gget("heartbeat"), lang))
+    lang = L(update); models = await arun(list_models)
+    down = sum(1 for m in models if m["active"] and m["status"] == "down")
+    auto = await arun(gget, "automation_enabled", True)
+    n_pay = len(await arun(pay_pending))
+    admins_n, users_n = len(await arun(list_users, "admin")), len(await arun(list_users))
+    discounts_n, due_n = len(await arun(disc_list)), await arun(gget, "load_due", 0)
+    heartbeat = await arun(gget, "heartbeat")
+    text = tr(lang, "s_title", m=len(models), ms=tr(lang, "s_all_ok") if not down else tr(lang, "s_down", n=down),
+              a=admins_n, u=users_n, p=n_pay, dc=discounts_n, due=due_n, hb=ago_text(heartbeat, lang))
     kb = [[B(tr(lang, "s_report"), "s:report"), B(tr(lang, "s_health"), "s:health")], [B(tr(lang, "s_plans"), "s:plans"), B(tr(lang, "s_discs"), "s:discs")], [B(tr(lang, "s_users"), "s:users:0"), B(tr(lang, "s_admins"), "s:admins:0")],
           [B(tr(lang, "s_models"), "s:models"), B(tr(lang, "s_pays", n=n_pay), "s:pays")], [B(tr(lang, "s_mand"), "s:mand"), B(tr(lang, "s_texts"), "s:texts")], [B(tr(lang, "s_bc"), "s:bc"), B(tr(lang, "s_auto", i=onoff(auto)), "s:auto")], [B(tr(lang, "s_ref"), "s:ref")], [B(tr(lang, "s_me"), "a:home")]]
     await render(update, context, text, kb)
@@ -258,7 +266,7 @@ async def view_s_plans(update, context):
 async def view_s_plan(update, context, pid):
     lang = L(update); p = get_plan(pid)
     if not p: return await view_s_plans(update, context)
-    n = q("SELECT COUNT(*) c FROM users WHERE plan_id=?", (pid,), one=True)["c"]
+    n = (await arun(q, "SELECT COUNT(*) c FROM users WHERE plan_id=?", (pid,), one=True))["c"]
     pn = f"{fmt_amt(plan_num(p, 'en'), 'en')} · {fmt_amt(plan_num(p, 'fa'), 'fa')}" if (plan_num(p, "en") or plan_num(p, "fa")) else "—"
     try:
         text = tr(lang, "s_plan_view", name=esc(p["name"]), name_en=esc(p["name_en"] or "—"), free="🎁" if p["is_free"] else "", st="🟢" if p["active"] else "🔴", desc=esc((p["description_en"] or "") if lang == "en" else (p["description"] or "")), days=p["days"], posts=p["daily_posts"], tests=p["daily_tests"], src=p["max_sources"], ch=p["max_channels"], price=esc(p["price"]), price_en=esc(p["price_en"] or "—"), price_num=pn, n=n)
@@ -320,7 +328,7 @@ async def view_s_model(update, context, mid):
     text = tr(lang, "s_model_view", name=esc(m["name"]), kind=esc(m["kind"]), model=esc(m["model"]), base=esc(m["base_url"]), key=esc(masked), pr=m["priority"] or 10, temp=0.5 if m["temperature"] is None else m["temperature"], mx=m["max_tokens"] or 2500, st=tr(lang, "s_m_off" if not m["active"] else "s_m_ok" if m["status"] == "ok" else "s_m_down"), ok=m["ok_count"] or 0, fc=m["fail_count"] or 0, lo=ago_text(m["last_ok"], lang), lf=ago_text(m["last_fail"], lang), err=f"\n<code>{esc(redact(m['last_error'] or '')[:150])}</code>" if m["last_error"] else "")
     kb = [[B(tr(lang, "s_model_test"), f"s:model_test:{mid}"), B(tr(lang, "toggle"), f"s:model_t:{mid}")]] + pairs([B(f"✏️ {f[2] if lang == 'en' else f[1]}", f"s:model_e:{mid}:{f[0]}") for f in MODEL_FIELDS]) + [[B(tr(lang, "s_model_del"), f"s:model_d:{mid}")], [B(tr(lang, "back"), "s:models")]]
     if m["owner_id"] is None:
-        selected = gget("test_model_id") == mid
+        selected = await arun(gget, "test_model_id") == mid
         text += "\n" + tr(lang, "s_tm_line", st=tr(lang, "s_tm_selected" if selected else "s_tm_not_sel"))
         kb.insert(1, [B(tr(lang, "s_tm_unset" if selected else "s_tm_use"), f"s:model_test_pick:{mid}")])
     await render(update, context, text, kb)

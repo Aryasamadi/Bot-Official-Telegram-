@@ -5,7 +5,7 @@
 import asyncio, html, os, time
 from datetime import timedelta
 from newsbot import config
-from newsbot.db import q, gget, gset, arun
+from newsbot.db import q, gget, gset, arun, arun_maint
 from newsbot.logutils import log, log_event, metrics_text
 from newsbot.timeutils import now_utc, now_iso, parse_dt, fmt_date, ago_text, off_label
 from newsbot.notify import notify_user, notify_super
@@ -200,7 +200,7 @@ async def _deadman_check():
 async def scheduler_tick(bot):
     if _tick_lock.locked(): return
     async with _tick_lock:
-        await arun(gset, "heartbeat", now_iso()); await arun(_do_cleanup)
+        await arun(gset, "heartbeat", now_iso()); await arun_maint(_do_cleanup)
         try:
             # اگر ژورنالی وسط کار گیر کند (تسک لغو شود، پروسه kill شود) تا restart بعدی بازیابی نمی‌شد.
             # با فاصله‌ی زمانی اجرا می‌شود، نه هر تیک؛ کوئری روی pub_journal با PK است ⇒ ارزان.
@@ -237,6 +237,7 @@ async def scheduler_tick(bot):
         if not await arun(gget, "automation_enabled", True): return
         due = []
         skipped = []
+        publish_budget = config.MAX_PUBLISHES_PER_TICK
         for u in await arun(list_admins):
             uid = u["id"]
             if not (await arun(admin_limits, uid))["active"]:
@@ -245,13 +246,18 @@ async def scheduler_tick(bot):
                 s = await arun(get_settings, ch["id"])
                 if not s["enabled"]:
                     skipped.append((uid, ch["id"], "disabled")); continue
-                try: await flush_ready(bot, uid, ch["id"])
-                except Exception as e: log_event("ERROR", f"flush {ch['title']}: {e}", uid)
                 rem = await arun(remaining, uid, "posts", ch["id"])
                 if rem is not None and rem <= 0:
                     skipped.append((uid, ch["id"], "quota")); continue
                 if in_quiet(s) and s["mode"] == "auto":
                     skipped.append((uid, ch["id"], "quiet")); continue
+                # PH-07/PERF-007: flush only eligible channels, with a bounded per-tick
+                # publication budget; never start one unbounded drain per channel.
+                if s["mode"] == "auto" and publish_budget > 0:
+                    try:
+                        sent = await flush_ready(bot, uid, ch["id"], max_n=min(2, publish_budget))
+                        publish_budget -= max(0, sent)
+                    except Exception as e: log_event("ERROR", f"flush {ch['title']}: {e}", uid)
                 lr = parse_dt(s["last_run"])
                 if not lr or (now_utc() - lr) >= timedelta(minutes=int(s["interval_minutes"])):
                     due.append((lr.isoformat() if lr else "", uid, ch, s))

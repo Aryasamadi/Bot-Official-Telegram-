@@ -188,6 +188,14 @@ AI_CONCURRENCY = _env_int("AI_CONCURRENCY", 3)
 FETCH_CONCURRENCY = _env_int("FETCH_CONCURRENCY", 8)
 CYCLE_CONCURRENCY = _env_int("CYCLE_CONCURRENCY", 2)
 MAX_CYCLES_PER_TICK = _env_int("MAX_CYCLES_PER_TICK", 4)
+# PH-07/PERF-003: normal DB work and long maintenance/backup work must not share a pool.
+DB_POOL_SIZE = _env_int("DB_POOL_SIZE", 8, 1, 64)
+MAINT_POOL_SIZE = _env_int("MAINT_POOL_SIZE", 1, 1, 8)
+# PH-07/PERF-007: global Bot API upload limit and a per-tick publication budget.
+PUBLISH_CONCURRENCY = _env_int("PUBLISH_CONCURRENCY", 2, 1, 32)
+MAX_PUBLISHES_PER_TICK = _env_int("MAX_PUBLISHES_PER_TICK", 8, 0, 200)
+# PH-07/NET-005: explicit PTB connection pool size (PTB 22 defaults to 256, but sizing is policy).
+TELEGRAM_POOL_SIZE = _env_int("TELEGRAM_POOL_SIZE", 32, 4, 256)
 RECOVER_EVERY_MIN = _env_int("RECOVER_EVERY_MIN", 5)
 STALE_UPDATE_MAX_MIN = _env_int("STALE_UPDATE_MAX_MIN", 60)
 TICK_SECONDS = _env_int("TICK_SECONDS", 120)

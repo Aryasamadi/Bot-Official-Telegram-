@@ -10,7 +10,7 @@ from telegram import Update
 from telegram.error import RetryAfter
 from telegram.ext import ContextTypes
 from newsbot import config
-from newsbot.db import q, gget, gset
+from newsbot.db import q, gget, gset, arun
 from newsbot.timeutils import today_str, local_clock, TZ_ZONES, offset_now
 from newsbot.ratelimit import rate_ok, rate_free, rate_left, rate_mark, rate_clear, global_rate_ok
 from newsbot.concurrency import ch_lock
@@ -249,9 +249,9 @@ async def _dispatch(update, context, data):
             old_day, new_day = today_str(s.get("tz") or s["utc_offset"]), today_str(iana)
             update_settings(cid, tz=iana, utc_offset=offset_now(iana))
             if old_day != new_day:      # جابه‌جایی مرزِ روز نباید سهمیهٔ امروز را صفر کند (سوءاستفاده و بی‌اعتباری شمارش)
-                prev = q("SELECT posts,tests FROM usage WHERE admin_id=? AND day=?", (uid, old_day), one=True)
-                if prev: q("INSERT INTO usage(admin_id,day,posts,tests) VALUES(?,?,?,?) ON CONFLICT(admin_id,day) DO UPDATE SET posts=MAX(posts,?), tests=MAX(tests,?)",
-                           (uid, new_day, prev["posts"], prev["tests"], prev["posts"], prev["tests"]), commit=True)
+                prev = await arun(q, "SELECT posts,tests FROM usage WHERE admin_id=? AND day=?", (uid, old_day), one=True)
+                if prev: await arun(q, "INSERT INTO usage(admin_id,day,posts,tests) VALUES(?,?,?,?) ON CONFLICT(admin_id,day) DO UPDATE SET posts=MAX(posts,?), tests=MAX(tests,?)",
+                                   (uid, new_day, prev["posts"], prev["tests"], prev["posts"], prev["tests"]), commit=True)
             await popup(update, context, tr(lang, "tz_set", city=tz_city(iana, lang), tz=off_label_safe(iana), loc=local_clock(iana))); return await view_sched(update, context, cid)
         if b == "con": return await view_content(update, context, cid)
         if b == "cat": return await view_cats(update, context, cid, int(d) if d.isdigit() else 0)
@@ -304,12 +304,12 @@ async def _dispatch(update, context, data):
         if b == "health": return await view_health(update, context)
         if b == "auto":
             # PH-05/UI-012: خاموش/روشن کردنِ فعالیتِ **کلِ ربات** با یک ضربه ⇒ تأییدِ دومرحله‌ای
-            new = not gget("automation_enabled", True)
+            new = not await arun(gget, "automation_enabled", True)
             return await _confirm(update, context, lang, tr(lang, "confirm_reset_q", what=tr(lang, "s_what_auto")),
                                   f"s:auto2:{1 if new else 0}", "s:home")
         if b == "auto2":
             new = bool(int(c or 0))
-            gset("automation_enabled", new)
+            await arun(gset, "automation_enabled", new)
             log_event("WARN", f"فعالیتِ کلِ ربات {'روشن' if new else 'خاموش'} شد", uid)   # PH-05/UI-011
             await popup(update, context, tr(lang, "s_auto_on" if new else "s_auto_off")); return await view_super_home(update, context)
         if b == "ref": return await view_s_ref(update, context)   # REF-3 (فاز ۱۲): تنظیمات پاداش دعوت
@@ -365,7 +365,7 @@ async def _dispatch(update, context, data):
                                   f"s:plan_free2:{c}", f"s:plan:{c}")
         if b == "plan_free2":
             pid2 = int(c)
-            q("UPDATE plans SET is_free=0 WHERE id<>?", (pid2,), commit=True)
+            await arun(q, "UPDATE plans SET is_free=0 WHERE id<>?", (pid2,), commit=True)
             update_plan(pid2, is_free=1)
             log_event("WARN", f"پلنِ رایگان تغییر کرد: plan={pid2}", uid)      # PH-05/UI-011
             await popup(update, context, tr(lang, "s_plan_free_done")); return await view_s_plan(update, context, pid2)
@@ -417,14 +417,14 @@ async def _dispatch(update, context, data):
             if not u2: await popup(update, context, tr(lang, "notfound")); return await view_s_users(update, context, 0)
             return await _confirm(update, context, lang, tr(lang, "confirm_unban_q" if u2["banned"] else "confirm_ban_q"), f"s:uban2:{tid}", f"s:user:{tid}")
         if b == "uban2":
-            q("UPDATE users SET banned=1-banned WHERE id=?", (tid,), commit=True)
+            await arun(q, "UPDATE users SET banned=1-banned WHERE id=?", (tid,), commit=True)
             log_event("WARN", f"مسدودی/رفعِ مسدودیِ کاربر: user={tid} banned_now={bool(get_user(tid)['banned'])}", uid)   # PH-05/UI-011
             await popup(update, context, tr(lang, "s_banned" if get_user(tid)["banned"] else "s_unbanned")); return await view_s_user(update, context, tid)
         if b in ("ufree", "utests", "uposts"):
             what = tr(lang, "s_what_free" if b == "ufree" else ("s_what_tests" if b == "utests" else "s_what_posts"))
             return await _confirm(update, context, lang, tr(lang, "confirm_reset_q", what=what), f"s:{b}2:{tid}", f"s:user:{tid}")
         if b == "ufree2":
-            q("UPDATE users SET free_used=0 WHERE id=?", (tid,), commit=True)
+            await arun(q, "UPDATE users SET free_used=0 WHERE id=?", (tid,), commit=True)
             log_event("WARN", f"بازنشانیِ سهمیهٔ رایگان: user={tid}", uid)       # PH-05/UI-011
             await popup(update, context, tr(lang, "s_free_reset")); return await view_s_user(update, context, tid)
         if b == "utests2":
@@ -449,7 +449,7 @@ async def _dispatch(update, context, data):
             if not m: await popup(update, context, tr(lang, "notfound")); return await view_s_models(update, context)
             turning_off = m["active"]
             update_model(int(c), active=0 if m["active"] else 1, status="ok", fail_count=0)
-            if turning_off and gget("test_model_id") == m["id"]: gset("test_model_id", None)
+            if turning_off and await arun(gget, "test_model_id") == m["id"]: await arun(gset, "test_model_id", None)
             await popup(update, context, tr(lang, "s_model_off" if m["active"] else "s_model_on")); return await view_s_model(update, context, int(c))
         if b == "model_d":
             m = get_model(int(c))
@@ -459,7 +459,7 @@ async def _dispatch(update, context, data):
             mid = int(c); m = get_model(mid)
             if not m or m["owner_id"] is not None:
                 await popup(update, context, tr(lang, "notfound")); return await view_s_models(update, context)
-            if gget("test_model_id") == mid: gset("test_model_id", None)
+            if await arun(gget, "test_model_id") == mid: await arun(gset, "test_model_id", None)
             delete_model(mid)
             log_event("WARN", f"مدلِ عمومی حذف شد: model={mid}", uid)                # PH-05/UI-011
             await popup(update, context, tr(lang, "deleted")); return await view_s_models(update, context)
@@ -471,8 +471,8 @@ async def _dispatch(update, context, data):
             m = get_model(int(c))
             if not m or m["owner_id"] is not None or not m["active"]:
                 return await popup(update, context, tr(lang, "notfound"))
-            selected = gget("test_model_id") == m["id"]
-            gset("test_model_id", None if selected else m["id"])
+            selected = await arun(gget, "test_model_id") == m["id"]
+            await arun(gset, "test_model_id", None if selected else m["id"])
             await popup(update, context, tr(lang, "s_tm_cleared" if selected else "s_tm_picked"))
             return await view_s_model(update, context, m["id"])
         if b == "models_test":

@@ -6,7 +6,7 @@ ui_views_super و ui_dispatch از همین‌جا import می‌کنند.
 """
 import asyncio, json, time
 from newsbot import config
-from newsbot.db import gget
+from newsbot.db import gget, arun
 from newsbot.logutils import log_event, redact
 from newsbot.timeutils import ago_text, fmt_date, local_clock, utc_clock, off_label, tz_key_of
 from newsbot.ui_widgets import notify_user_fn, notify_supers
@@ -392,10 +392,12 @@ async def run_test(update, context, cid):
     elif res.get("queued"): text = f"{tr(lang, 'test_queued')}{src_line}\n\n{tr(lang, 'test_log', d=diag)}"; kb.append([B(tr(lang, "queue", n=ready_count(cid)), f"a:que:{cid}")])
     else: text = f"{tr(lang, 'test_fail')}{src_line}\n\n{tr(lang, 'test_log', d=diag)}\n\n{tr(lang, 'test_retry_note')}"; kb.append([B(tr(lang, "rejected"), f"a:rej:{cid}"), B(tr(lang, "sched"), f"a:sch:{cid}")])
     op = _current_operation.get()
+    _test_mid = await arun(gget, "test_model_id")
+    _test_model = await arun(get_model, _test_mid) if _test_mid else None
     def _final_label(lbl):
         if lbl in ("مدل عمومی", "Public model", "مدل عمومی/پیش‌فرض", "Public/default model"):
             try:
-                mm = get_model(gget("test_model_id")) if gget("test_model_id") else None
+                mm = _test_model
                 if mm and mm.get("model"): return f"{'مدل عمومی' if lang == 'fa' else 'Public model'} ({mm['model']})"
             except Exception: pass
             return "مدل عمومی" if lang == "fa" else "Public model"

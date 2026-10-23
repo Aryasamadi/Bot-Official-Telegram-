@@ -14,7 +14,7 @@ import httpx
 from telegram import InlineKeyboardMarkup
 from telegram.constants import ChatType
 from newsbot import config
-from newsbot.db import q
+from newsbot.db import q, arun
 from newsbot.logutils import log, log_event
 from newsbot.timeutils import now_utc, parse_dt
 from newsbot.ratelimit import rate_ok, rate_left
@@ -297,7 +297,7 @@ async def handle_input(update, context, st):
         ok, note = await probe_source(source, lang, added=True)
         source = get_source(sid)
         if not source or not channel_owned(cid, uid): return await popup(update, context, tr(lang, "notfound"))
-        if ok: q("UPDATE sources SET title=? WHERE id=?", (hostname(url), sid), commit=True)
+        if ok: await arun(q, "UPDATE sources SET title=? WHERE id=?", (hostname(url), sid), commit=True)
         else: log_event("WARN", f"منبع جدید {hostname(url)}: تست بارگذاری ناموفق", uid)
         await operation_status(context, note, failed=not ok)
         await popup(update, context, note)

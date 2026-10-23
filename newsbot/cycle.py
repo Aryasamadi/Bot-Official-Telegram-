@@ -117,11 +117,13 @@ PROG = {"fa": {"start": "شروع…", "src": "بررسی {n} منبع…", "fou
 def _res(D): return {"found": 0, "processed": 0, "accepted": 0, "rejected": 0, "queued": 0, "published": 0, "errors": 0, "links": [], "src": "", "pub": [], "diag": D, "msg": ""}
 
 async def run_channel_cycle(bot, uid, cid, test_mode=False, progress=None):
-    lk = ch_lock(cid)
-    if lk.locked():
-        D = Diag(); D.add("busy"); r = _res(D); r["msg"] = D.render((await arun(get_settings, cid))["ui_lang"], False); return r
-    async with lk:
-        async with CYCLE_SEM: return await _cycle(bot, uid, cid, test_mode, progress)
+    # PH-07/PIPE-016: take the global slot first; never hold a channel lock while
+    # waiting for the cycle semaphore (that made idle channels look busy).
+    async with CYCLE_SEM:
+        lk = ch_lock(cid)
+        if lk.locked():
+            D = Diag(); D.add("busy"); r = _res(D); r["msg"] = D.render((await arun(get_settings, cid))["ui_lang"], False); return r
+        async with lk: return await _cycle(bot, uid, cid, test_mode, progress)
 
 async def _cycle(bot, uid, cid, test_mode, progress):
     _cy0 = time.monotonic(); cyid = f"cy{cid}-{secrets.token_hex(2)}"   # شناسهٔ همبستگی این چرخه

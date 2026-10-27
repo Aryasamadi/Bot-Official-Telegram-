@@ -15,7 +15,8 @@ Deploy: preflight (وجود secrets) ──▶ checkout ──▶ scp deploy.sh 
 ```
 
 - **SHA محرک:** `workflow_run.head_sha` (یا `github.sha` برای اجرای دستی) — deploy.sh
-  پس از `reset --hard` دوباره `rev-parse HEAD` می‌کند و با SHAِ محرک مقایسه می‌کند؛
+  پس از همگام‌سازی ایمن (بررسی working tree + `git reset --keep`) دوباره `rev-parse HEAD`
+  می‌کند و با SHAِ محرک مقایسه می‌کند؛
   یعنی هیچ‌وقت «کد مستقر = کامیت محرک» نیست؟ نه — اگر نباشد، deploy متوقف می‌شود (OPS-02).
 - **اجرای دستی:** Actions ← Deploy to VPS ← Run workflow (workflow_dispatch / OPS-06).
 - **صف:** `concurrency: production-vps-deploy` با `cancel-in-progress: false` — دو deploy
@@ -39,9 +40,9 @@ Deploy: preflight (وجود secrets) ──▶ checkout ──▶ scp deploy.sh 
 
 | مرحله | شکست چه می‌شود؟ |
 |---|---|
-| preflight (git/python3/systemctl/.env/.venv) | هیچ تغییری در کد/سرویس نمی‌شود |
+| preflight (git/python3/systemctl/.env/venv) | هیچ تغییری در کد/سرویس نمی‌شود |
 | بکاپ آنلاین (`sqlite3.backup` — سازگار با WAL) | قبل از هر تغییری متوقف (OPS-04/D12) |
-| sync به SHA | سرویس دست‌نخورده؛ کد یا reset شده یا نه (rollback لازم نیست) |
+| همگام‌سازی به SHA | سرویس دست‌نخورده؛ working tree کثیف ⇒ توقف قبل از تغییر (rollback لازم نیست) |
 | نصب requirements / دروازه (`compileall` + `run.py --check`) | **کد به SHA قبلی برمی‌گردد**؛ سرویس هرگز restart نشده (OPS-03) |
 | سلامت بعد از restart (۱۰× فعال‌شدن + NRestarts=0 + نبود traceback تازه در ۲ دقیقهٔ اخیر ژورنال) | **کد برمی‌گردد و سرویس دوباره روی کد قبلی restart می‌شود** — رول‌بک واقعی نه فقط ادعا (OPS-15/D7) |
 
@@ -53,19 +54,34 @@ Deploy: preflight (وجود secrets) ──▶ checkout ──▶ scp deploy.sh 
 
 **خودکار:** هر شکستِ بعد از sync (جدول بالا) خودش کد را به SHA قبلی برمی‌گرداند.
 
-**دستی (شامل رول‌بک سرویس + کد):**
+**دستی (شامل رول‌بک سرویس + کد) — مسیر رسمی:**
+
+مسیر رسمی و کامل در **`docs/VPS_DEPLOYMENT.md` §۵** مستند شده است. اجرا باید با
+دسترسی **root** باشد، چون اسکریپت در پایان سرویس را restart می‌کند و دروازهٔ
+سلامت را اجرا می‌کند. اجرای `sudo -u botapp` معتبر نیست:
 
 ```bash
 ssh root@<VPS>
-bash /tmp/newsbot-deploy.sh rollback    # یا نسخهٔ deploy/deploy.sh
+cd /opt/bot-official-telegram
+sudo ./deploy/deploy.sh rollback
 ```
 
-rollback: `HEAD ← .deployed_sha.prev` با تأیید `rev-parse`، سپس restart و همان
-دروازهٔ سلامت. تکرارش idempotent است. اگر `.deployed_sha.prev` نبود، متوقف می‌شود.
+اسکریپت ابتدا working tree را با `git status --porcelain` بررسی می‌کند؛ اگر تغییر
+محلی (tracked/staged/untracked) وجود داشته باشد **بدون هیچ تغییری متوقف می‌شود**.
+سپس `HEAD` را با `git reset --keep` به `.deployed_sha.prev` می‌برد، با `rev-parse`
+تأیید می‌کند، سرویس را restart و همان دروازهٔ سلامت را اجرا می‌کند. شکست
+restart/health یعنی کد خروج غیرصفر و «rollback موفق» اعلام نمی‌شود. تکرارش idempotent
+است و اگر `.deployed_sha.prev` نبود متوقف می‌شود.
 
 **بازگشت کاملِ محیط (که ادعاشده بود ولی در کد نبود — D7):**
 
-1. رول‌بک کد: `rollback` بالا یا `git reset --hard <SHA قدیمی> && systemctl restart <service>`
+1. رول‌بک کد: فقط از مسیر رسمی بالا (`sudo ./deploy/deploy.sh rollback`). اگر این
+   مسیر برای سناریوی شما مناسب نیست (مثلاً `.deployed_sha.prev` در دسترس نیست)،
+   ابتدا `git status --porcelain` را بررسی کنید و تغییرات محلی را با commit یا
+   `git stash` حفظ کنید؛ سپس فقط با `git reset --keep <SHA قدیمی>` جابه‌جا شوید
+   (هرگز `git reset --hard` اجرا نکنید)، وابستگی‌ها را نصب و `run.py --check` را
+   اجرا کنید، سپس `systemctl restart newsbot` و وضعیت/سلامت را با
+   `systemctl status newsbot` و `journalctl -u newsbot` بررسی کنید.
 2. رول‌بک اسکیما/داده (فقط اگر مهاجرت اجرا شده): بکاپ اخیر `/opt/backups/newsbot-*.db`
    را با `sqlite3.backup` معکوس برگردانید (بخش ۵) و بعد `run.py --check`.
 
@@ -78,14 +94,21 @@ rollback: `HEAD ← .deployed_sha.prev` با تأیید `rev-parse`، سپس res
 - **بازیابی:**
 
 ```bash
-systemctl stop bot-ai-automatic
-python3 - <<'PY'
-import sqlite3
-src = sqlite3.connect('/opt/backups/newsbot-<stamp>.db')
-dst = sqlite3.connect('/opt/bot-ai-automatic/newsbot.db')
-src.backup(dst); dst.close(); src.close()
+systemctl stop newsbot
+cd /opt/bot-official-telegram
+DB="$(sed -n 's/^DB_FILE=//p' .env | tail -n1)"; DB="${DB:-newsbot.db}"
+case "$DB" in /*) ;; *) DB="/opt/bot-official-telegram/$DB" ;; esac
+python3 - "$DB" /opt/backups/newsbot-<stamp>.db <<'PY'
+import sqlite3, sys
+dst_path, src_path = sys.argv[1], sys.argv[2]
+src = sqlite3.connect(src_path)
+dst = sqlite3.connect(dst_path)
+try:
+    src.backup(dst)
+finally:
+    dst.close(); src.close()
 PY
-systemctl start bot-ai-automatic
+systemctl start newsbot
 ```
 
 - **اثباتِ بازیابی:** دو مسیر جداگانه تمرین شده‌اند:
@@ -94,13 +117,28 @@ systemctl start bot-ai-automatic
   2. `tests/test_deployment.py::test_sqlite_backup_and_restore_roundtrip` — چرخهٔ کامل
      بکاپ ← بازگردانی ← اجرای `--check` ← خواندن داده (دریل بازیابی).
 
+## ۵.۰ مسیر دیتابیس و محیط مجازی — منبعِ واحد، بدون حدس
+
+| مورد | منبعِ حقیقت | رفتار `deploy.sh` |
+|---|---|---|
+| مسیر دیتابیس | `DB_FILE` در `/opt/bot-official-telegram/.env` (روی هاست فعلی: `/opt/bot-official-telegram/data/newsbot.db`) | خوانده می‌شود؛ `DEPLOY_DB_FILE` فقط override صریح است. مسیر نسبی ⇒ نسبت به `APP_DIR`، مسیر مطلق ⇒ عیناً |
+| بک‌اند | `DB_BACKEND` در همان `.env` | `d1` ⇒ بکاپِ محلی صریحاً رد می‌شود؛ `sqlite` ⇒ بکاپ **fail-closed** |
+| محیط مجازی | `venv/` (هاست فعلی) یا `.venv/` | خودکار تشخیص داده می‌شود؛ اگر **هر دو** موجود باشند خطای «ambiguous virtualenv» و با `VENV_DIR` انتخاب می‌شود |
+
+قواعد fail-closed (هیچ بکاپِ بی‌صدایی وجود ندارد):
+- نبودِ فایل دیتابیس ⇒ استقرار **متوقف** می‌شود (`database file not found`) و اگر فایل‌های
+  دیگری با نام دیتابیس وجود داشته باشند، مسیرهای آن‌ها گزارش می‌شود
+  (`other database files exist`) تا اشتباه مسیر دیده شود.
+- بکاپ با `sqlite3.backup` (WAL-safe) گرفته، با `PRAGMA integrity_check` و مقایسهٔ
+  `pages` اعتبارسنجی و سپس به‌صورت اتمیک (`chmod 600`) در `/opt/backups` می‌نشیند.
+
 ## ۵.۱ مهاجرت SQLite → D1 (پروتکل هماهنگ با ربات زنده — فاز ۱۰ / DB-21)
 
 ابزار: `tools/migrate_sqlite_to_d1.py` · بازگردانی: `tools/restore_d1_to_sqlite.py`
 
 1. **توقف ربات توصیه‌شده:** اگر ربات در ۵ دقیقهٔ گذشته heartbeat زده باشد، ابزار بدون
    `--force` اجرا نمی‌شود (گارد `LIVE_HEARTBEAT_SEC=300`). اول سرویس را ببندید:
-   `systemctl stop bot-ai-automatic`.
+   `systemctl stop newsbot`.
 2. ابزار خودش از مبدأ یک **snapshot سازگار** (`sqlite3.backup`، WAL-safe) می‌سازد؛ حتی در
    اجرای هم‌زمان هم دادهٔ نیمه‌نوشته خوانده نمی‌شود؛ snapshot موقت پایان کار حذف می‌گردد.
 3. **گارد مقصد (DB-03):** اگر D1 داده داشته باشد فقط با `--force`؛ اگر `meta.schema_version`
@@ -168,7 +206,7 @@ add_header Content-Security-Policy "default-src 'self'" always;
 
 ### ۹.۱ نصب تازه — واحد کامل
 
-روی VPS، فایل `/etc/systemd/system/bot-ai-automatic.service`:
+روی VPS، فایل `/etc/systemd/system/newsbot.service`:
 
 ```ini
 [Unit]
@@ -180,14 +218,14 @@ StartLimitIntervalSec=0
 [Service]
 Type=notify
 User=botapp
-WorkingDirectory=/opt/bot-ai-automatic
-EnvironmentFile=-/opt/bot-ai-automatic/.env
-ExecStart=/opt/bot-ai-automatic/.venv/bin/python run.py
+WorkingDirectory=/opt/bot-official-telegram
+EnvironmentFile=-/opt/bot-official-telegram/.env
+ExecStart=/opt/bot-official-telegram/venv/bin/python run.py
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/bot-ai-automatic
+ReadWritePaths=/opt/bot-official-telegram /opt/backups
 StandardOutput=journal
 StandardError=journal
 Restart=always
@@ -196,7 +234,7 @@ TimeoutStartSec=180
 TimeoutStopSec=60
 WatchdogSec=300
 NotifyAccess=main
-ExecStopPost=/bin/sh -c 'logger -t bot-ai-automatic "stop result=$SERVICE_RESULT exit=$EXIT_CODE status=$EXIT_STATUS"'
+ExecStopPost=/bin/sh -c 'logger -t newsbot "stop result=$SERVICE_RESULT exit=$EXIT_CODE status=$EXIT_STATUS"'
 
 [Install]
 WantedBy=multi-user.target
@@ -209,32 +247,32 @@ WantedBy=multi-user.target
 ### ۹.۲ نصب موجود — مرحلهٔ ۱ (همین حالا، با کد فعلی)
 
 ```bash
-cd /opt/bot-ai-automatic
+cd /opt/bot-official-telegram
 install -D -m 0644 deploy/systemd/10-restart-always.conf \
-  /etc/systemd/system/bot-ai-automatic.service.d/10-restart-always.conf
+  /etc/systemd/system/newsbot.service.d/10-restart-always.conf
 systemctl daemon-reload
-systemctl enable bot-ai-automatic
-systemctl reset-failed bot-ai-automatic 2>/dev/null || true
-systemctl restart bot-ai-automatic
-systemctl show bot-ai-automatic -p Restart -p StartLimitIntervalUSec -p ActiveState -p NRestarts
+systemctl enable newsbot
+systemctl reset-failed newsbot 2>/dev/null || true
+systemctl restart newsbot
+systemctl show newsbot -p Restart -p StartLimitIntervalUSec -p ActiveState -p NRestarts
 ```
 
 انتظار: `Restart=always` · `StartLimitIntervalUSec=0` · `ActiveState=active`.
-`ExecStopPost` دلیل هر توقف را با تگ `bot-ai-automatic` در ژورنال ثبت می‌کند.
+`ExecStopPost` دلیل هر توقف را با تگ `newsbot` در ژورنال ثبت می‌کند.
 دلیل حادثهٔ واقعی: `Restart=on-failure` + رسیدن به سقف start-limit باعث شد سرویس پس از
 ۳۱٬۱۲۰ restart با `Failed with result 'resources'` رها شود.
 
 ### ۹.۳ نصب موجود — مرحلهٔ ۲ (فقط بعد از استقرار کد فاز ۱۵)
 
 ```bash
-cd /opt/bot-ai-automatic
+cd /opt/bot-official-telegram
 ./deploy/deploy.sh deploy <MAIN_SHA>
 install -D -m 0644 deploy/systemd/20-watchdog.conf \
-  /etc/systemd/system/bot-ai-automatic.service.d/20-watchdog.conf
+  /etc/systemd/system/newsbot.service.d/20-watchdog.conf
 systemctl daemon-reload
-systemctl restart bot-ai-automatic
-systemctl show bot-ai-automatic -p Type -p NotifyAccess -p WatchdogUSec -p ActiveState
-journalctl -u bot-ai-automatic -n 80 --no-pager
+systemctl restart newsbot
+systemctl show newsbot -p Type -p NotifyAccess -p WatchdogUSec -p ActiveState
+journalctl -u newsbot -n 80 --no-pager
 ```
 
 انتظار: `Type=notify` · `NotifyAccess=main` · `WatchdogUSec=5min` · `ActiveState=active` و
@@ -266,8 +304,11 @@ sshd کانتینر (فقط IPv6) دسترسی ندارد.
 `python tools/migrate_sqlite_to_d1.py` ستون را منتقل می‌کند. بررسی سریع پس از استقرار:
 
 ```bash
-sqlite3 /opt/bot-ai-automatic/newsbot.db "SELECT value FROM meta WHERE key='schema_version';"   # باید 7 باشد
-sqlite3 /opt/bot-ai-automatic/newsbot.db "SELECT COUNT(*) FROM credit_log;"
+cd /opt/bot-official-telegram
+DB="$(sed -n 's/^DB_FILE=//p' .env | tail -n1)"; DB="${DB:-newsbot.db}"
+case "$DB" in /*) ;; *) DB="/opt/bot-official-telegram/$DB" ;; esac
+sqlite3 "$DB" "SELECT value FROM meta WHERE key='schema_version';"   # باید 7 باشد
+sqlite3 "$DB" "SELECT COUNT(*) FROM credit_log;"
 ```
 
 **بنچمارک پایهٔ بار (QA-08):** پیش از هر تغییر مهم در لایهٔ دیتابیس و پس از هر استقرار،

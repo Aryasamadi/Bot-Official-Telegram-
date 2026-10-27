@@ -3,7 +3,7 @@
 این سند مسیر **رسمی و بازگشت‌پذیر** آپدیت روی VPS را می‌دهد. کوتاه‌ترین حالت: **روش ۱ (خودکار)**.
 اگر می‌خواهید کنترل دستی داشته باشید: **روش ۲**.
 
-> **مسیر نصب پیش‌فرض:** `/opt/bot-ai-automatic` · **سرویس systemd:** `bot-ai-automatic`
+> **مسیر نصب پیش‌فرض:** `/opt/bot-official-telegram` · **سرویس systemd:** `newsbot`
 > اگر مسیر شما فرق دارد، در دستورات جایگزین کنید.
 
 ---
@@ -13,13 +13,19 @@
 کد تغییرناپذیر است ولی **دادهٔ شما نیست**. اگر بک‌اند SQLite دارید، اول بکاپ بگیرید:
 
 ```bash
-cd /opt/bot-ai-automatic
+cd /opt/bot-official-telegram
 mkdir -p /opt/backups
-cp newsbot.db "/opt/backups/newsbot-manual-$(date +%Y%m%d-%H%M%S).db"
+# مسیر دیتابیس از DB_FILE در .env خوانده می‌شود (همان منبعی که ربات و deploy.sh می‌خوانند)
+DB="$(sed -n 's/^DB_FILE=//p' .env | tail -n1)"; DB="${DB:-newsbot.db}"
+case "$DB" in /*) ;; *) DB="/opt/bot-official-telegram/$DB" ;; esac
+python3 -c 'import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()' \
+  "$DB" "/opt/backups/newsbot-manual-$(date +%Y%m%d-%H%M%S).db"
 ls -lh /opt/backups/ | tail -3
 ```
 
-> اگر بک‌اند **D1** است، `newsbot.db` محلی وجود ندارد (داده روی Cloudflare است)؛ این مرحله را رد کنید.
+> مسیر دیتابیس **حدس زده نمی‌شود**: `DB_FILE` در `.env` منبعِ واحد است (روی هاست فعلی:
+> `/opt/bot-official-telegram/data/newsbot.db`). اگر بک‌اند **D1** است اصلاً فایل محلی
+> SQLite وجود ندارد (داده روی Cloudflare است)؛ این مرحله را رد کنید.
 > D1 خودش نسخه‌بندی/point-in-time recovery دارد.
 
 ---
@@ -28,11 +34,12 @@ ls -lh /opt/backups/ | tail -3
 
 با یک `push` به `main`، ورک‌فلوی `deploy-vps.yml` این کارها را **به‌ترتیب** انجام می‌دهد:
 
-1. بکاپ خودکار دیتابیس (۷ نسخهٔ آخر نگه داشته می‌شود)
-2. `git fetch origin main` + `git reset --hard origin/main`
-3. `pip install -r requirements.txt`
-4. **گیت سلامت:** `python run.py --check` — اگر پیکربندی/اسکیما خراب باشد، **سرویس قدیمی دست‌نخورده می‌ماند**
-5. `systemctl restart bot-ai-automatic` + تأیید `is-active`
+1. کپی `deploy/deploy.sh` روی VPS و اجرای `deploy.sh deploy <SHA>`
+2. بررسی تمیز بودن working tree؛ تغییر محلی (tracked/staged/untracked) ⇒ توقف قبل از هر تغییری
+3. بکاپ آنلاین دیتابیس (۷ نسخهٔ آخر نگه داشته می‌شود)
+4. همگام‌سازی ایمن با `git reset --keep` + نصب وابستگی‌ها
+5. **گیت سلامت:** `run.py --check` — اگر پیکربندی/اسکیما خراب باشد، **سرویس قدیمی دست‌نخورده می‌ماند**
+6. restart + دروازهٔ سلامت؛ اگر پس از sync شکستی رخ دهد، کد به SHA قبلی برمی‌گردد و سرویس روی کد قبلی restart می‌شود
 
 پس فقط این را اجرا کنید (از روی ماشین خودتان):
 
@@ -44,8 +51,8 @@ git push origin main
 
 ```bash
 # روی VPS
-systemctl status bot-ai-automatic --no-pager
-journalctl -u bot-ai-automatic -n 50 --no-pager
+systemctl status newsbot --no-pager
+journalctl -u newsbot -n 50 --no-pager
 ```
 
 ### تنظیم یک‌بارهٔ Secrets (فقط اگر قبلاً نکرده‌اید)
@@ -63,37 +70,35 @@ journalctl -u bot-ai-automatic -n 50 --no-pager
 
 ## روش ۲ — آپدیت دستی روی VPS
 
-اگر CI/CD را نمی‌خواهید، همین ۵ گام را خودتان اجرا کنید:
+اگر CI/CD را نمی‌خواهید، همان اسکریپت رسمی را دستی و با دسترسی **root** روی VPS اجرا کنید:
 
 ```bash
-cd /opt/bot-ai-automatic
+cd /opt/bot-official-telegram
 
-# ۰) بکاپ
+# ۰) بکاپ دستی اختیاری — deploy.sh خودش بکاپ آنلاین WAL-safe می‌گیرد
 mkdir -p /opt/backups
-[ -f newsbot.db ] && cp newsbot.db "/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
-ls -1t /opt/backups/newsbot-*.db 2>/dev/null | tail -n +8 | xargs -r rm --
+DB="$(sed -n 's/^DB_FILE=//p' .env | tail -n1)"; DB="${DB:-newsbot.db}"
+case "$DB" in /*) ;; *) DB="/opt/bot-official-telegram/$DB" ;; esac
+python3 -c 'import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()' \
+  "$DB" "/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
 
-# ۱) گرفتن کد جدید
-git fetch origin main
-git reset --hard origin/main
-
-# ۲) وابستگی‌ها
-./.venv/bin/pip install -r requirements.txt
-
-# ۳) گیت سلامت (اگر این fail شود، متوقف شوید و restart نکنید)
-./.venv/bin/python run.py --check
-
-# ۴) راه‌اندازی مجدد
-systemctl restart bot-ai-automatic
-sleep 3
-systemctl is-active --quiet bot-ai-automatic && echo "✅ ربات فعال است" || echo "❌ بالا نیامد — لاگ را ببینید"
+# ۱) استقرار رسمی: بررسی working tree + sync ایمن + وابستگی‌ها + gate + restart + health
+sudo ./deploy/deploy.sh deploy <GIT_COMMIT_SHA>
 ```
+
+> `deploy.sh` پیش از هر تغییری working tree را با `git status --porcelain` بررسی می‌کند؛
+> اگر تغییر محلی (tracked/staged/untracked) باشد **بدون هیچ تغییری متوقف می‌شود**.
+> سپس با `git reset --keep` همگام می‌شود، `HEAD` را با `rev-parse` تأیید می‌کند،
+> وابستگی‌ها را نصب و `run.py --check` را اجرا می‌کند، سرویس را restart و دروازهٔ
+> سلامت را می‌سنجد. شکست پس از sync یعنی بازگشت خودکار کد به SHA قبلی و restart
+> سرویس روی همان کد. اجرای `sudo -u botapp` معتبر نیست، چون restart و health به root
+> نیاز دارند.
 
 ### بررسی نهایی
 
 ```bash
-systemctl status bot-ai-automatic --no-pager
-journalctl -u bot-ai-automatic -f      # خروج با Ctrl+C
+systemctl status newsbot --no-pager
+journalctl -u newsbot -f      # خروج با Ctrl+C
 ```
 
 در لاگ باید این خط را ببینید:
@@ -105,26 +110,48 @@ INFO | core v4 ready | backend=sqlite | CF KV: local | super: {…} | AI×… FE
 
 ## 🛑 اگر بعد از آپدیت بالا نیامد (Rollback)
 
-چون `git reset --hard` و بکاپ داریم، بازگشت ساده است:
+مسیر رسمی در **`docs/VPS_DEPLOYMENT.md` §۵** مستند شده است و باید با دسترسی **root**
+اجرا شود:
 
 ```bash
-cd /opt/bot-ai-automatic
-
-# ۱) برگشت کد به کامیت قبلی
-git log --oneline -5              # کامیت سالم قبلی را پیدا کنید
-git reset --hard <COMMIT_SHA>
-
-# ۲) وابستگی‌ها را برگردانید (در صورت تغییر)
-./.venv/bin/pip install -r requirements.txt
-
-# ۳) اگر دیتابیس آسیب دیده، از بکاپ برگردانید
-systemctl stop bot-ai-automatic
-cp /opt/backups/newsbot-<TIMESTAMP>.db newsbot.db
-systemctl start bot-ai-automatic
+cd /opt/bot-official-telegram
+sudo ./deploy/deploy.sh rollback
 ```
 
-> 💡 قبل از `git reset --hard`، کامیت فعلی را یادداشت کنید (`git rev-parse HEAD`) تا اگر لازم شد
-> بتوانید جلو هم بروید.
+`rollback` مقدار `.deployed_sha.prev` را می‌خواند، دوباره working tree را بررسی
+می‌کند (تغییر محلی ⇒ توقف)، با `git reset --keep` جابه‌جا می‌شود و `HEAD` را با
+`rev-parse` تأیید می‌کند، سپس سرویس را restart و همان دروازهٔ سلامت را اجرا می‌کند.
+شکست restart/health یعنی خروج غیرصفر و «rollback موفق» اعلام نمی‌شود. تکرارش
+idempotent است؛ اگر `.deployed_sha.prev` نبود، بدون تغییر متوقف می‌شود.
+
+> اگر `deploy.sh` پس از sync شکست خورده باشد، کد را به SHA قبلی برگردانده و
+> سرویس را روی همان کد restart کرده است؛ ابتدا خروجی اسکریپت و ژورنال را ببینید.
+
+**بازگشت دستی محافظه‌کارانه (فقط اگر مسیر رسمی مناسب نیست):**
+
+```bash
+cd /opt/bot-official-telegram
+git status --porcelain            # اگر خروجی دارد، تغییرات را commit یا stash کنید
+git rev-parse HEAD                # SHA فعلی را برای بازگشت به جلو یادداشت کنید
+git reset --keep <COMMIT_SHA>     # ایمن: تغییرات محلی حفظ می‌شوند
+./venv/bin/pip install -r requirements.txt
+./venv/bin/python run.py --check  # اگر fail شد، restart نکنید
+systemctl restart newsbot
+systemctl status newsbot --no-pager
+journalctl -u newsbot --since "5 min ago" --no-pager
+```
+
+اگر دیتابیس آسیب دیده، بعد از rollback کد و **با سرویس متوقف** بکاپ اخیر را
+برگردانید (همان مسیری که `.env` اعلام می‌کند)، سپس `systemctl start newsbot`:
+
+```bash
+systemctl stop newsbot
+DB="$(sed -n 's/^DB_FILE=//p' .env | tail -n1)"; DB="${DB:-newsbot.db}"
+case "$DB" in /*) ;; *) DB="/opt/bot-official-telegram/$DB" ;; esac
+python3 -c 'import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()' \
+  /opt/backups/newsbot-<TIMESTAMP>.db "$DB"
+systemctl start newsbot
+```
 
 ---
 
@@ -142,11 +169,11 @@ python3 -m venv .venv
 
 # گیت‌های کیفیت (همان‌هایی که CI اجرا می‌کند)
 ./.venv/bin/python -m pyflakes newsbot tools run.py tests   # باید exit 0 باشد
-./.venv/bin/python -m pytest -q                             # باید 161 تست پاس شود
+./.venv/bin/python -m pytest -q                             # باید همهٔ تست‌ها پاس شوند
 ./.venv/bin/python tools/final_verification.py              # باید 17/17 بدهد
 
 # گیت سلامت با env واقعی خودتان
-cp /opt/bot-ai-automatic/.env .
+cp /opt/bot-official-telegram/.env .
 ./.venv/bin/python run.py --check
 ```
 
@@ -159,7 +186,7 @@ cp /opt/bot-ai-automatic/.env .
 | موضوع | آیا نیاز به اقدام دارد؟ | توضیح |
 |---|---|---|
 | **اسکیمای دیتابیس** | ❌ خیر | migration جدیدی لازم نیست؛ `init_core()` هنگام استارت خودش اعمال می‌کند |
-| **`.env`** | ❌ خیر | فایل شما در `.gitignore` است و `reset --hard` به آن دست نمی‌زند |
+| **`.env`** | ❌ خیر | فایل شما در `.gitignore` است و همگام‌سازی ایمن (`git reset --keep`) به آن دست نمی‌زند |
 | **داده‌های موجود** | ❌ خیر | هیچ حذف/تغییر داده‌ای در این آپدیت نیست |
 | **TTL ۷۲ ساعت** | ⚙️ اختیاری | پیش‌فرض جدید ۷۲ است؛ فقط اگر در `.env` مقدار ۴۸ گذاشته‌اید و می‌خواهید عوض شود |
 | **بک‌اند D1** | ⚙️ توجه | حالا هر تراکنش **یک batch اتمیک** است — مصرف API کمی بالا می‌رود ولی سازگاری داده تضمین می‌شود |
@@ -167,14 +194,14 @@ cp /opt/bot-ai-automatic/.env .
 
 ### اگر می‌خواهید TTL را هم‌تراز کنید
 
-در `/opt/bot-ai-automatic/.env`:
+در `/opt/bot-official-telegram/.env`:
 
 ```bash
 DATA_TTL_HOURS=72
 DEDUP_TTL_HOURS=72
 ```
 
-سپس `systemctl restart bot-ai-automatic`.
+سپس `systemctl restart newsbot`.
 
 ---
 
@@ -182,15 +209,15 @@ DEDUP_TTL_HOURS=72
 
 ```bash
 # ── بکاپ ──
-cd /opt/bot-ai-automatic && mkdir -p /opt/backups \
-  && [ -f newsbot.db ] && cp newsbot.db "/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
+cd /opt/bot-official-telegram && mkdir -p /opt/backups
+DB="$(sed -n 's/^DB_FILE=//p' .env | tail -n1)"; DB="${DB:-newsbot.db}"
+case "$DB" in /*) ;; *) DB="/opt/bot-official-telegram/$DB" ;; esac
+python3 -c 'import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()' \
+  "$DB" "/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
 
-# ── آپدیت ──
-git fetch origin main && git reset --hard origin/main \
-  && ./.venv/bin/pip install -r requirements.txt \
-  && ./.venv/bin/python run.py --check \
-  && systemctl restart bot-ai-automatic && sleep 3 \
-  && systemctl is-active bot-ai-automatic
+# ── آپدیت رسمی (root) ──
+sudo ./deploy/deploy.sh deploy <GIT_COMMIT_SHA>
+sudo systemctl is-active newsbot
 ```
 
 خروجی خط آخر باید `active` باشد.
@@ -201,7 +228,7 @@ git fetch origin main && git reset --hard origin/main \
 
 | نشانه | علت احتمالی | کار |
 |---|---|---|
-| `⛔ راه‌اندازی متوقف شد — BOT_TOKEN تنظیم نشده` | `.env` نیست یا خوانده نمی‌شود | مطمئن شوید در `/opt/bot-ai-automatic/.env` است و سرویس با `WorkingDirectory` درست اجرا می‌شود |
+| `⛔ راه‌اندازی متوقف شد — BOT_TOKEN تنظیم نشده` | `.env` نیست یا خوانده نمی‌شود | مطمئن شوید در `/opt/bot-official-telegram/.env` است و سرویس با `WorkingDirectory` درست اجرا می‌شود |
 | `run.py --check` fail می‌شود | پیکربندی ناقص (توکن/ادمین/D1) | خطای دقیق چاپ می‌شود — همان را رفع کنید. **سرویس قدیمی هنوز سالم است** |
 | سرویس `active` است ولی پستی منتشر نمی‌شود | قبلاً باگ P0 (H8/H9/H10) همین بود | این آپدیت رفعش کرده. با `journalctl` دنبال `core v4 ready` بگردید |
 | خطای `database is locked` | دو نمونه هم‌زمان اجرا شده | `flock` باید جلوگیری کند؛ `ps aux \| grep run.py` را ببینید |
@@ -212,9 +239,10 @@ git fetch origin main && git reset --hard origin/main \
 ## 📌 نکتهٔ مهم دربارهٔ `.gitignore`
 
 این آپدیت فایل `.gitignore` را اضافه می‌کند که از `.env` و `newsbot.db` محافظت می‌کند.
-اگر روی VPS فایل `.env` تعقیب‌شده (tracked) داشتید، `git reset --hard` **ممکن است** آن را تغییر دهد.
-قبل از آپدیت مطمئن شوید بکاپ دارید:
+اگر روی VPS فایل `.env` تعقیب‌شده (tracked) داشتید، `deploy.sh` به‌دلیل بررسی
+working tree و استفاده از `git reset --keep` تغییرات محلی را بازنویسی نمی‌کند؛ در
+این حالت استقرار پیش از هر تغییری متوقف می‌شود. قبل از آپدیت مطمئن شوید بکاپ دارید:
 
 ```bash
-cp /opt/bot-ai-automatic/.env "/opt/backups/.env-$(date +%Y%m%d-%H%M%S)"
+cp /opt/bot-official-telegram/.env "/opt/backups/.env-$(date +%Y%m%d-%H%M%S)"
 ```

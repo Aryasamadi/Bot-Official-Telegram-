@@ -196,7 +196,7 @@ INFO | در حال اجرا…
 | `BOT_TOKEN` | — | **الزامی.** توکن BotFather |
 | `SUPER_ADMIN_IDS` | — | **الزامی.** شناسه‌های عددی، جدا با کاما |
 | `DB_BACKEND` | `sqlite` | `sqlite` یا `d1` |
-| `DB_FILE` | `newsbot.db` | مسیر فایل (حالت sqlite) |
+| `DB_FILE` | `newsbot.db` | مسیر فایل (حالت sqlite) — روی VPS مسیر مطلق (`/opt/bot-official-telegram/data/newsbot.db`)؛ منبعِ واحد برای ربات و `deploy.sh` |
 | `CF_ACCOUNT_ID` | — | لازم برای `d1` |
 | `CF_D1_DATABASE_ID` | — | لازم برای `d1` |
 | `CF_D1_TOKEN` | — | لازم برای `d1` |
@@ -446,22 +446,38 @@ Secretهای لازم در **Settings → Secrets and variables → Actions**:
 ### 🔧 دستی
 
 ```bash
-cd /opt/bot-ai-automatic
+cd /opt/bot-official-telegram
 
+# بکاپ دستی اختیاری؛ deploy.sh خودش بکاپ آنلاین WAL-safe می‌گیرد
 mkdir -p /opt/backups
-[ -f newsbot.db ] && cp newsbot.db "/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
+DB="$(sed -n 's/^DB_FILE=//p' .env | tail -n1)"; DB="${DB:-newsbot.db}"
+case "$DB" in /*) ;; *) DB="/opt/bot-official-telegram/$DB" ;; esac
+python3 -c 'import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()' \
+  "$DB" "/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
 
-git fetch origin main && git reset --hard origin/main
-./.venv/bin/pip install -r requirements.txt
-./.venv/bin/python run.py --check          # اگر fail شد، restart نکنید
-systemctl restart bot-ai-automatic
-systemctl is-active bot-ai-automatic
+# استقرار رسمی (root): بررسی working tree + sync ایمن + gate + restart + health
+sudo ./deploy/deploy.sh deploy <GIT_COMMIT_SHA>
+
+# Rollback رسمی (root): بازگشت به .deployed_sha.prev + restart + health
+sudo ./deploy/deploy.sh rollback
 ```
+
+> مسیر رسمی Rollback، سطح دسترسی root و رفتار شکست در **`docs/VPS_DEPLOYMENT.md` §۵**
+> مستند شده است. اسکریپت در پایان با `systemctl restart newsbot` سرویس را بالا می‌آورد
+> و دروازهٔ سلامت را اجرا می‌کند؛ شکست آن‌ها کد خروج غیرصفر دارد. هیچ‌گاه برای Rollback
+> از `git reset --hard` استفاده نکنید؛ `deploy.sh` پیش از جابه‌جایی، تمیز بودن working
+> tree را بررسی و از `git reset --keep` استفاده می‌کند.
+
+> مسیر دیتابیس و محیط مجازی **حدس زده نمی‌شوند**: `DB_FILE` در `.env` منبعِ واحدِ مسیر
+> دیتابیس است و محیط مجازیِ هاست `venv/` است. `deploy/deploy.sh` هر دو را از همین
+> منبع می‌خواند (`.venv`/`venv` را خودکار تشخیص می‌دهد و با `VENV_DIR` قابل تعیین است).
 
 پس از استقرار، drop-inهای پایداری را طبق **`docs/DEPLOY_RUNBOOK.md` §۹** نصب کنید:
 اول `10-restart-always.conf` (سازگار با هر کد) و بعد از کد فاز ۱۵، `20-watchdog.conf`.
 
-راهنمای کامل (شامل dry-run و rollback): **[`DEPLOY-VPS-UPDATE.md`](DEPLOY-VPS-UPDATE.md)**
+راهنمای آپدیت (شامل dry-run): **[`DEPLOY-VPS-UPDATE.md`](DEPLOY-VPS-UPDATE.md)**
+
+نصب از صفر، واحد systemd و **مسیر رسمی Rollback**: **[`docs/VPS_DEPLOYMENT.md`](docs/VPS_DEPLOYMENT.md)**
 
 ### 🐳 Docker
 

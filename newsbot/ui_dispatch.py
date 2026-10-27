@@ -5,7 +5,7 @@ NEW v4:
   • دروازه‌ی mand_gate پیش از روشن‌کردن اتوماسیون (a:tog enabled) و پیش از انتشار دستی (a:pub)
   • کاربر عادی هرگز به این دروازه‌ها نمی‌رسد (کل بخش «a:» پشت can_admin است)
 """
-import asyncio
+import asyncio, math
 from telegram import Update
 from telegram.error import RetryAfter
 from telegram.ext import ContextTypes
@@ -27,7 +27,7 @@ from newsbot.core_discounts import disc_get, disc_update, disc_delete
 from newsbot.core_payments import support_close
 from newsbot.ai_models import get_model, update_model, delete_model, test_model
 from newsbot.discover import probe_source
-from newsbot.publish import publish_article
+from newsbot.publish import publish_article, _retry_after_value
 from newsbot.cycle import _pub_err
 from newsbot.scheduler import report_text
 from newsbot.logutils import log
@@ -46,6 +46,13 @@ from newsbot.ui_views_admin import (view_admin_home, view_channel, channel_reche
 from newsbot.ui_views_super import (view_super_home, view_health, view_s_plans, view_s_plan, view_s_discs,
                                     view_s_disc, view_s_users, view_s_user, view_s_models, view_s_model,
                                     view_s_pays, view_s_texts, view_s_mand, decide_pay, view_s_ref)
+
+
+def _safe_retry_after_seconds(value):
+    """RetryAfter → ثانیهٔ معتبر برای حلقهٔ ارسال همگانی؛ نامعتبر ⇒ None (بدون sleep)."""
+    try: seconds = float(_retry_after_value(value))
+    except (TypeError, ValueError, OverflowError): return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
 
 
 async def dispatch(update, context, data):
@@ -269,7 +276,10 @@ async def dispatch(update, context, data):
             await operation_status(context, tr(lang, "s_bc_sending", n=total))
             for i, u in enumerate(users, 1):
                 try: await context.bot.copy_message(u["id"], src[0], src[1]); ok += 1
-                except RetryAfter as e: await asyncio.sleep(min(config.RETRY_AFTER_MAX, float(e.retry_after) + 1)); fail += 1
+                except RetryAfter as e:
+                    wait = _safe_retry_after_seconds(e.retry_after)
+                    if wait is not None: await asyncio.sleep(min(config.RETRY_AFTER_MAX, wait + 1))
+                    fail += 1
                 except Exception: fail += 1
                 if i % 15 == 0 or i == total: await operation_status(context, tr(lang, "s_bc_progress", i=i, n=total))   # UX-04
                 await asyncio.sleep(.06)

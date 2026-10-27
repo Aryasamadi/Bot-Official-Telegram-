@@ -140,6 +140,10 @@ async def download_media(media):
 
 def _is_parse_err(e): s = str(e).lower(); return "parse" in s or "entit" in s or "tag" in s or "unsupported start" in s
 
+def _retry_after_value(value):
+    if hasattr(value, "total_seconds"): return value.total_seconds()
+    return value
+
 async def _send_media(bot, chat_id, caption, pm, media):
     """رسانه با کپشن؛ ابتدا با URL، سپس دانلود و آپلود. None ⇒ رسانه قابل ارسال نیست (متن تنها فرستاده می‌شود)."""
     kind = media.get("kind", "photo"); mf = media.get("_file")
@@ -193,7 +197,7 @@ async def send_post(bot, chat_id, text, media=None):
             if len(t) > config.MSG_LIMIT: t = hard_html(t, config.MSG_LIMIT - 100)   # وگرنه پست بالای ۴۰۹۶ با «too long» هرگز منتشر نمی‌شد
             return await bot.send_message(chat_id, t, parse_mode=pm, disable_web_page_preview=True, **({"reply_to_message_id": sent_media.message_id} if sent_media else {}))
         except RetryAfter as e:
-            wait = float(e.retry_after) + 1
+            wait = float(_retry_after_value(e.retry_after)) + 1
             # قبلاً سقف ثابت ۳۰ ثانیه بود: اگر تلگرام ۶۰ ثانیه می‌خواست، بعد از ۳۰ ثانیه دوباره محدود می‌شدیم.
             if wait > config.RETRY_AFTER_MAX: raise   # بیشتر از سقف ما: تسلیم به مسیر انتشار (delivery_unknown) بهتر از اصرار است
             await asyncio.sleep(wait)
@@ -346,7 +350,9 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
                     raise
                 if isinstance(e, RetryAfter):      # محدودیت نرخ تلگرام → به بالا گزارش می‌شود تا صف drain موقتاً بخوابد
                     await arun(article_update, aid, reason="rate_limited")
-                    return False, f"retry_after:{min(max(int(getattr(e, 'retry_after', 30) or 30), 5), 300)}"
+                    _ra = getattr(e, "retry_after", 30)
+                    _seconds = int(_retry_after_value(_ra) or 30)
+                    return False, f"retry_after:{min(max(_seconds, 5), 300)}"
                 if journal.get("phase") == "in_flight":
                     await arun(article_update, aid, reason="delivery_unknown")
                 else:

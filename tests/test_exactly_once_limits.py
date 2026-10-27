@@ -6,8 +6,10 @@
 دیپ‌لینک فقط پس از موفقیت (PUB-04) و سقف روزانهٔ AI (BIZ-01).
 """
 import asyncio, re
+from datetime import timedelta
 
-from telegram.error import BadRequest, Forbidden, RetryAfter
+import pytest
+from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 
 from newsbot.core_articles import (article_insert, article_update, get_article, get_pub_journal,
                                    set_pub_journal, soft_window_candidate)
@@ -154,6 +156,135 @@ def test_retryafter_on_photo_retries_media_not_text():
     assert msg is not None
     assert len(bot.photos) == 2, "تلاش مجدد باید همان رسانه باشد"
     assert bot.sent == [], "هرگز به «متن تنها» تنزل نکرد"
+
+
+# ── ISS-03: سازگاری RetryAfter با timedelta (PTB نسخه‌های جدیدتر) ──
+
+class _RetryAfterValue(RetryAfter):
+    """RetryAfter با مقدار retry_after دلخواه (عددی یا timedelta) برای تست مستقیم."""
+    __slots__ = ("_value",)
+    def __init__(self, value):
+        TelegramError.__init__(self, "Flood control exceeded")
+        self._value = value
+    @property
+    def retry_after(self): return self._value
+
+
+class RetryBot:
+    """باتِ تستی: N تلاش اول با RetryAfter رد می‌شود و بعدی موفق می‌شود."""
+    id = 998
+    def __init__(self, error, fail_times=1):
+        self.error = error
+        self.fail_times = fail_times
+        self.attempts = 0
+        self.sent = []
+    async def get_chat_member(self, chat_id, user_id):
+        return type("M", (), {"status": "administrator", "can_post_messages": True})()
+    async def send_message(self, chat_id, text, **kw):
+        self.attempts += 1
+        if self.attempts <= self.fail_times: raise self.error
+        self.sent.append((chat_id, text))
+        return type("Msg", (), {"message_id": len(self.sent)})()
+
+
+def _fake_sleep(monkeypatch):
+    """sleep واقعی حذف و مدت‌های درخواستی ثبت می‌شود."""
+    calls = []
+    async def _sleep(seconds): calls.append(seconds)
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+    return calls
+
+
+def test_retry_after_numeric_sleeps_and_retries(monkeypatch):
+    """مقدار عددی: sleep برابر ثانیه+1 و یک تلاش مجدد همان مسیر."""
+    sleeps = _fake_sleep(monkeypatch)
+    bot = RetryBot(_RetryAfterValue(5))
+    msg = asyncio.run(send_post(bot, -1001, "<b>hello</b>"))
+    assert msg is not None
+    assert sleeps == [6.0], "تأخیر باید از مقدار RetryAfter بیاید، نه از سقف ثابت"
+    assert bot.attempts == 2 and len(bot.sent) == 1
+
+
+def test_retry_after_timedelta_sleeps_and_retries(monkeypatch):
+    """timedelta: total_seconds()+1 و همان یک تلاش مجدد."""
+    sleeps = _fake_sleep(monkeypatch)
+    bot = RetryBot(_RetryAfterValue(timedelta(seconds=7, microseconds=500000)))
+    msg = asyncio.run(send_post(bot, -1001, "<b>hello</b>"))
+    assert msg is not None
+    assert sleeps == [8.5]
+    assert bot.attempts == 2 and len(bot.sent) == 1
+
+
+def test_retry_after_timedelta_with_real_ptb(monkeypatch):
+    """حالت واقعی PTB (PTB_TIMEDELTA=1): retry_after از نوع timedelta برمی‌گردد."""
+    monkeypatch.setenv("PTB_TIMEDELTA", "1")
+    sleeps = _fake_sleep(monkeypatch)
+    error = RetryAfter(retry_after=5)
+    assert isinstance(error.retry_after, timedelta), "شبیه‌سازی محیط PTB نامعتبر است"
+    bot = RetryBot(error)
+    msg = asyncio.run(send_post(bot, -1001, "<b>hello</b>"))
+    assert msg is not None
+    assert sleeps == [6.0]
+    assert bot.attempts == 2 and len(bot.sent) == 1
+
+
+@pytest.mark.parametrize("value", [config.RETRY_AFTER_MAX - 1, timedelta(seconds=config.RETRY_AFTER_MAX - 1)])
+def test_retry_after_just_below_cap_is_retried(monkeypatch, value):
+    """مرز زیرِ سقف: wait == RETRY_AFTER_MAX مجاز است و sleep انجام می‌شود."""
+    sleeps = _fake_sleep(monkeypatch)
+    bot = RetryBot(_RetryAfterValue(value))
+    msg = asyncio.run(send_post(bot, -1001, "<b>hello</b>"))
+    assert msg is not None
+    assert sleeps == [float(config.RETRY_AFTER_MAX)]
+    assert bot.attempts == 2
+
+
+@pytest.mark.parametrize("value", [config.RETRY_AFTER_MAX, timedelta(seconds=config.RETRY_AFTER_MAX), config.RETRY_AFTER_MAX + 1])
+def test_retry_after_above_cap_reraises_without_sleep(monkeypatch, value):
+    """مرز بالای سقف: همان استثنای اصلی re-raise می‌شود؛ نه sleep، نه تلاش مجدد."""
+    sleeps = _fake_sleep(monkeypatch)
+    error = _RetryAfterValue(value)
+    bot = RetryBot(error)
+    with pytest.raises(RetryAfter) as ei:
+        asyncio.run(send_post(bot, -1001, "<b>hello</b>"))
+    assert ei.value is error, "استثنای اصلی باید حفظ شود"
+    assert sleeps == []
+    assert bot.attempts == 1
+
+
+@pytest.mark.parametrize("value, exc", [(None, TypeError), ("bad", ValueError)])
+def test_retry_after_invalid_value_raises_without_sleep(monkeypatch, value, exc):
+    """ورودی نامعتبر: بدون sleep و بدون تلاش مجدد، خطای تبدیل بالا می‌رود."""
+    sleeps = _fake_sleep(monkeypatch)
+    bot = RetryBot(_RetryAfterValue(value))
+    with pytest.raises(exc):
+        asyncio.run(send_post(bot, -1001, "<b>hello</b>"))
+    assert sleeps == []
+    assert bot.attempts == 1
+
+
+def test_publish_article_retry_after_label_with_timedelta(monkeypatch):
+    """مسیر انتشار: برچسب retry_after:N از ثانیه‌های timedelta ساخته می‌شود."""
+    sleeps = _fake_sleep(monkeypatch)
+    cid = _chan(818)
+    aid = _ready(cid, "h-ra-td")
+    bot = RetryBot(_RetryAfterValue(timedelta(seconds=200)), fail_times=99)
+    ok, out = asyncio.run(publish_article(bot, aid))
+    assert ok is False and out == "retry_after:200"
+    assert sleeps == [], "مقدار بالای سقف نباید sleep کند"
+    assert get_article(aid)["reason"] == "rate_limited"
+
+
+def test_publish_article_retry_after_label_with_numeric(monkeypatch):
+    """مسیر انتشار با مقدار عددی: همان برچسب و همان رفتار."""
+    sleeps = _fake_sleep(monkeypatch)
+    cid = _chan(819)
+    aid = _ready(cid, "h-ra-num")
+    bot = RetryBot(_RetryAfterValue(200), fail_times=99)
+    ok, out = asyncio.run(publish_article(bot, aid))
+    assert ok is False and out == "retry_after:200"
+    assert sleeps == []
+    assert get_article(aid)["reason"] == "rate_limited"
 
 
 # ── PUB-04: دیپ‌لینک فقط پس از موفقیت ──

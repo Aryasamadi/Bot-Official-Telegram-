@@ -75,7 +75,7 @@ def test_backup_is_verified():
 def test_archive_folder_is_backed_up():
     """OPS-10 — پوشهٔ آرشیوِ مقالاتِ قدیمی هم باید در بکاپ باشد."""
     src = _src(DEPLOY_SH)
-    assert '"$APP_DIR/backups"' in src, "پوشهٔ آرشیوِ کنارِ دیتابیس باید کپی شود"
+    assert '"$(dirname "$db")/backups"' in src, "پوشهٔ آرشیوِ کنارِ دیتابیس باید کپی شود"
     assert '"$BACKUP_DIR/archive"' in src, "آرشیو باید در مجموعهٔ بکاپ برود"
 
 

@@ -22,7 +22,9 @@ UA_FEED = "Mozilla/5.0 (compatible; NewsBot/3.0; +https://t.me) FeedFetcher"
 
 def http():
     global _http
-    if _http is None:
+    # کلاینتِ بسته (مثلاً پس از یک خطای شبکه یا restartِ حلقه) دوباره ساخته می‌شود؛
+    # وگرنه همهٔ درخواست‌های AI با «client has been closed» می‌مردند.
+    if _http is None or getattr(_http, "is_closed", False):
         _http = httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(25, connect=10), limits=httpx.Limits(max_connections=config.FETCH_CONCURRENCY + 8, max_keepalive_connections=8),
                                   headers={"User-Agent": UA_BROWSER, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "fa,en;q=0.8", "Accept-Encoding": "identity"})
     return _http

@@ -14,6 +14,7 @@
 """
 import asyncio
 import json
+from datetime import timedelta
 
 import pytest
 
@@ -21,7 +22,7 @@ from newsbot import config
 from newsbot import ai_models as amod
 from newsbot.db import q
 from newsbot.net_http import FetchError
-from newsbot.timeutils import now_iso, parse_dt
+from newsbot.timeutils import now_iso, now_utc, parse_dt
 
 
 class FakeResp:
@@ -207,6 +208,16 @@ def test_model_that_spends_its_whole_budget_on_reasoning_is_reported_precisely(m
     assert "token" in amod.ai_err_text(err, "en").lower()
     row = q("SELECT * FROM ai_models WHERE id=?", (model,), one=True)
     assert row["fail_count"] == 0, "این خطا از خودِ مدل است، نه از سلامتِ پروایدر"
+
+
+def test_all_models_in_backoff_is_reported_as_temporary_not_as_missing_model(monkeypatch, model):
+    """مدلِ موجود ولی در backoff ⇒ «موقت» (کاربر بداند برمی‌گردد)، نه «مدلی نیست»."""
+    q("UPDATE ai_models SET status='down', next_try_after=? WHERE id=?",
+      ((now_utc() + timedelta(minutes=30)).isoformat(), model), commit=True)
+    box = _calls(monkeypatch, [FakeResp(200, _ok_payload("READY"))])
+    out, label, err = asyncio.run(amod.ai_chat("sys", "user"))
+    assert out is None and err == "ai_busy", f"خطای موقت باید گزارش شود، شد: {err}"
+    assert box["n"] == 0, "مدلِ در backoff نباید صدا زده شود"
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════

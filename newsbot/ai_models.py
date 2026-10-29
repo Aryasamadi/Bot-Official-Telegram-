@@ -494,6 +494,14 @@ async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, 
     test_id = await arun(gget, "test_model_id")
     test = [m for m in shared if m["id"] == test_id]
     shared = [m for m in shared if m["id"] != test_id]
+    if not personal and not shared and not test:
+        # مدل هست ولی همه در backoff ⇒ خطای «موقت» (نه «بدون مدل»): کاربر باید بداند
+        # سرویس بعداً برمی‌گردد، نه اینکه پیکربندی خراب است.
+        try: any_model = bool(list_models(active_only=True))
+        except Exception: any_model = False
+        if any_model:
+            log.warning("every AI model is in backoff — no provider call made")
+            return None, None, "ai_busy"
     return await _try_models([("personal", personal), ("test", test), ("public", shared)], system, user,
                              owner_id, on_queue, validate, selected_id)
 

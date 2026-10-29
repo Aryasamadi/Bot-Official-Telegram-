@@ -131,6 +131,16 @@ PROMPT_VERSION = "p5-1"
 MODEL_BACKOFF_MAX_MIN = _env_int("MODEL_BACKOFF_MAX_MIN", 120)
 MODEL_PROBE_MIN = 10
 MODEL_PROBE_BATCH = _env_int("MODEL_PROBE_BATCH", 3)
+# ── P0: پایداریِ مسیرِ تولید با AI ──────────────────────────────────────────────
+# سقفِ زمانیِ کلِ یک درخواستِ پروایدر (بودجهٔ fetchِ منابع نباید آن را قطع کند:
+# پیش‌تر FETCH_TOTAL_SEC=60 روی درخواستِ AI هم اعمال می‌شد ⇒ خطای 504ِ کاذب)
+AI_PROVIDER_TIMEOUT_SEC = _env_int("AI_PROVIDER_TIMEOUT_SEC", 180, 10, 600)
+# تلاشِ دوباره برای خطاهای گذرا (۴۲۹/۵xx/timeout) — خطاهای دائمی هرگز تکرار نمی‌شوند
+AI_TRANSIENT_RETRIES = _env_int("AI_TRANSIENT_RETRIES", 2, 0, 5)
+AI_RETRY_BASE_SEC = _env_float("AI_RETRY_BASE_SEC", 2.0, 0.1, 60.0)
+# خاموشیِ کوتاهِ مدل بعد از خطای گذرا (پیش‌تر ۲۰ دقیقه ⇒ کلِ تولیدِ محتوا متوقف می‌شد)
+MODEL_TRANSIENT_BACKOFF_MIN = _env_int("MODEL_TRANSIENT_BACKOFF_MIN", 2, 1, 60)
+MODEL_TRANSIENT_BACKOFF_MAX_MIN = _env_int("MODEL_TRANSIENT_BACKOFF_MAX_MIN", 15, 1, 120)
 
 # ── Cloudflare KV (آینه‌ی اختیاری «بیشتر») ──
 CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID", "")

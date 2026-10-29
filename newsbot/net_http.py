@@ -217,7 +217,7 @@ class FetchError(RuntimeError):
 CREDENTIAL_HEADERS = frozenset({"authorization", "x-api-key", "apikey", "cookie", "proxy-authorization"})
 
 
-async def fetch_post(url, *, headers=None, timeout=None, max_redirects=5, **kw):
+async def fetch_post(url, *, headers=None, timeout=None, max_redirects=5, total_timeout=None, **kw):
     """POST امن به یک میزبانِ **کاربر-پیکربندی‌شده** (پروایدرهای AI).
 
     PH-02/SEC-001 · NET-001 · NET-002: مسیرِ provider پیش‌تر هیچ اعتبارسنجی‌ای نداشت و
@@ -226,17 +226,23 @@ async def fetch_post(url, *, headers=None, timeout=None, max_redirects=5, **kw):
 
     اینجا: هر مقصد (و هر redirect) دوباره با ``egress_url_strict`` اعتبارسنجی می‌شود — و
     میزبانِ خصوصی **فقط** اگر در فهرستِ سفیدِ ``ALLOW_PRIVATE_MODEL_HOSTS`` باشد — و
-    هدرهایِ اعتبار روی تغییرِ میزبان حذف می‌شوند."""
+    هدرهایِ اعتبار روی تغییرِ میزبان حذف می‌شوند.
+
+    ``total_timeout``: سقفِ زمانیِ کلِ درخواست. پیش‌تر همیشه ``FETCH_TOTAL_SEC`` (بودجهٔ
+    خواندنِ منبع) بود و همان روی درخواستِ AI هم اعمال می‌شد ⇒ یک مدلِ سالمِ ولی کند،
+    خطای ۵۰۴ِ کاذب می‌داد. پروایدرِ AI سقفِ خودش را می‌دهد."""
     current = str(url)
     headers = dict(headers or {})
     timeout = timeout if timeout is not None else httpx.Timeout(60, connect=10)
+    total = float(total_timeout) if total_timeout is not None else float(config.FETCH_TOTAL_SEC)
+    total = max(1.0, total)
     req_kw = dict(kw); req_kw.pop("follow_redirects", None)
     for _ in range(max(1, int(max_redirects))):
         if not await egress_url_strict(current):
             raise FetchError(403, current)
         previous_host = (urlparse(current).hostname or "").lower().rstrip(".")
         try:
-            async with asyncio.timeout(config.FETCH_TOTAL_SEC):
+            async with asyncio.timeout(total):
                 r = await http().post(current, headers=headers, timeout=timeout, follow_redirects=False, **req_kw)
         except TimeoutError as e:
             raise FetchError(504, current) from e

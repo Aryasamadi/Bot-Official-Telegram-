@@ -281,7 +281,13 @@ async def _cycle(bot, uid, cid, test_mode, progress):
             D.stage = "ai"; pct = min(94, 40 + int(50 * i / len(candidates))); await p(pct, P["ai"].format(t=art["title"][:40]))
             async def _on_queue(_pct=pct): await p(_pct, P["queue"])
             log_ctx(article=aid, stage="ai")
-            gen, model, err = await generate(s, art, on_queue=_on_queue, owner_id=uid)
+            try:
+                gen, model, err = await generate(s, art, on_queue=_on_queue, owner_id=uid)
+            except Exception as e:
+                # P0: یک خطای غیرمنتظره در مسیرِ AI نباید کلِ چرخه را بکشد (پیش‌تر چنین خطایی
+                # تا آخرین حلقه بالا می‌رفت و بقیهٔ نامزدها + انتشارِ همان دور از دست می‌رفت).
+                log_event("ERROR", f"تولیدِ مقاله {aid} با خطای غیرمنتظره مواجه شد: {type(e).__name__}", uid, exc_info=True, error_class=type(e).__name__)
+                gen, model, err = None, None, "ai_error"
             log_ctx(model=model, stage="compose" if gen else "ai-fail")
             if not gen:
                 # FIX سیاست v4: شکست AI «rejected» نیست؛ وضعیت failed (قابل تلاش مجدد) ثبت می‌شود
@@ -291,7 +297,13 @@ async def _cycle(bot, uid, cid, test_mode, progress):
             D.stage = "score"
             best = max(best, gen["score"])
             if gen["score"] < float(s["min_score"]): await arun(article_update, aid, status="rejected", reason=f"score {gen['score']} < {s['min_score']}", score=gen["score"]); res["rejected"] += 1; cnt["low"] += 1; details.append((art["title"], f"score {gen['score']}")); step_add(_current_operation.get(), "src_low_score", key=src_name, status="fail", score=gen["score"]); continue
-            post, full = await asyncio.to_thread(compose, s, ch, art, gen)
+            try:
+                post, full = await asyncio.to_thread(compose, s, ch, art, gen)
+            except Exception:
+                log_event("ERROR", f"ترکیبِ خروجیِ مدل برای مقاله {aid} شکست خورد", uid, exc_info=True, error_class="compose")
+                await arun(article_update, aid, status="failed", reason="compose_failed"); res["errors"] += 1; ai_err = ai_err or "ai_invalid"
+                step_add(_current_operation.get(), "src_ai_fail", key=src_name, status="fail", model=model)
+                continue
             await arun(article_update, aid, title=gen.get("title") or art["title"], post_html=post, full_html=full, score=gen["score"], category=gen.get("category"), model=model, media=json.dumps(art["media"]) if art["media"] else None, published_at=art["published"], status="ready", reason=""); res["accepted"] += 1
             sname = await arun(article_src_name, aid)
             if sname: res["src"] = sname; D.add("from_src", name=sname)

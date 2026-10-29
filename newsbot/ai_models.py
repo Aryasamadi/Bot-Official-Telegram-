@@ -17,6 +17,7 @@ from newsbot.concurrency import AI_SEM, model_lock, model_busy
 from newsbot.notify import notify_super
 from newsbot.core_users import user_lang, ai_claim
 from newsbot.text_format import strip_tags, INJ_RESIDUE
+from newsbot.net_http import FetchError, retry_after_seconds
 
 _ai_events = ContextVar("ai_events", default=None)
 
@@ -60,32 +61,73 @@ def _err_text(r):
 class AIResponseError(RuntimeError):
     pass
 
+class AIContentInvalid(AIResponseError):
+    """خروجیِ provider ناقص/بدشکل است ⇒ خطای محتوا (پروایدر سالم است، نباید down شود)."""
+
+class AIOutputTruncated(AIContentInvalid):
+    """پاسخِ provider ناقص است (finish_reason=length) ⇒ محتوای ناقص هرگز منتشر نمی‌شود.
+
+    ``empty=True`` یعنی مدل کلِ بودجهٔ توکنش را صرفِ «تفکر» کرده و هیچ محتوایی تولید
+    نکرده (در تولیدِ واقعی همین حالت برای مدل‌های استدلالی دیده شد)."""
+
+    def __init__(self, message, empty=False):
+        super().__init__(message); self.empty = bool(empty)
+
+class AIProviderError(AIResponseError):
+    """خطای HTTP از پروایدر؛ ``transient`` یعنی گذرا (۴۲۹/۵xx/timeout) و باید دوباره امتحان شود."""
+
+    def __init__(self, message, status=None, transient=False):
+        super().__init__(message); self.status = status; self.transient = bool(transient)
+
+# وضعیت‌هایی که گذرا هستند ⇒ تلاشِ دوباره (با تأخیر) مجاز و لازم است
+_TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+
+def _body_is_json(r):
+    try: r.json(); return True
+    except Exception: return False
+
+def _is_transient_response(r):
+    """آیا این پاسخِ HTTP گذراست؟
+
+    پاسخِ ساختاریافتهٔ provider (JSON با ‎error‎) دائمی است (کلید/مدل/درخواست غلط)؛
+    ولی صفحه‌ی خطای لبه/پروکسی (متن ساده مثل «404 page not found») گذراست — در تولیدِ
+    واقعی همین حالت از لبهٔ NVIDIA دیده شد (همان کلید و همان مدل، چند دقیقه بعد ۲۰۰ دادند)."""
+    st = int(getattr(r, "status_code", 0) or 0)
+    if st in _TRANSIENT_STATUS: return True
+    if st in (400, 404, 405, 422) and not _body_is_json(r): return True
+    return False
+
 def _provider_json(r):
-    if r.status_code >= 400: raise AIResponseError(_err_text(r))
+    if r.status_code >= 400: raise AIProviderError(_err_text(r), status=r.status_code, transient=_is_transient_response(r))
     try: j = r.json()
-    except ValueError as e: raise AIResponseError("malformed provider JSON") from e
-    if not isinstance(j, dict): raise AIResponseError("malformed provider envelope")
-    if j.get("error"): raise AIResponseError("provider error response")
+    except ValueError as e: raise AIContentInvalid("malformed provider JSON") from e
+    if not isinstance(j, dict): raise AIContentInvalid("malformed provider envelope")
+    if j.get("error"): raise AIProviderError("provider error response", status=r.status_code, transient=False)
     return j
 
 def _ai_text(value):
-    if not isinstance(value, str): raise AIResponseError("invalid response text")
+    if not isinstance(value, str): raise AIContentInvalid("invalid response text")
     value = value.strip()
-    if not value: raise AIResponseError("empty response")
+    if not value: raise AIContentInvalid("empty response")
     return value
 
 def _openai_content(j):
     choices = j.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        raise AIResponseError("malformed provider choices")
+        raise AIContentInvalid("malformed provider choices")
     ch = choices[0]; msg = ch.get("message") or ch.get("delta") or {}
-    if not isinstance(msg, dict): raise AIResponseError("malformed provider message")
-    if msg.get("refusal"): raise AIResponseError("provider refused response")
+    if not isinstance(msg, dict): raise AIContentInvalid("malformed provider message")
+    if msg.get("refusal"): raise AIContentInvalid("provider refused response")
     c = msg.get("content") or ch.get("text")
     if isinstance(c, list):
         if any(not isinstance(p, dict) or not isinstance(p.get("text"), str) for p in c):
-            raise AIResponseError("malformed provider content")
+            raise AIContentInvalid("malformed provider content")
         c = " ".join(p["text"] for p in c)
+    if str(ch.get("finish_reason") or "") == "length":
+        # پاسخِ بریده‌شده؛ اگر محتوایی تولید نشده ⇒ مدل کلِ بودجهٔ توکنش را صرفِ استدلال کرده
+        if not bool(str(c or "").strip()):
+            raise AIOutputTruncated("model exhausted its token budget without producing output", empty=True)
+        raise AIOutputTruncated("truncated provider response")
     return _ai_text(c)
 
 async def _post(url, **kw): return await http_post(url, **kw)
@@ -102,7 +144,69 @@ async def http_post(url, **kw):
     فهرستِ سفیدِ ``ALLOW_PRIVATE_MODEL_HOSTS`` باشد) و هدرهایِ اعتبار روی تغییرِ میزبان
     حذف می‌شوند."""
     from newsbot.net_http import fetch_post
-    return await fetch_post(url, timeout=httpx.Timeout(120, connect=15), **kw)
+    # سقفِ خواندن هم با بودجهٔ پروایدر یکی است (پیش‌تر ۱۲۰ ثانیهٔ ثابت بود و پیش از
+    # سقفِ کل می‌پرید ⇒ خطای ۵۰۴ِ کاذب برای مدلِ سالمِ ولی کند)
+    _t = max(30.0, _provider_timeout())
+    return await fetch_post(url, timeout=httpx.Timeout(_t, connect=15), total_timeout=_provider_timeout(), **kw)
+
+def _budget_left():
+    """باقیماندهٔ بودجهٔ زمانیِ همین مقاله (ثانیه) یا None اگر بودجه‌ای فعال نبود."""
+    b = config.AI_BUDGET.get()
+    if not b: return None
+    return config.AI_ARTICLE_TIME_BUDGET - (time.monotonic() - b["t0"])
+
+def _provider_timeout():
+    """سقفِ زمانیِ یک درخواستِ پروایدر — هرگز بیشتر از بودجهٔ باقیماندهٔ مقاله."""
+    t = float(config.AI_PROVIDER_TIMEOUT_SEC)
+    left = _budget_left()
+    if left is not None: t = min(t, max(5.0, float(left)))
+    return t
+
+def _retry_delay(base, headers=None):
+    """تأخیرِ تلاشِ دوباره: Retry-Afterِ پروایدر (اگر باشد) وگرنه نمایی با سقف."""
+    ra = retry_after_seconds((headers or {}).get("retry-after")) if headers else None
+    d = ra if ra else base
+    return max(0.2, min(float(d), float(config.RETRY_AFTER_MAX)))
+
+async def _post_retry(url, skip_status=(), **kw):
+    """درخواستِ پروایدر با تلاشِ محدود برای خطاهای گذرا.
+
+    پیش‌تر یک خطای گذرا (۴۲۹/۵xx/timeout) بلافاصله کلِ فراخوانی را می‌کشت و حتی
+    ``FetchError`` (که ``RuntimeError`` است) از لایهٔ AI بیرون می‌پرید و کلِ چرخه را
+    می‌کشت. حالا: خطای گذرا ⇒ حداکثر ``AI_TRANSIENT_RETRIES`` تلاشِ دوباره با تأخیرِ
+    مناسب (و احترام به Retry-After)؛ خطای دائمی (۴۰۱/۴۰۳/کلیدِ غلط) ⇒ بدونِ تکرار.
+    ``skip_status``: وضعیت‌هایی که باید بی‌درنگ برگردند (مثلاً ۴۰۴ وقتی مسیرِ جایگزین داریم)."""
+    attempts = max(1, int(config.AI_TRANSIENT_RETRIES) + 1)
+    base = max(0.2, float(config.AI_RETRY_BASE_SEC))
+    skip = {int(s) for s in (skip_status or ())}
+    last = None
+    for i in range(attempts):
+        try:
+            r = await _post(url, **kw)
+        except FetchError as e:
+            if e.status != 504: raise          # ۴۰۳ِ دروازهٔ خروج/۳۱۰ ⇒ دائمی
+            last = e
+        except (httpx.TimeoutException, httpx.NetworkError, asyncio.TimeoutError) as e:
+            last = e
+        except Exception as e:
+            # خطای غیرمنتظرهٔ لایهٔ انتقال هم نباید از AI بیرون بپرد (پیش‌تر کلِ چرخه را می‌کشت)
+            last = AIProviderError(f"provider transport failure ({type(e).__name__})", transient=True)
+            last.__cause__ = e
+        else:
+            if i >= attempts - 1 or int(r.status_code) in skip or not _is_transient_response(r): return r
+            left = _budget_left()
+            if left is not None and left <= 5: return r     # بودجهٔ مقاله تمام ⇒ ادامه فایده ندارد
+            wait = _retry_delay(base, r.headers)
+            log.warning("ai provider transient HTTP %s — retry %d/%d in %.1fs", r.status_code, i + 1, attempts - 1, wait)
+            await asyncio.sleep(wait); base = min(base * 2, float(config.RETRY_AFTER_MAX)); continue
+        if i >= attempts - 1: raise last
+        left = _budget_left()
+        if left is not None and left <= 5: raise last
+        wait = _retry_delay(base)
+        log.warning("ai provider transport error (%s: %s) — retry %d/%d in %.1fs",
+                    type(last).__name__, redact(str(last))[:120], i + 1, attempts - 1, wait)
+        await asyncio.sleep(wait); base = min(base * 2, float(config.RETRY_AFTER_MAX))
+    raise last if last else AIProviderError("ai provider request failed")
 
 def _usage_dict(u, ptkey, ctkey):
     """استخراج مصرف توکن از بدنه‌ی provider (PLB-03)؛ نامعتبر/صفر ⇒ None."""
@@ -131,41 +235,63 @@ async def _call_model(m, system, user):
     kind = m["kind"] or detect_kind(m["base_url"]); base = (m["base_url"] or "").rstrip("/"); key = _sec_decrypt(m["api_key"] or ""); model = m["model"]; temp = 0.5 if m["temperature"] is None else float(m["temperature"]); mx = int(m["max_tokens"] or 2500)
     if kind == "anthropic":
         url = base + ("/messages" if base.endswith("/v1") else "/v1/messages")
-        r = await _post(url, headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}, json={"model": model, "max_tokens": mx, "temperature": temp, "system": system, "messages": [{"role": "user", "content": user}]})
+        r = await _post_retry(url, headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}, json={"model": model, "max_tokens": mx, "temperature": temp, "system": system, "messages": [{"role": "user", "content": user}]})
         j = _provider_json(r); blocks = j.get("content")
-        if not isinstance(blocks, list) or any(not isinstance(b, dict) for b in blocks): raise AIResponseError("malformed provider content")
+        if not isinstance(blocks, list) or any(not isinstance(b, dict) for b in blocks): raise AIContentInvalid("malformed provider content")
+        if str(j.get("stop_reason") or "") == "max_tokens": raise AIOutputTruncated("truncated provider response")
         parts = [b.get("text") for b in blocks if b.get("type") == "text"]
-        if any(not isinstance(p, str) for p in parts): raise AIResponseError("invalid response text")
+        if any(not isinstance(p, str) for p in parts): raise AIContentInvalid("invalid response text")
         return _ai_text(" ".join(parts)), _usage_dict(j.get("usage"), "input_tokens", "output_tokens")
     if kind == "gemini":
         model = model.replace("models/", ""); root = base if re.search(r"/v1(beta)?$", base) else base + "/v1beta"
         # SEC-011/OBS-016: کلید در هدر می‌رود، نه query string (URL در لاگ/پروکسی ثبت می‌شود).
-        r = await _post(f"{root}/models/{model}:generateContent", headers={"x-goog-api-key": key}, json={"system_instruction": {"parts": [{"text": system}]}, "contents": [{"role": "user", "parts": [{"text": user}]}], "generationConfig": {"temperature": temp, "maxOutputTokens": mx}})
+        r = await _post_retry(f"{root}/models/{model}:generateContent", headers={"x-goog-api-key": key}, json={"system_instruction": {"parts": [{"text": system}]}, "contents": [{"role": "user", "parts": [{"text": user}]}], "generationConfig": {"temperature": temp, "maxOutputTokens": mx}})
         j = _provider_json(r); cands = j.get("candidates")
-        if not isinstance(cands, list) or not cands or not isinstance(cands[0], dict): raise AIResponseError("malformed provider candidates")
+        if not isinstance(cands, list) or not cands or not isinstance(cands[0], dict): raise AIContentInvalid("malformed provider candidates")
+        if str(cands[0].get("finishReason") or "") == "MAX_TOKENS": raise AIOutputTruncated("truncated provider response")
         content = cands[0].get("content")
-        if not isinstance(content, dict): raise AIResponseError("provider blocked response")
+        if not isinstance(content, dict): raise AIContentInvalid("provider blocked response")
         parts = content.get("parts")
-        if not isinstance(parts, list) or any(not isinstance(p, dict) or not isinstance(p.get("text"), str) for p in parts): raise AIResponseError("malformed provider parts")
+        if not isinstance(parts, list) or any(not isinstance(p, dict) or not isinstance(p.get("text"), str) for p in parts): raise AIContentInvalid("malformed provider parts")
         return _ai_text(" ".join(p["text"] for p in parts)), _usage_dict(j.get("usageMetadata"), "promptTokenCount", "candidatesTokenCount")
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     if "openrouter" in base: headers.update({"HTTP-Referer": "https://t.me", "X-Title": "NewsBot"})
     body = {"model": model, "temperature": temp, "max_tokens": mx, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     url = base if base.endswith("/chat/completions") else base + "/chat/completions"
-    r = await _post(url, headers=headers, json=body)
-    if r.status_code == 404 and not re.search(r"/v\d", base): r = await _post(base + "/v1/chat/completions", headers=headers, json=body)
+    # اگر base_url نسخه ندارد، مسیرِ ‎/v1‎ هم محتمل است ⇒ ۴۰۴ دوباره تکرار نمی‌شود
+    fallback = not re.search(r"/v\d", base)
+    r = await _post_retry(url, skip_status=(404,) if fallback else (), headers=headers, json=body)
+    if r.status_code == 404 and fallback: r = await _post_retry(base + "/v1/chat/completions", headers=headers, json=body)
     j = _provider_json(r)
     return _openai_content(j), _usage_dict(j.get("usage"), "prompt_tokens", "completion_tokens")
+
+def _is_transient_error(e):
+    """خطای گذرا (۴۲۹/۵xx/timeout/قطعِ شبکه) در برابرِ دائمی (کلیدِ غلط/دسترسی/درخواستِ نامعتبر)."""
+    if isinstance(e, AIContentInvalid): return False          # خطای محتوا ⇒ پروایدر سالم است
+    if isinstance(e, AIProviderError): return e.transient
+    if isinstance(e, FetchError): return int(e.status) in (408, 425, 429, 500, 502, 503, 504)
+    if isinstance(e, (httpx.TimeoutException, httpx.NetworkError, asyncio.TimeoutError)): return True
+    return False
 
 async def _mark_fail(m, err):
     cur = get_model(m["id"]) or m   # اسنپ‌شاتِ ورودی ممکن است کهنه باشد؛ شمارنده از سطر فعلی خوانده می‌شود
     fc = (cur["fail_count"] or 0) + 1
-    ntry = (now_utc() + timedelta(minutes=min(5 * (2 ** min(fc, 6)), config.MODEL_BACKOFF_MAX_MIN))).isoformat()
+    transient = _is_transient_error(err)
+    # خطای گذرا ⇒ خاموشیِ کوتاه (پیش‌تر ۵·۲^fc دقیقه ⇒ ۲۰ دقیقه برای خطای دوم؛ با یک
+    # مدلِ فعال یعنی ۲۰ دقیقه توقفِ کاملِ تولیدِ محتوا). خطای دائمی ⇒ خاموشیِ طولانی.
+    mins = (min(config.MODEL_TRANSIENT_BACKOFF_MIN * fc, config.MODEL_TRANSIENT_BACKOFF_MAX_MIN)
+            if transient else min(5 * (2 ** min(fc, 6)), config.MODEL_BACKOFF_MAX_MIN))
+    ntry = (now_utc() + timedelta(minutes=mins)).isoformat()
     update_model(m["id"], fail_count=fc, last_error=redact(err)[:300], last_fail=now_iso(), next_try_after=ntry,
                  status="down" if fc >= 2 else cur["status"])
     if fc >= 2 and cur["status"] != "down":
-        log_event("ERROR", f"مدل «{m['name']}» از کار افتاد: {redact(err)}")
-        await notify_super(f"🔴 مدل <b>{html.escape(m['name'])}</b> (<code>{html.escape(m['model'])}</code>) از کار افتاد.\n<code>{html.escape(redact(err)[:200])}</code>")
+        if transient:
+            log_event("WARN", f"مدل «{m['name']}» با خطای موقت از دسترس خارج شد ({mins} دقیقه): {redact(err)}")
+            await notify_super(f"🟡 مدل <b>{html.escape(m['name'])}</b> (<code>{html.escape(m['model'])}</code>) با خطای موقت از دسترس خارج شد؛ "
+                               f"تا <code>{mins}</code> دقیقهٔ دیگر دوباره تلاش می‌شود.\n<code>{html.escape(redact(err)[:200])}</code>")
+        else:
+            log_event("ERROR", f"مدل «{m['name']}» از کار افتاد: {redact(err)}")
+            await notify_super(f"🔴 مدل <b>{html.escape(m['name'])}</b> (<code>{html.escape(m['model'])}</code>) از کار افتاد.\n<code>{html.escape(redact(err)[:200])}</code>")
 
 async def _mark_ok(m):
     cur = get_model(m["id"]) or m   # ok_count/fail_count از سطر فعلی، نه از اسنپ‌شات احتمالاً کهنه
@@ -177,15 +303,19 @@ AI_ERR = {"ai_busy": ("سرویس هوش مصنوعی موقتاً شلوغ اس
           "ai_timeout": ("سرویس هوش مصنوعی پاسخ نداد", "AI service did not respond"), "ai_empty": ("پاسخ خالی از سرویس هوش مصنوعی", "Empty response from AI service"),
           "ai_none": ("سرویس هوش مصنوعی در دسترس نیست", "AI service unavailable"), "ai_error": ("خطای موقت سرویس هوش مصنوعی", "Temporary AI service error"),
           "ai_budget": ("سقف هزینهٔ هوش مصنوعی برای این مقاله پر شد", "AI cost budget reached for this article"),
+          "ai_tokens": ("بودجهٔ توکنِ مدل تمام شد و خروجی تولید نشد (مدل یا سقف توکن را عوض کنید)", "The model exhausted its token budget without producing output (change the model or its token budget)"),
           "ai_limit": ("سقف روزانهٔ مصرف هوش مصنوعی تمام شد", "Daily AI usage limit reached"),
           "ai_invalid": ("خروجی مدل‌ها نامعتبر بود", "The model output was rejected as invalid"),
           "ai_all_failed": ("هیچ‌یک از مدل‌ها پاسخ نداد", "None of the models responded")}
 
 def err_code(e):
     t = str(e or "").lower()
+    if "token budget" in t or "exhausted its token" in t: return "ai_tokens"
     if "429" in t or "rate limit" in t or "quota" in t or "overload" in t or "busy" in t: return "ai_busy"
     if "401" in t or "403" in t or "api key" in t or "unauthor" in t or "permission" in t or "credential" in t: return "ai_auth"
     if "timeout" in t or "timed out" in t or "connect" in t or "network" in t or "unreachable" in t: return "ai_timeout"
+    if "504" in t or "gateway" in t: return "ai_timeout"          # پایانِ زمانِ درخواست ⇒ موقت
+    if "500" in t or "502" in t or "503" in t or "server error" in t: return "ai_busy"   # خطای موقتِ سمتِ پروایدر
     if "empty" in t or "no candidates" in t: return "ai_empty"
     if "no_models" in t or "no model" in t: return "ai_none"
     return "ai_error"
@@ -219,23 +349,23 @@ def _validate_output(text):
     text = _ai_text(text)
     if text.startswith(("{", "[")):
         try: j = json.loads(text)
-        except ValueError as e: raise AIResponseError("malformed AI output") from e
-        if not isinstance(j, dict) or j.get("error"): raise AIResponseError("invalid AI output")
+        except ValueError as e: raise AIContentInvalid("malformed AI output") from e
+        if not isinstance(j, dict) or j.get("error"): raise AIContentInvalid("invalid AI output")
     return text
 
 def _validate_ready(text):
-    if _ai_text(text).upper() != "READY": raise AIResponseError("invalid health-check output")
+    if _ai_text(text).upper() != "READY": raise AIContentInvalid("invalid health-check output")
 
 def _validate_generation(text):
     _validate_output(text)
-    if INJ_RESIDUE.search(text): raise AIResponseError("injection residue in AI output")   # خروجی هم معنایی چک می‌شود، نه فقط ساختار JSON
+    if INJ_RESIDUE.search(text): raise AIContentInvalid("injection residue in AI output")   # خروجی هم معنایی چک می‌شود، نه فقط ساختار JSON
     j = parse_json(text)
-    if not isinstance(j, dict): raise AIResponseError("invalid AI JSON")
+    if not isinstance(j, dict): raise AIContentInvalid("invalid AI JSON")
     if j.get("is_ad") is True: return
     post = j.get("post")
     scores = j.get("scores")
-    if not isinstance(post, str) or not strip_tags(post).strip(): raise AIResponseError("invalid empty post")
-    if not isinstance(scores, dict) or not scores: raise AIResponseError("missing scores")
+    if not isinstance(post, str) or not strip_tags(post).strip(): raise AIContentInvalid("invalid empty post")
+    if not isinstance(scores, dict) or not scores: raise AIContentInvalid("missing scores")
 
 def _validate_salvageable(text):
     """PLB-01 (فاز ۷): قراردادِ نرمِ مسیر تولید.
@@ -244,14 +374,14 @@ def _validate_salvageable(text):
     ولی پاسخِ prose یا JSONِ سالم با فیلدهای ناقص به generate می‌رسد تا مسیر salvage آن را
     واقعاً نجات دهد (پیش‌تر قرارداد سختِ missing scores/output مانع هر salvage موفق می‌شد)."""
     _validate_output(text)
-    if INJ_RESIDUE.search(text): raise AIResponseError("injection residue in AI output")
+    if INJ_RESIDUE.search(text): raise AIContentInvalid("injection residue in AI output")
     j = parse_json(text)
     if isinstance(j, dict):
-        if j.get("error"): raise AIResponseError("invalid AI output")
+        if j.get("error"): raise AIContentInvalid("invalid AI output")
         if j.get("is_ad") is not True:
             post = j.get("post")
             if post is not None and (not isinstance(post, str) or not strip_tags(post).strip()):
-                raise AIResponseError("invalid empty post")
+                raise AIContentInvalid("invalid empty post")
     return text
 
 async def _try_models(groups, system, user, owner_id=None, on_queue=None, validate=None, explicit_id=None):
@@ -296,12 +426,15 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                         await _mark_ok(current)
                         await _ai_event("success", label)
                         return text, label, None
-            except (httpx.HTTPError, asyncio.TimeoutError, AIResponseError) as e:
+            except (httpx.HTTPError, asyncio.TimeoutError, AIResponseError, FetchError) as e:
                 last = "ai_timeout" if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError)) else err_code(e)
                 # خطای اعتبارسنجیِ محتوا به حساب provider نوشته نمی‌شود؛ وگرنه یک قرارداد/پرامپتِ سخت‌گیرانه
                 # همهٔ مدل‌های سالم را پشت‌سرهم down می‌کرد. مدل بعدی همچنان امتحان می‌شود.
-                if content_fail:
+                # «محتوای ناقص» (پاسخِ بریده‌شده) هم خطای محتوا است ⇒ هرگز منتشر نمی‌شود.
+                if content_fail or isinstance(e, AIContentInvalid):
                     content_fails += 1
+                    # کدِ دقیق: «بودجهٔ توکنِ مدل تمام شد» در برابرِ «خروجی نامعتبر»
+                    last = "ai_tokens" if (isinstance(e, AIOutputTruncated) and getattr(e, "empty", False)) else "ai_invalid"
                     log.info("model %s returned unusable content (%s); provider NOT marked down", m["name"], e)
                     if content_fails > config.AI_CONTENT_RETRY_MODELS:
                         # خروجی نامعتبر ربطی به provider ندارد؛ فرستادن همان پرامپت بزرگ به مدل‌های بعدی فقط هزینه است.
@@ -313,7 +446,9 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                     await _ai_event("failure", label, last)
         if stop: break
     # هر مدل فقط یک‌بار امتحان می‌شود (بدون تکرار)؛ این‌جا یعنی همهٔ مدل‌های کاربر و مدیر تمام شدند.
-    code = last if last == "ai_none" else "ai_all_failed"
+    # با یک مدل، کدِ دقیقِ خطا (مثلاً ai_timeout/ai_busy/ai_auth) نگه داشته می‌شود تا کاربر
+    # دلیلِ واقعی را ببیند؛ با چند مدل ⇒ «هیچ‌یک پاسخ نداد».
+    code = last if (last == "ai_none" or len(tried) <= 1) else "ai_all_failed"
     log.warning("all models exhausted (tried=%d, last=%s) — stopping", len(tried), last)
     await _ai_event("failed", code=code)
     return None, None, code

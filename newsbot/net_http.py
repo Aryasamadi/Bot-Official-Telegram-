@@ -232,7 +232,7 @@ def _sse_to_json(body_text):
     چرا؟ لبه‌هایی مثل Cloudflare اگر *شروع*ِ پاسخ در ۱۰۰ ثانیه نرسد، خطای ۵۲۴ می‌دهند
     (پاسخِ مدلِ کند بعد از آن قطع می‌شود). با جریان، اولین قطعه زود می‌رسد و پاسخِ
     کامل جمع می‌شود ⇒ نه ۵۲۴ و نه قطعِ ناقص."""
-    content = []; finish = None; usage = None; role = None
+    content = []; finish = None; usage = None; role = None; error = None
     for line in str(body_text or "").splitlines():
         line = line.strip()
         if not line.startswith("data:"): continue
@@ -242,6 +242,8 @@ def _sse_to_json(body_text):
         except Exception: continue
         if not isinstance(d, dict): continue
         if d.get("usage"): usage = d.get("usage")
+        if d.get("error") is not None and error is None:
+            error = d.get("error")   # خطای میانِ جریان (مثل قطعِ بالادست) ⇒ نباید گم شود
         for ch in (d.get("choices") or []):
             if not isinstance(ch, dict): continue
             if ch.get("finish_reason"): finish = ch.get("finish_reason")
@@ -252,8 +254,10 @@ def _sse_to_json(body_text):
             if isinstance(piece, str): content.append(piece)
             elif isinstance(piece, list):
                 content.extend(p.get("text", "") for p in piece if isinstance(p, dict) and isinstance(p.get("text"), str))
-    return {"choices": [{"index": 0, "message": {"role": role or "assistant", "content": "".join(content)},
-                          "finish_reason": finish or "stop"}], "usage": usage}
+    merged = {"choices": [{"index": 0, "message": {"role": role or "assistant", "content": "".join(content)},
+                           "finish_reason": finish or "stop"}], "usage": usage}
+    if error is not None: merged["error"] = error
+    return merged
 
 
 async def fetch_post(url, *, headers=None, timeout=None, max_redirects=5, total_timeout=None, **kw):

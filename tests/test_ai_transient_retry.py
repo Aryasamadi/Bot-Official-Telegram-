@@ -233,6 +233,24 @@ def test_http_client_is_rebuilt_for_a_new_event_loop():
     assert not c2.is_closed
 
 
+def test_mid_stream_error_is_retried_and_not_reported_as_invalid(monkeypatch, model):
+    """خطای میانِ جریان (پاسخِ ۲۰۰ ولی بدونِ محتوا) گذراست ⇒ دوباره امتحان می‌شود."""
+    box = _calls(monkeypatch, [FakeResp(200, {"error": {"message": "upstream timeout"}}),
+                               FakeResp(200, _ok_payload("READY"))])
+    out, label, err = asyncio.run(amod.ai_chat("sys", "user"))
+    assert err is None and out == "READY", f"باید پس از خطای میانِ جریان موفق می‌شد: {err}"
+    assert box["n"] == 2, "جریانِ خالی باید دوباره امتحان شود"
+
+
+def test_empty_stream_response_is_not_reported_as_invalid_output(monkeypatch, model):
+    """جریانِ کاملاً خالی (بدون محتوا و بدون خطا) هم خطای گذراست، نه «خروجی نامعتبر»."""
+    box = _calls(monkeypatch, [FakeResp(200, {"choices": [{"message": {"role": "assistant"}}]}),
+                               FakeResp(200, _ok_payload("READY"))])
+    out, label, err = asyncio.run(amod.ai_chat("sys", "user"))
+    assert err is None and out == "READY", f"باید پس از جریانِ خالی موفق می‌شد: {err}"
+    assert box["n"] == 2
+
+
 def test_transient_retry_is_bounded(monkeypatch, model):
     """تعدادِ تلاشِ دوباره سقف دارد (بی‌نهایت تکرار ممنوع)."""
     monkeypatch.setattr(config, "AI_TRANSIENT_RETRIES", 2)

@@ -101,12 +101,42 @@ def _is_transient_response(r):
     if st in (400, 404, 405, 422) and not _body_is_json(r): return True
     return False
 
+def _error_is_transient(text):
+    """آیا پیامِ خطای provider مربوط به سمتِ سرور است (گذرا) یا سمتِ درخواست (دائمی)؟"""
+    t = str(text or "").lower()
+    return any(k in t for k in ("timeout", "timed out", "overload", "upstream", "temporar",
+                                "too many requests", "rate limit", "service unavailable",
+                                "internal error", "bad gateway", "try again"))
+
+def _error_message(err):
+    if isinstance(err, dict):
+        return err.get("message") or err.get("detail") or err.get("type") or json.dumps(err, ensure_ascii=False)[:200]
+    return str(err or "")[:200]
+
+def _body_is_unusable(r):
+    """پاسخِ ۲۰۰ ولی بدونِ محتوا (خطای میانِ جریان یا جریانِ خالی) ⇒ گذراست.
+
+    در تولیدِ واقعی دیده شد: پروایدر جریان را با خطای بالادست بست و بدنه ۲۰۰ بود ولی
+    محتوایی نداشت ⇒ بدونِ این بررسی، مقاله با «خروجی نامعتبر» رد می‌شد."""
+    try: j = r.json()
+    except Exception: return False
+    if not isinstance(j, dict): return False
+    if j.get("error"): return _error_is_transient(_error_message(j.get("error")))
+    chs = j.get("choices")
+    if isinstance(chs, list) and chs and isinstance(chs[0], dict):
+        msg = chs[0].get("message") or chs[0].get("delta") or {}
+        if isinstance(msg, dict) and msg.get("content") is None and not msg.get("refusal"):
+            return True
+    return False
+
 def _provider_json(r):
     if r.status_code >= 400: raise AIProviderError(_err_text(r), status=r.status_code, transient=_is_transient_response(r))
     try: j = r.json()
     except ValueError as e: raise AIContentInvalid("malformed provider JSON") from e
     if not isinstance(j, dict): raise AIContentInvalid("malformed provider envelope")
-    if j.get("error"): raise AIProviderError("provider error response", status=r.status_code, transient=False)
+    if j.get("error"):
+        msg = _error_message(j.get("error"))
+        raise AIProviderError(f"provider error: {msg}", status=r.status_code, transient=_error_is_transient(msg))
     return j
 
 def _ai_text(value):
@@ -132,6 +162,10 @@ def _openai_content(j):
         if not bool(str(c or "").strip()):
             raise AIOutputTruncated("model exhausted its token budget without producing output", empty=True)
         raise AIOutputTruncated("truncated provider response")
+    if c is None:
+        # جریانِ بدونِ محتوا (قطعِ بالادست یا پاسخِ خالی) ⇒ خطای گذرا تا یک‌بار دوباره
+        # امتحان شود؛ «refusal» بالا دائمی ماند ✓
+        raise AIProviderError("provider returned an empty response", transient=True)
     return _ai_text(c)
 
 async def _post(url, **kw): return await http_post(url, **kw)
@@ -200,7 +234,8 @@ async def _post_retry(url, skip_status=(), **kw):
             last = AIProviderError(f"provider transport failure ({type(e).__name__})", transient=True)
             last.__cause__ = e
         else:
-            if i >= attempts - 1 or int(r.status_code) in skip or not _is_transient_response(r): return r
+            transient = _is_transient_response(r) or _body_is_unusable(r)
+            if i >= attempts - 1 or int(r.status_code) in skip or not transient: return r
             left = _budget_left()
             if left is not None and left <= 5: return r     # بودجهٔ مقاله تمام ⇒ ادامه فایده ندارد
             wait = _retry_delay(base, r.headers)

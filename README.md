@@ -231,6 +231,7 @@ INFO | در حال اجرا…
 | `AI_PROVIDER_TIMEOUT_SEC` | `180` | سقف زمانی یک درخواست پروایدر (مستقل از بودجهٔ fetch منابع) |
 | `AI_TRANSIENT_RETRIES` | `2` | تلاش دوباره برای خطاهای گذرا (۴۲۹/۵xx/timeout) |
 | `AI_RETRY_BASE_SEC` | `2` | تأخیر پایهٔ تلاش دوباره (ثانیه) |
+| `AI_RETRY_MAX_DELAY_SEC` | `20` | سقف تأخیر هر تلاش دوباره (ثانیه) |
 | `MODEL_TRANSIENT_BACKOFF_MIN` | `2` | خاموشی کوتاه مدل بعد از خطای موقت (دقیقه) |
 | `MODEL_TRANSIENT_BACKOFF_MAX_MIN` | `15` | سقف خاموشی کوتاه مدل (دقیقه) |
 

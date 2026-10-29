@@ -143,6 +143,83 @@ def test_edge_404_plain_text_is_transient_but_json_404_is_permanent(monkeypatch,
     assert box2["n"] == 1, "۴۰۴ِ JSON (مدل ناموجود) دائمی است"
 
 
+def test_cloudflare_524_is_transient_and_is_retried(monkeypatch, model):
+    """۵۲۴ (مبدأ پاسخ نداد) گذراست ⇒ باید دوباره امتحان شود، نه اینکه مدل برای ۲۰ دقیقه بخوابد."""
+    box = _calls(monkeypatch, [FakeResp(524, None, text="<html>vyceai.com | 524: A timeout occurred</html>"),
+                               FakeResp(200, _ok_payload("READY"))])
+    out, label, err = asyncio.run(amod.ai_chat("sys", "user"))
+    assert err is None and out == "READY", f"پس از ۵۲۴ باید موفق می‌شد: {err}"
+    assert box["n"] == 2, "۵۲۴ باید یک‌بار دوباره امتحان شود"
+
+
+def test_cloudflare_502_is_transient_with_a_short_backoff(monkeypatch, model):
+    """۵۰۲ گذراست ⇒ خاموشیِ مدل کوتاه می‌شود (نه ۲۰ دقیقه)."""
+    monkeypatch.setattr(config, "AI_TRANSIENT_RETRIES", 0)
+    q("UPDATE ai_models SET fail_count=1 WHERE id=?", (model,), commit=True)
+    _calls(monkeypatch, [FakeResp(502, None, text="<html>502 Bad Gateway</html>")])
+    asyncio.run(amod.ai_chat("sys", "user"))
+    row = q("SELECT * FROM ai_models WHERE id=?", (model,), one=True)
+    assert row["fail_count"] == 2
+    mins = _minutes_between(row["next_try_after"], now_iso())
+    assert 0 < mins <= config.MODEL_TRANSIENT_BACKOFF_MAX_MIN, \
+        f"خاموشیِ خطای گذرا باید کوتاه باشد، شد: {mins} دقیقه"
+
+
+def test_retry_delay_never_eats_the_article_budget(monkeypatch, model):
+    """‎Retry-After‎ِ بزرگِ پروایدر نباید کلِ بودجهٔ مقاله را ببلعد."""
+    monkeypatch.setattr(config, "AI_RETRY_MAX_DELAY_SEC", 5.0)
+    seen = []
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(delay, *a, **k):
+        seen.append(delay); return await real_sleep(0)
+    monkeypatch.setattr(amod.asyncio, "sleep", _fake_sleep)
+    _calls(monkeypatch, [FakeResp(429, _err_payload(429, "Too Many Requests"), headers={"retry-after": "600"}),
+                         FakeResp(200, _ok_payload("READY"))])
+    out, label, err = asyncio.run(amod.ai_chat("sys", "user"))
+    assert err is None and out == "READY"
+    assert seen and max(seen) <= 5.0, f"تأخیرِ retry نباید از سقف بگذرد: {seen}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# NET-004 — پاسخِ جریانی (stream): لبه‌هایی مثل Cloudflare بعد از ۱۰۰ ثانیهٔ بی‌پاسخی خطای
+# ۵۲۴ می‌دهند و پاسخِ کاملِ مدلِ کند هدر می‌رود. با stream اولین بایت زود می‌رسد.
+# ══════════════════════════════════════════════════════════════════════════════════════
+def _sse_body(chunks):
+    lines = []
+    for c in chunks:
+        lines.append("data: " + json.dumps({"choices": [{"delta": {"content": c}, "finish_reason": None}]}))
+    lines.append("data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}],
+                                       "usage": {"prompt_tokens": 11, "completion_tokens": 22}}))
+    lines.append("data: [DONE]")
+    return "\n".join(lines)
+
+
+def test_sse_response_is_merged_into_a_normal_json_response():
+    """پاسخِ SSE باید مثل پاسخِ JSON معمولی تفسیر شود (بقیهٔ کدِ پروایدر تغییر نکند)."""
+    from newsbot.net_http import _sse_to_json
+    j = _sse_to_json(_sse_body(["سلام", " دنیا"]))
+    assert j["choices"][0]["message"]["content"] == "سلام دنیا"
+    assert j["choices"][0]["finish_reason"] == "stop"
+    assert j["usage"]["completion_tokens"] == 22
+
+
+def test_provider_request_uses_streaming_and_falls_back_when_refused(monkeypatch, model):
+    """درخواستِ پروایدر باید جریانی باشد؛ اگر پروایدر آن را نپذیرفت ⇒ یک‌بار بدونِ stream."""
+    bodies = []
+
+    async def _fake(url, **kw):
+        bodies.append(dict(kw.get("json") or {}))
+        if len(bodies) == 1:
+            return FakeResp(400, None, text="stream is not supported by this endpoint")
+        return FakeResp(200, _ok_payload("READY"))
+    monkeypatch.setattr(amod, "_post", _fake)
+    out, label, err = asyncio.run(amod.ai_chat("sys", "user"))
+    assert err is None and out == "READY", f"مسیرِ fallback باید کار کند: {err}"
+    assert bodies[0].get("stream") is True, "درخواستِ اول باید جریانی باشد"
+    assert "stream" not in bodies[-1], "درخواستِ دوم باید بدونِ stream باشد"
+
+
 def test_transient_retry_is_bounded(monkeypatch, model):
     """تعدادِ تلاشِ دوباره سقف دارد (بی‌نهایت تکرار ممنوع)."""
     monkeypatch.setattr(config, "AI_TRANSIENT_RETRIES", 2)
@@ -216,6 +293,16 @@ def test_all_models_in_backoff_is_reported_as_temporary_not_as_missing_model(mon
       ((now_utc() + timedelta(minutes=30)).isoformat(), model), commit=True)
     box = _calls(monkeypatch, [FakeResp(200, _ok_payload("READY"))])
     out, label, err = asyncio.run(amod.ai_chat("sys", "user"))
+    assert out is None and err == "ai_busy", f"خطای موقت باید گزارش شود، شد: {err}"
+    assert box["n"] == 0, "مدلِ در backoff نباید صدا زده شود"
+
+
+def test_personal_model_in_backoff_is_also_temporary(monkeypatch, model):
+    """مدلِ *شخصی*ِ خودِ کاربر در backoff ⇒ باز هم «موقت» (همین مسیر در تولیدِ واقعی بود)."""
+    q("UPDATE ai_models SET owner_id=555001, status='down', next_try_after=? WHERE id=?",
+      ((now_utc() + timedelta(minutes=30)).isoformat(), model), commit=True)
+    box = _calls(monkeypatch, [FakeResp(200, _ok_payload("READY"))])
+    out, label, err = asyncio.run(amod.ai_chat("sys", "user", owner_id=555001))
     assert out is None and err == "ai_busy", f"خطای موقت باید گزارش شود، شد: {err}"
     assert box["n"] == 0, "مدلِ در backoff نباید صدا زده شود"
 

@@ -138,6 +138,7 @@ AI_PROVIDER_TIMEOUT_SEC = _env_int("AI_PROVIDER_TIMEOUT_SEC", 180, 10, 600)
 # تلاشِ دوباره برای خطاهای گذرا (۴۲۹/۵xx/timeout) — خطاهای دائمی هرگز تکرار نمی‌شوند
 AI_TRANSIENT_RETRIES = _env_int("AI_TRANSIENT_RETRIES", 2, 0, 5)
 AI_RETRY_BASE_SEC = _env_float("AI_RETRY_BASE_SEC", 2.0, 0.1, 60.0)
+AI_RETRY_MAX_DELAY_SEC = _env_float("AI_RETRY_MAX_DELAY_SEC", 20.0, 1.0, 300.0)
 # خاموشیِ کوتاهِ مدل بعد از خطای گذرا (پیش‌تر ۲۰ دقیقه ⇒ کلِ تولیدِ محتوا متوقف می‌شد)
 MODEL_TRANSIENT_BACKOFF_MIN = _env_int("MODEL_TRANSIENT_BACKOFF_MIN", 2, 1, 60)
 MODEL_TRANSIENT_BACKOFF_MAX_MIN = _env_int("MODEL_TRANSIENT_BACKOFF_MAX_MIN", 15, 1, 120)

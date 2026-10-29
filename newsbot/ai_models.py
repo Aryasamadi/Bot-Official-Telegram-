@@ -56,7 +56,10 @@ def _err_text(r):
     try:
         j = r.json(); e = j.get("error"); msg = (e.get("message") if isinstance(e, dict) else e) or j.get("message") or j.get("detail") or r.text
     except Exception: msg = r.text
-    return redact(f"HTTP {r.status_code}: {re.sub(r'<[^>]+>', '', str(msg))[:160]}")   # منبعِ خطا پاک‌سازی می‌شود، نه مصرف‌کننده‌هایش
+    # متنِ خامِ صفحهٔ خطا (HTMLِ لبه) هم فشرده و خوانا می‌شود؛ رازها همچنان پاک می‌شوند
+    clean = re.sub(r"<[^>]+>", " ", str(msg))
+    clean = re.sub(r"\s+", " ", clean).strip()
+    return redact(f"HTTP {r.status_code}: {clean[:160]}")   # منبعِ خطا پاک‌سازی می‌شود، نه مصرف‌کننده‌هایش
 
 class AIResponseError(RuntimeError):
     pass
@@ -79,8 +82,9 @@ class AIProviderError(AIResponseError):
     def __init__(self, message, status=None, transient=False):
         super().__init__(message); self.status = status; self.transient = bool(transient)
 
-# وضعیت‌هایی که گذرا هستند ⇒ تلاشِ دوباره (با تأخیر) مجاز و لازم است
-_TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+# وضعیت‌هایی که گذرا هستند ⇒ تلاشِ دوباره (با تأخیر) مجاز و لازم است.
+# ۵۲۰–۵۲۴ هم‌خانوادهٔ Cloudflare هستند (مبدأ پاسخ نداد / تایم‌اوت لبه) ⇒ گذرا.
+_TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524})
 
 def _body_is_json(r):
     try: r.json(); return True
@@ -163,10 +167,13 @@ def _provider_timeout():
     return t
 
 def _retry_delay(base, headers=None):
-    """تأخیرِ تلاشِ دوباره: Retry-Afterِ پروایدر (اگر باشد) وگرنه نمایی با سقف."""
+    """تأخیرِ تلاشِ دوباره: Retry-Afterِ پروایدر (اگر باشد) وگرنه نمایی با سقف.
+
+    سقفِ تأخیر کوتاه است (‎AI_RETRY_MAX_DELAY_SEC‎): یک ‎Retry-After‎ِ ۶۰ثانیه‌ای در
+    بودجهٔ ۲۴۰ثانیه‌ایِ مقاله جا نمی‌شود و کلِ فرصتِ تولید را می‌بلعند."""
     ra = retry_after_seconds((headers or {}).get("retry-after")) if headers else None
     d = ra if ra else base
-    return max(0.2, min(float(d), float(config.RETRY_AFTER_MAX)))
+    return max(0.2, min(float(d), float(config.AI_RETRY_MAX_DELAY_SEC), float(config.RETRY_AFTER_MAX)))
 
 async def _post_retry(url, skip_status=(), **kw):
     """درخواستِ پروایدر با تلاشِ محدود برای خطاهای گذرا.
@@ -197,12 +204,14 @@ async def _post_retry(url, skip_status=(), **kw):
             left = _budget_left()
             if left is not None and left <= 5: return r     # بودجهٔ مقاله تمام ⇒ ادامه فایده ندارد
             wait = _retry_delay(base, r.headers)
+            if left is not None and wait >= left: return r  # تأخیر جایی در بودجهٔ مقاله ندارد
             log.warning("ai provider transient HTTP %s — retry %d/%d in %.1fs", r.status_code, i + 1, attempts - 1, wait)
             await asyncio.sleep(wait); base = min(base * 2, float(config.RETRY_AFTER_MAX)); continue
         if i >= attempts - 1: raise last
         left = _budget_left()
         if left is not None and left <= 5: raise last
         wait = _retry_delay(base)
+        if left is not None and wait >= left: raise last
         log.warning("ai provider transport error (%s: %s) — retry %d/%d in %.1fs",
                     type(last).__name__, redact(str(last))[:120], i + 1, attempts - 1, wait)
         await asyncio.sleep(wait); base = min(base * 2, float(config.RETRY_AFTER_MAX))
@@ -260,8 +269,21 @@ async def _call_model(m, system, user):
     url = base if base.endswith("/chat/completions") else base + "/chat/completions"
     # اگر base_url نسخه ندارد، مسیرِ ‎/v1‎ هم محتمل است ⇒ ۴۰۴ دوباره تکرار نمی‌شود
     fallback = not re.search(r"/v\d", base)
-    r = await _post_retry(url, skip_status=(404,) if fallback else (), headers=headers, json=body)
-    if r.status_code == 404 and fallback: r = await _post_retry(base + "/v1/chat/completions", headers=headers, json=body)
+    # NET-004: پاسخِ «جریانی» (stream) ⇒ اولین بایت زود می‌رسد. لبه‌هایی مثل Cloudflare اگر
+    # شروعِ پاسخ در ۱۰۰ ثانیه نرسد خطای ۵۲۴ می‌دهند و پاسخِ کاملِ مدلِ کند هدر می‌رود
+    # (اندازه‌گیری: vyceai.com بدون stream ⇒ ۵۲۴ بعد از ۱۲۵ ثانیه؛ با stream ⇒ پاسخِ کامل
+    # در ۱۱۰ ثانیه با JSONِ درست). اگر پروایدر جریان را نپذیرفت ⇒ یک‌بار بدون stream.
+    sbody = dict(body); sbody["stream"] = True
+    skip4 = (400, 405, 415, 422)          # خطای درخواست ⇒ تکرارِ جریانی فایده ندارد
+    skip = tuple(sorted(set(skip4) | ({404} if fallback else set())))
+    r = await _post_retry(url, skip_status=skip, headers=headers, json=sbody)
+    if r.status_code == 404 and fallback:
+        r = await _post_retry(base + "/v1/chat/completions", skip_status=skip, headers=headers, json=sbody)
+    if r.status_code in skip4:
+        log.warning("ai provider rejected streaming — retrying without stream")
+        r = await _post_retry(url, skip_status=skip, headers=headers, json=body)
+        if r.status_code == 404 and fallback:
+            r = await _post_retry(base + "/v1/chat/completions", skip_status=skip, headers=headers, json=body)
     j = _provider_json(r)
     return _openai_content(j), _usage_dict(j.get("usage"), "prompt_tokens", "completion_tokens")
 
@@ -484,22 +506,23 @@ async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, 
     # مسیرِ تستِ مدلِ شخصی هم از همین دروازه رد می‌شود (پیش‌تر هزینهٔ آن سقف نداشت).
     if owner_id is not None and not ai_claim(owner_id):
         log.warning("AI daily cap reached user=%s", owner_id); return None, None, "ai_limit"
-    personal = [m for m in list_models(active_only=True, owner_id=owner_id) if _model_ready(m)] if owner_id else []
+    personal_all = [m for m in list_models(active_only=True, owner_id=owner_id)] if owner_id else []
+    personal = [m for m in personal_all if _model_ready(m)]
     if selected_id is not None:
         selected = get_model(selected_id)
         if not selected or selected["owner_id"] != owner_id or owner_id is None:
             return None, None, "ai_none"
         personal = [selected] + [m for m in personal if m["id"] != selected_id]
-    shared = [m for m in list_models(active_only=True) if _model_ready(m)]
+    shared_all = list_models(active_only=True)
+    shared = [m for m in shared_all if _model_ready(m)]
     test_id = await arun(gget, "test_model_id")
     test = [m for m in shared if m["id"] == test_id]
     shared = [m for m in shared if m["id"] != test_id]
     if not personal and not shared and not test:
         # مدل هست ولی همه در backoff ⇒ خطای «موقت» (نه «بدون مدل»): کاربر باید بداند
         # سرویس بعداً برمی‌گردد، نه اینکه پیکربندی خراب است.
-        try: any_model = bool(list_models(active_only=True))
-        except Exception: any_model = False
-        if any_model:
+        # (دامنهٔ مدل‌ها باید همانِ این کاربر باشد: مدلِ شخصیِ خودش + مدل‌های عمومی)
+        if personal_all or shared_all:
             log.warning("every AI model is in backoff — no provider call made")
             return None, None, "ai_busy"
     return await _try_models([("personal", personal), ("test", test), ("public", shared)], system, user,

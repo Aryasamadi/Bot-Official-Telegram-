@@ -219,6 +219,36 @@ class FetchError(RuntimeError):
 CREDENTIAL_HEADERS = frozenset({"authorization", "x-api-key", "apikey", "cookie", "proxy-authorization"})
 
 
+def _sse_to_json(body_text):
+    """پاسخِ SSE (‎stream=true‎) ⇒ یک پاسخِ JSON معادل (مثل حالتِ non-stream).
+
+    چرا؟ لبه‌هایی مثل Cloudflare اگر *شروع*ِ پاسخ در ۱۰۰ ثانیه نرسد، خطای ۵۲۴ می‌دهند
+    (پاسخِ مدلِ کند بعد از آن قطع می‌شود). با جریان، اولین قطعه زود می‌رسد و پاسخِ
+    کامل جمع می‌شود ⇒ نه ۵۲۴ و نه قطعِ ناقص."""
+    content = []; finish = None; usage = None; role = None
+    for line in str(body_text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"): continue
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]": continue
+        try: d = json.loads(payload)
+        except Exception: continue
+        if not isinstance(d, dict): continue
+        if d.get("usage"): usage = d.get("usage")
+        for ch in (d.get("choices") or []):
+            if not isinstance(ch, dict): continue
+            if ch.get("finish_reason"): finish = ch.get("finish_reason")
+            delta = ch.get("delta") or ch.get("message") or {}
+            if not isinstance(delta, dict): continue
+            if delta.get("role"): role = delta.get("role")
+            piece = delta.get("content")
+            if isinstance(piece, str): content.append(piece)
+            elif isinstance(piece, list):
+                content.extend(p.get("text", "") for p in piece if isinstance(p, dict) and isinstance(p.get("text"), str))
+    return {"choices": [{"index": 0, "message": {"role": role or "assistant", "content": "".join(content)},
+                          "finish_reason": finish or "stop"}], "usage": usage}
+
+
 async def fetch_post(url, *, headers=None, timeout=None, max_redirects=5, total_timeout=None, **kw):
     """POST امن به یک میزبانِ **کاربر-پیکربندی‌شده** (پروایدرهای AI).
 
@@ -232,20 +262,39 @@ async def fetch_post(url, *, headers=None, timeout=None, max_redirects=5, total_
 
     ``total_timeout``: سقفِ زمانیِ کلِ درخواست. پیش‌تر همیشه ``FETCH_TOTAL_SEC`` (بودجهٔ
     خواندنِ منبع) بود و همان روی درخواستِ AI هم اعمال می‌شد ⇒ یک مدلِ سالمِ ولی کند،
-    خطای ۵۰۴ِ کاذب می‌داد. پروایدرِ AI سقفِ خودش را می‌دهد."""
+    خطای ۵۰۴ِ کاذب می‌داد. پروایدرِ AI سقفِ خودش را می‌دهد.
+
+    بدنه به‌صورتِ *جریانی* خوانده می‌شود (‎stream‎ روی سمتِ کلاینت) تا اولین بایتِ
+    پاسخ همان لحظه برسد؛ این برای لبه‌هایی مثل Cloudflare (خطای ۵۲۴) حیاتی است.
+    اگر درخواست ``stream=true`` خواسته باشد و پاسخ SSE باشد، به JSON معادل تبدیل
+    می‌شود تا بقیهٔ کدِ پروایدرها بدونِ تغییر کار کند."""
     current = str(url)
     headers = dict(headers or {})
     timeout = timeout if timeout is not None else httpx.Timeout(60, connect=10)
     total = float(total_timeout) if total_timeout is not None else float(config.FETCH_TOTAL_SEC)
     total = max(1.0, total)
     req_kw = dict(kw); req_kw.pop("follow_redirects", None)
+    wants_stream = bool(isinstance(req_kw.get("json"), dict) and req_kw["json"].get("stream"))
     for _ in range(max(1, int(max_redirects))):
         if not await egress_url_strict(current):
             raise FetchError(403, current)
         previous_host = (urlparse(current).hostname or "").lower().rstrip(".")
         try:
             async with asyncio.timeout(total):
-                r = await http().post(current, headers=headers, timeout=timeout, follow_redirects=False, **req_kw)
+                async with http().stream("POST", current, headers=headers, timeout=timeout, follow_redirects=False, **req_kw) as resp:
+                    raw = bytearray()
+                    async for chunk in resp.aiter_bytes(65536):
+                        raw.extend(chunk)
+                        if len(raw) > config.MAX_PAGE_BYTES * 8: raise FetchError(413, current)
+                    body = bytes(raw)
+                    ctype = (resp.headers.get("content-type") or "").lower()
+                    if wants_stream and "text/event-stream" in ctype:
+                        try: merged = _sse_to_json(body.decode("utf-8", "replace"))
+                        except Exception: merged = None
+                        if merged is not None:
+                            r = httpx.Response(resp.status_code, headers=resp.headers, json=merged, request=resp.request)
+                            return r
+                    r = httpx.Response(resp.status_code, headers=resp.headers, content=body, request=resp.request)
         except TimeoutError as e:
             raise FetchError(504, current) from e
         if r.status_code in (301, 302, 303, 307, 308):

@@ -161,7 +161,7 @@ def preflight(check=False):
                             ("AI_ARTICLE_TIME_BUDGET", config.AI_ARTICLE_TIME_BUDGET, 30, 1800), ("AI_MAX_MODEL_ATTEMPTS", config.AI_MAX_MODEL_ATTEMPTS, 1, 10),
                             ("AI_CONTENT_RETRY_MODELS", config.AI_CONTENT_RETRY_MODELS, 0, 5), ("AI_CACHE_TTL_DAYS", config.AI_CACHE_TTL_DAYS, 0, 365),
                             ("AI_PROVIDER_TIMEOUT_SEC", config.AI_PROVIDER_TIMEOUT_SEC, 10, 600), ("AI_TRANSIENT_RETRIES", config.AI_TRANSIENT_RETRIES, 0, 5),
-                            ("AI_RETRY_BASE_SEC", config.AI_RETRY_BASE_SEC, 0.1, 60.0),
+                            ("AI_RETRY_BASE_SEC", config.AI_RETRY_BASE_SEC, 0.1, 60.0), ("AI_RETRY_MAX_DELAY_SEC", config.AI_RETRY_MAX_DELAY_SEC, 1.0, 300.0),
                             ("MODEL_TRANSIENT_BACKOFF_MIN", config.MODEL_TRANSIENT_BACKOFF_MIN, 1, 60),
                             ("MODEL_TRANSIENT_BACKOFF_MAX_MIN", config.MODEL_TRANSIENT_BACKOFF_MAX_MIN, 1, 120),
                             ("AI_DAILY_FREE", config.AI_DAILY_FREE, 1, 100000), ("AI_DAILY_PAID", config.AI_DAILY_PAID, 1, 1000000),

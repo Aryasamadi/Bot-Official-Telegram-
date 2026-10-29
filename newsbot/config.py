@@ -121,7 +121,7 @@ POST_LIMIT_MAX = 900
 AI_INPUT_TEXT_CHARS = _env_int("AI_INPUT_TEXT_CHARS", 8000)
 AI_MERGE_MAX_DEPTH = _env_int("AI_MERGE_MAX_DEPTH", 3)
 AI_MAX_CALLS_PER_ARTICLE = _env_int("AI_MAX_CALLS_PER_ARTICLE", 12)
-AI_ARTICLE_TIME_BUDGET = _env_int("AI_ARTICLE_TIME_BUDGET", 240)
+AI_ARTICLE_TIME_BUDGET = _env_int("AI_ARTICLE_TIME_BUDGET", 300)
 AI_MAX_MODEL_ATTEMPTS = _env_int("AI_MAX_MODEL_ATTEMPTS", 6)
 AI_CONTENT_RETRY_MODELS = _env_int("AI_CONTENT_RETRY_MODELS", 1)
 AI_CACHE_TTL_DAYS = _env_int("AI_CACHE_TTL_DAYS", 14)
@@ -134,7 +134,7 @@ MODEL_PROBE_BATCH = _env_int("MODEL_PROBE_BATCH", 3)
 # ── P0: پایداریِ مسیرِ تولید با AI ──────────────────────────────────────────────
 # سقفِ زمانیِ کلِ یک درخواستِ پروایدر (بودجهٔ fetchِ منابع نباید آن را قطع کند:
 # پیش‌تر FETCH_TOTAL_SEC=60 روی درخواستِ AI هم اعمال می‌شد ⇒ خطای 504ِ کاذب)
-AI_PROVIDER_TIMEOUT_SEC = _env_int("AI_PROVIDER_TIMEOUT_SEC", 180, 10, 600)
+AI_PROVIDER_TIMEOUT_SEC = _env_int("AI_PROVIDER_TIMEOUT_SEC", 240, 10, 900)
 # تلاشِ دوباره برای خطاهای گذرا (۴۲۹/۵xx/timeout) — خطاهای دائمی هرگز تکرار نمی‌شوند
 AI_TRANSIENT_RETRIES = _env_int("AI_TRANSIENT_RETRIES", 2, 0, 5)
 AI_RETRY_BASE_SEC = _env_float("AI_RETRY_BASE_SEC", 2.0, 0.1, 60.0)

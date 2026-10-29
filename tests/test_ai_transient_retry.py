@@ -220,6 +220,19 @@ def test_provider_request_uses_streaming_and_falls_back_when_refused(monkeypatch
     assert "stream" not in bodies[-1], "درخواستِ دوم باید بدونِ stream باشد"
 
 
+def test_http_client_is_rebuilt_for_a_new_event_loop():
+    """کلاینتِ مشترکِ HTTP به حلقهٔ رویداد گره خورده است؛ با حلقهٔ تازه باید بازسازی شود
+    (وگرنه httpx خطای «attached to a different loop» می‌دهد و درخواستِ AI می‌میرد)."""
+    from newsbot import net_http
+
+    async def _first():
+        return net_http.http()
+    c1 = asyncio.run(_first())
+    c2 = asyncio.run(_first())
+    assert c1 is not c2, "کلاینتِ متعلق به حلقهٔ دیگر نباید دوباره استفاده شود"
+    assert not c2.is_closed
+
+
 def test_transient_retry_is_bounded(monkeypatch, model):
     """تعدادِ تلاشِ دوباره سقف دارد (بی‌نهایت تکرار ممنوع)."""
     monkeypatch.setattr(config, "AI_TRANSIENT_RETRIES", 2)

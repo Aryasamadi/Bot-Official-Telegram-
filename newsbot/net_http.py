@@ -17,25 +17,32 @@ from newsbot.timeutils import now_iso
 from newsbot.concurrency import FETCH_SEM
 
 _http = None
+_http_loop = None
 UA_BROWSER = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 UA_FEED = "Mozilla/5.0 (compatible; NewsBot/3.0; +https://t.me) FeedFetcher"
 
 def http():
-    global _http
+    global _http, _http_loop
     # کلاینتِ بسته (مثلاً پس از یک خطای شبکه یا restartِ حلقه) دوباره ساخته می‌شود؛
     # وگرنه همهٔ درخواست‌های AI با «client has been closed» می‌مردند.
-    if _http is None or getattr(_http, "is_closed", False):
+    # کلاینتِ متصل به حلقهٔ رویدادِ دیگر هم بازسازی می‌شود؛ وگرنه httpx خطای
+    # «attached to a different loop» می‌دهد و آن درخواستِ AI می‌میرد.
+    try: loop = asyncio.get_running_loop()
+    except RuntimeError: loop = None
+    if _http is None or getattr(_http, "is_closed", False) or (loop is not None and _http_loop is not None and _http_loop is not loop):
         _http = httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(25, connect=10), limits=httpx.Limits(max_connections=config.FETCH_CONCURRENCY + 8, max_keepalive_connections=8),
                                   headers={"User-Agent": UA_BROWSER, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "fa,en;q=0.8", "Accept-Encoding": "identity"})
+        _http_loop = loop
     return _http
 
 async def close_http():
     """بستن تمیز کلاینت در shutdown (فایل ۳۵: app.py)."""
-    global _http
+    global _http, _http_loop
     if _http is not None:
         try: await _http.aclose()
         except Exception: pass
-        _http = None
+    _http = None
+    _http_loop = None
 
 _PRIVATE_HOSTS = ("localhost", "metadata.google.internal")
 

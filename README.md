@@ -225,10 +225,10 @@ INFO | در حال اجرا…
 | `AI_CONCURRENCY` | `3` | تعداد فراخوانی هم‌زمان |
 | `AI_INPUT_TEXT_CHARS` | `8000` | متن ورودی به مدل |
 | `AI_MAX_CALLS_PER_ARTICLE` | `12` | سقف فراخوانی برای هر مقاله |
-| `AI_ARTICLE_TIME_BUDGET` | `240` | بودجهٔ زمانی هر مقاله (ثانیه) |
+| `AI_ARTICLE_TIME_BUDGET` | `300` | بودجهٔ زمانی هر مقاله (ثانیه) |
 | `AI_MAX_MODEL_ATTEMPTS` | `6` | سقف تلاش روی مدل‌ها |
 | `AI_CACHE_TTL_DAYS` | `14` | عمر کش پاسخ |
-| `AI_PROVIDER_TIMEOUT_SEC` | `180` | سقف زمانی یک درخواست پروایدر (مستقل از بودجهٔ fetch منابع) |
+| `AI_PROVIDER_TIMEOUT_SEC` | `240` | سقف زمانی یک درخواست پروایدر (مستقل از بودجهٔ fetch منابع) |
 | `AI_TRANSIENT_RETRIES` | `2` | تلاش دوباره برای خطاهای گذرا (۴۲۹/۵xx/timeout) |
 | `AI_RETRY_BASE_SEC` | `2` | تأخیر پایهٔ تلاش دوباره (ثانیه) |
 | `AI_RETRY_MAX_DELAY_SEC` | `20` | سقف تأخیر هر تلاش دوباره (ثانیه) |

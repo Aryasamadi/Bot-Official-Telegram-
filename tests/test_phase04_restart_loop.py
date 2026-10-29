@@ -35,7 +35,7 @@ def test_iso_normalisation_is_chunked_and_resumable():
     body = src.split("def normalize_iso_columns", 1)[1].split("\ndef ", 1)[0]
     code = "\n".join(l for l in body.splitlines() if not l.strip().startswith(("#", '"', "'''")))
     # بسته‌ای، نه خواندنِ بی‌حدِ کلِ جدول: فرمِ صفحه‌بندی‌شده باید باشد
-    assert "IS NOT NULL AND rowid > ?" in code, "خواندن باید صفحه‌بندی‌شده باشد (rowid > ?)"
+    assert "AND {key} > ?" in code, "خواندن باید صفحه‌بندی‌شده باشد (کلید > ?)"
     assert 'IS NOT NULL"' not in code, "خواندنِ بی‌حدِ کلِ جدول نباید باقی بماند"
     assert "LIMIT ?" in code, "باید بسته‌ای (LIMIT) خوانده شود"
     assert "chunk=2000" in body, "اندازهٔ بسته باید صریح و محدود باشد"

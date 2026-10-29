@@ -28,16 +28,16 @@ _LOOP_GUARD_STRICT = False     # tests/dev can turn this on to fail fast on sync
 _JOURNAL_MODE = None
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT, name TEXT, role TEXT DEFAULT 'user', plan_id INTEGER, plan_expires TEXT, next_plan_id INTEGER, next_plan_days INTEGER, free_used INTEGER DEFAULT 0, banned INTEGER DEFAULT 0, lang TEXT, remind_key TEXT, premium INTEGER DEFAULT 0, created_at TEXT, last_seen TEXT);
-CREATE TABLE IF NOT EXISTS plans(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, name_en TEXT, days INTEGER, daily_posts INTEGER, max_sources INTEGER, max_channels INTEGER, daily_tests INTEGER, price TEXT DEFAULT '', price_en TEXT DEFAULT '', description TEXT DEFAULT '', description_en TEXT DEFAULT '', is_free INTEGER DEFAULT 0, active INTEGER DEFAULT 1, sort INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT, name TEXT, role TEXT DEFAULT 'user', plan_id INTEGER, plan_expires TEXT, next_plan_id INTEGER, next_plan_days INTEGER, free_used INTEGER DEFAULT 0, banned INTEGER DEFAULT 0, lang TEXT, remind_key TEXT, premium INTEGER DEFAULT 0, credit REAL DEFAULT 0, created_at TEXT, last_seen TEXT);
+CREATE TABLE IF NOT EXISTS plans(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, name_en TEXT, days INTEGER, daily_posts INTEGER, max_sources INTEGER, max_channels INTEGER, daily_tests INTEGER, price TEXT DEFAULT '', price_en TEXT DEFAULT '', price_num REAL DEFAULT 0, price_num_fa REAL DEFAULT 0, description TEXT DEFAULT '', description_en TEXT DEFAULT '', is_free INTEGER DEFAULT 0, active INTEGER DEFAULT 1, sort INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS discounts(code TEXT PRIMARY KEY, percent INTEGER, expires TEXT, max_uses INTEGER DEFAULT 0, used INTEGER DEFAULT 0, active INTEGER DEFAULT 1, created_at TEXT);
 CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, chat_id INTEGER, title TEXT, username TEXT, verified_by INTEGER, created_at TEXT, settings TEXT, original_admin_id INTEGER);
-CREATE TABLE IF NOT EXISTS sources(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, channel_id INTEGER, url TEXT, feed_url TEXT, title TEXT DEFAULT '', active INTEGER DEFAULT 1, bot_active INTEGER DEFAULT 1, api_url TEXT, api_key TEXT, api_note TEXT DEFAULT '', etag TEXT, last_modified TEXT, last_fetch TEXT, fail_count INTEGER DEFAULT 0, found_total INTEGER DEFAULT 0, last_error TEXT);
+CREATE TABLE IF NOT EXISTS sources(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, channel_id INTEGER, url TEXT, feed_url TEXT, title TEXT DEFAULT '', active INTEGER DEFAULT 1, bot_active INTEGER DEFAULT 1, api_url TEXT, api_key TEXT, api_note TEXT DEFAULT '', etag TEXT, last_modified TEXT, last_fetch TEXT, fail_count INTEGER DEFAULT 0, found_total INTEGER DEFAULT 0, last_error TEXT, next_try_after TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS usage(admin_id INTEGER, day TEXT, posts INTEGER DEFAULT 0, tests INTEGER DEFAULT 0, ai INTEGER DEFAULT 0, PRIMARY KEY(admin_id, day));
-CREATE TABLE IF NOT EXISTS articles(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, channel_id INTEGER, hash TEXT, url TEXT, title TEXT, source_id INTEGER, published_at TEXT, created_at TEXT, status TEXT, reason TEXT, score REAL, category TEXT, post_html TEXT, full_html TEXT, media TEXT, links TEXT, model TEXT, UNIQUE(channel_id, hash));
+CREATE TABLE IF NOT EXISTS articles(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, channel_id INTEGER, hash TEXT, url TEXT, title TEXT, source_id INTEGER, published_at TEXT, created_at TEXT, status TEXT, reason TEXT, send_fails INTEGER DEFAULT 0, score REAL, category TEXT, post_html TEXT, full_html TEXT, media TEXT, links TEXT, model TEXT, UNIQUE(channel_id, hash));
 CREATE TABLE IF NOT EXISTS posted(channel_id INTEGER, hash TEXT, posted_at TEXT, PRIMARY KEY(channel_id, hash));
 CREATE TABLE IF NOT EXISTS ch_tokens(token TEXT PRIMARY KEY, channel_id INTEGER, issued_to INTEGER, issued_at TEXT, expires_at TEXT, used_at TEXT);
-CREATE TABLE IF NOT EXISTS ai_models(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, kind TEXT, base_url TEXT, api_key TEXT, model TEXT, priority INTEGER DEFAULT 10, active INTEGER DEFAULT 1, status TEXT DEFAULT 'ok', fail_count INTEGER DEFAULT 0, last_error TEXT, last_ok TEXT, last_fail TEXT, ok_count INTEGER DEFAULT 0, temperature REAL DEFAULT 0.5, max_tokens INTEGER DEFAULT 2500, owner_id INTEGER);
+CREATE TABLE IF NOT EXISTS ai_models(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, kind TEXT, base_url TEXT, api_key TEXT, model TEXT, priority INTEGER DEFAULT 10, active INTEGER DEFAULT 1, status TEXT DEFAULT 'ok', fail_count INTEGER DEFAULT 0, last_error TEXT, last_ok TEXT, last_fail TEXT, next_try_after TEXT DEFAULT '', ok_count INTEGER DEFAULT 0, temperature REAL DEFAULT 0.5, max_tokens INTEGER DEFAULT 2500, owner_id INTEGER);
 CREATE TABLE IF NOT EXISTS deeplinks(key TEXT PRIMARY KEY, admin_id INTEGER, created_at TEXT, local_json TEXT);
 CREATE TABLE IF NOT EXISTS kv_cache(key TEXT PRIMARY KEY, value TEXT, cached_at TEXT);
 CREATE TABLE IF NOT EXISTS pub_journal(article_id INTEGER PRIMARY KEY, journal TEXT, updated_at TEXT);
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS support(user_id INTEGER PRIMARY KEY, open INTEGER DEFAULT 0, opened_at TEXT);
 CREATE TABLE IF NOT EXISTS support_map(msg_id INTEGER PRIMARY KEY, user_id INTEGER, ts TEXT);
 CREATE TABLE IF NOT EXISTS plan_changes(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, from_plan INTEGER, kind TEXT, credit_used REAL DEFAULT 0, surplus REAL DEFAULT 0, paid REAL, rem_days REAL, ref TEXT, ts TEXT);
-CREATE TABLE IF NOT EXISTS pay_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, status TEXT DEFAULT 'pending', created_at TEXT, receipt_chat INTEGER, receipt_msg INTEGER, note TEXT, decided_at TEXT, discount TEXT, final_price TEXT, cur TEXT DEFAULT '', decided_by INTEGER, notified_at TEXT, super_notified_at TEXT, notify_attempts INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS pay_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, status TEXT DEFAULT 'pending', created_at TEXT, receipt_chat INTEGER, receipt_msg INTEGER, note TEXT, pc TEXT, claimed_at TEXT, applied_at TEXT, decided_at TEXT, discount TEXT, final_price TEXT, cur TEXT DEFAULT '', decided_by INTEGER, notified_at TEXT, super_notified_at TEXT, notify_attempts INTEGER DEFAULT 0);
 -- PH-03/OBS-011: صفِ پایدارِ اعلان‌های مدیر کلان. پیامی که تحویل نشد اینجا می‌ماند،
 -- زمان‌بند دوباره تلاش می‌کند و اگر از سقفِ تلاش گذشت به «dead-letter» می‌رود (نه حذف).
 CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT DEFAULT 'super', text TEXT, payload TEXT, attempts INTEGER DEFAULT 0, next_attempt_at REAL DEFAULT 0, delivered_at TEXT, dead INTEGER DEFAULT 0, last_error TEXT DEFAULT '', created_at TEXT);
@@ -274,13 +274,59 @@ def _is_dup_col_error(e):
     """«ستون از قبل هست» — متنِ SQLite و متنِ JSON-شدهٔ D1 را هر دو می‌شناسد."""
     return "duplicate column name" in str(e).lower()
 
+def _missing_migration_columns(conn):
+    """ستون‌های MIGRATIONS که هنوز در جدولِ مربوطه وجود ندارند — [(tbl, col, decl), …]."""
+    have = {}
+    missing = []
+    for tbl, col, decl in MIGRATIONS:
+        if tbl not in have: have[tbl] = _table_cols(conn, tbl)
+        if col in have[tbl]: continue
+        missing.append((tbl, col, decl))
+    return missing
+
+def _apply_migrations_d1(conn):
+    """DB-02: مهاجرتِ ستون‌ها روی D1 در *یک batch اتمیک* (نه یک درخواست per ALTER).
+
+    batch شکست خورد ⇒ کل batch رول‌بک می‌شود ⇒ نیمه‌مهاجرت باقی نمی‌ماند. اگر خطا
+    «duplicate column name» باشد (نمونهٔ دیگری هم‌زمان همان ستون را ساخته) ⇒ دوباره
+    برنامه‌ریزی می‌کنیم و فقط ستون‌های واقعاً غایب را می‌فرستیم. اگر باز هم تکراری بود،
+    مسیرِ تک‌دستوره (که خطای «ستون تکراری» را تحمل می‌کند) ادامه می‌دهد تا یک ستونِ
+    مشکل‌دار، بقیهٔ مهاجرت را از کار نیندازد."""
+    missing = _missing_migration_columns(conn)
+    if not missing: return
+    for _ in range(2):
+        stmts = [(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}", ()) for tbl, col, decl in missing]
+        try:
+            _d1_batch(stmts, require_insert_id=False)
+            return
+        except sqlite3.Error as e:
+            if not _is_dup_col_error(e): raise
+            log.warning("migration: batch hit an existing column — re-planning (%s)", e)
+            missing = _missing_migration_columns(conn)
+            if not missing: return
+    have = {}
+    for tbl, col, decl in missing:
+        if tbl not in have: have[tbl] = _table_cols(conn, tbl)
+        if col in have[tbl]: continue
+        try:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
+            have[tbl].add(col)
+        except Exception as e:
+            if _is_dup_col_error(e):
+                log.warning("migration: column %s.%s already exists — skipped (%s)", tbl, col, e)
+                have[tbl].add(col); continue
+            raise
+
 def _apply_migrations(conn):
     """افزودنِ ستون‌های جاافتاده — در برابرِ ستونِ موجود و خطای هم‌زمان مقاوم (DB-27).
 
     دو لایهٔ دفاع، بدون حذفِ داده و بدون تغییرِ مخربِ دیتابیس:
       ۱) تشخیصِ درستِ ستون‌های موجود (_table_cols) ⇒ ADD COLUMN تکراری اصلاً صادر نمی‌شود؛
       ۲) اگر باز هم «duplicate column name» برسد (دو نمونهٔ هم‌زمان، یا بررسیِ کهنه)
-         ⇒ آن ستون «موجود» فرض می‌شود و مهاجرت ادامه می‌یابد."""
+         ⇒ آن ستون «موجود» فرض می‌شود و مهاجرت ادامه می‌یابد.
+    DB-02: روی D1 همهٔ ALTERها در یک batch اتمیک می‌روند (شکست ⇒ رول‌بکِ کامل)."""
+    if isinstance(conn, D1Conn):
+        return _apply_migrations_d1(conn)
     have = {}
     for tbl, col, decl in MIGRATIONS:
         if tbl not in have: have[tbl] = _table_cols(conn, tbl)
@@ -306,33 +352,34 @@ def _d1_url():
     return f"https://api.cloudflare.com/client/v4/accounts/{config.CF_ACCOUNT_ID}/d1/database/{config.CF_D1_DATABASE_ID}/query"
 def _d1_headers(): return {"Authorization": f"Bearer {config.CF_D1_TOKEN}"}
 
-def _d1_batch(stmts):
+def _d1_batch(stmts, require_insert_id=True):
     """اجرای چند دستور در یک درخواست D1 به‌صورت *اتمیک* (batch API).
     D1 تراکنش تعاملی ندارد، ولی batch را «یک تراکنش» می‌بیند: اگر هر دستور شکست بخورد
     کل batch رول‌بک می‌شود. بنابراین این تابع معادل واقعی BEGIN IMMEDIATE…COMMIT روی D1 است.
     stmts: فهرست [(sql, params), …] — ترتیب دقیقاً حفظ می‌شود.
-    خروجی: فهرست D1Cur هم‌ترتیب با ورودی (lastrowid برای INSERTها پر می‌شود)."""
+    خروجی: فهرست D1Cur هم‌ترتیب با ورودی (lastrowid برای INSERTها پر می‌شود).
+
+    DB-001: شناسهٔ درج **فقط** از ``meta.last_row_id`` خوانده می‌شود. درخواستِ جداگانهٔ
+    ``SELECT last_insert_rowid()`` روی REST بی‌ربط است (هر درخواست session جدید دارد) و
+    مقدارِ ساختگی می‌داد ⇒ آن fallback حذف شد. اگر D1 شناسه را نداد، به‌جای ساختنِ عددِ
+    دروغین خطا می‌دهیم (``require_insert_id``)، مگر مسیری که اصلاً شناسه را مصرف نمی‌کند."""
     payload = [{"sql": s.strip(), "params": list(p or ())} for s, p in stmts]
     r = _d1_client().post(_d1_url(), json={"batch": payload}, headers=_d1_headers())
     if r.status_code >= 400: raise sqlite3.OperationalError(f"D1 HTTP {r.status_code}: {r.text[:200]}")
     j = r.json()
     if not j.get("success"): raise sqlite3.OperationalError(f"D1 batch error: {str(j.get('errors'))[:200]}")
     results = j.get("result") or []
-    curs, inserts = [], []
+    curs = []
     for i, res in enumerate(results):
         rows = [D1Row(x) for x in (res.get("results") or [])]
-        changes = int((res.get("meta") or {}).get("changes") or 0)
-        lid = (res.get("meta") or {}).get("last_row_id")
+        meta = res.get("meta") or {}
+        changes = int(meta.get("changes") or 0)
+        lid = meta.get("last_row_id")
         curs.append(D1Cur(rows, rowcount=changes, lastrowid=lid))
-        if str(payload[i]["sql"]).upper().startswith("INSERT"): inserts.append((i, i))
-    # اگر D1 شناسهٔ درج را برنگرداند، برای هر INSERT جداگانه last_insert_rowid() خوانده می‌شود.
-    for i, _ in inserts:
-        if curs[i].lastrowid is None:
-            try:
-                r2 = _d1_client().post(_d1_url(), json={"sql": "SELECT last_insert_rowid() AS lid", "params": []}, headers=_d1_headers())
-                curs[i].lastrowid = (r2.json().get("result") or [{}])[0].get("results", [{}])[0].get("lid")
-            except Exception:
-                pass
+        if (require_insert_id and changes > 0 and not lid
+                and str(payload[i]["sql"]).upper().startswith("INSERT")):
+            raise sqlite3.OperationalError(
+                "D1 batch: INSERT without meta.last_row_id — the insert id cannot be fabricated")
     return curs
 
 class D1Row:
@@ -343,12 +390,23 @@ class D1Row:
     def __getitem__(self, k): return self._d[k] if not isinstance(k, int) else list(self._d.values())[k]
     def __contains__(self, k): return k in self._d
     def get(self, k, default=None): return self._d.get(k, default)
+    # پاریتی با sqlite3.Row: طول، پیمایشِ مقدارها و تبدیل به tuple/list
+    def __len__(self): return len(self._d)
+    def __iter__(self): return iter(list(self._d.values()))
 
 class D1Cur:
     """کرسر سازگار با sqlite3: fetchone پیشروی می‌کند (fetchall باقی‌مانده را برمی‌گرداند)."""
     def __init__(self, rows, rowcount=0, lastrowid=None):
         self._rows = rows; self._idx = 0
         self.rowcount = rowcount; self.lastrowid = lastrowid
+        self.arraysize = 1
+    @property
+    def description(self):
+        """مثل sqlite3: فهرستِ ستون‌ها — (name, type, …). از نامِ ستون‌های اولین سطر."""
+        if not self._rows: return None
+        try: names = self._rows[0].keys()
+        except Exception: return None
+        return [(n, None, None, None, None, None, None) for n in names]
     def fetchone(self):
         if self._idx >= len(self._rows): return None
         row = self._rows[self._idx]
@@ -358,6 +416,22 @@ class D1Cur:
         rows = self._rows[self._idx:]
         self._idx = len(self._rows)
         return list(rows)
+    def fetchmany(self, size=1):
+        """مثل sqlite3: حداکثر size سطرِ بعدی (پیش‌فرض ۱)."""
+        try: size = int(size)
+        except (TypeError, ValueError): size = 1
+        if size <= 0: return []
+        rows = self._rows[self._idx:self._idx + size]
+        self._idx += len(rows)
+        return list(rows)
+    def __iter__(self):
+        while True:
+            row = self.fetchone()
+            if row is None: return
+            yield row
+    def close(self): self._idx = len(self._rows)
+    def __enter__(self): return self
+    def __exit__(self, *a): self.close(); return False
 
 class D1Conn:
     """کانکشن D1: هر execute یک درخواست REST است؛ commit/rollback no-op (auto-commit).
@@ -390,6 +464,14 @@ class D1Conn:
         for stmt in [x.strip() for x in script.split(";") if x.strip()]:
             self.execute(stmt)
         return self
+    def executemany(self, sql, seq_of_params):
+        """DB-04: اجرای یک دستور برای چند ردیف — روی D1 یک batch اتمیک (نه یک درخواست per ردیف).
+        نبودِ این متد باعث می‌شد normalize_iso_columns روی D1 با AttributeError بمیرد و
+        کلِ کانُنیکال‌سازی (و پرچمِ «انجام شد») نیمه‌کاره بماند."""
+        stmts = [(sql.strip(), tuple(p or ())) for p in seq_of_params]
+        if not stmts: return D1Cur([], 0, None)
+        _d1_batch(stmts, require_insert_id=False)
+        return D1Cur([], 0, None)
     def commit(self): pass
     def rollback(self): pass
     def close(self): pass
@@ -411,9 +493,14 @@ class D1BatchConn:
             return self._base.execute(sql, params)   # خواندن فوری (بدون اثر جانبی)
         self._stmts.append((s, params))
         return D1Cur([], 0, None)
+    def executemany(self, sql, seq_of_params):
+        for p in seq_of_params: self._stmts.append((sql.strip(), tuple(p or ())))
+        return D1Cur([], 0, None)
     def flush(self):
         if not self._stmts: return
-        _d1_batch(self._stmts); self._stmts = []
+        # شناسهٔ درج در این مسیر مصرف نمی‌شود ⇒ نبودِ meta.last_row_id نباید کلِ تراکنش را
+        # از بین ببرد (DB-001: هرگز شناسهٔ ساختگی ساخته نمی‌شود).
+        _d1_batch(self._stmts, require_insert_id=False); self._stmts = []
     def commit(self): pass
     def rollback(self): self._stmts = []
     def close(self): pass
@@ -493,6 +580,24 @@ _ISO_COLS = [("users", "created_at"), ("users", "last_seen"), ("users", "plan_ex
              ("kv_cache", "cached_at"), ("ai_cache", "created_at"), ("dedup", "ts"),
              ("support_map", "ts"), ("pay_requests", "created_at"), ("pay_requests", "decided_at"),
              ("pay_requests", "claimed_at"), ("referrals", "created_at"), ("pub_journal", "updated_at")]
+# DB-04: کلیدِ «خنثی از بک‌اند» — به‌جای rowid (که روی D1 تضمین‌شده نیست) از کلیدِ یکتای
+# واقعیِ جدول استفاده می‌شود. جدول‌هایی که کلیدِ مرکّب دارند (posted، dedup) به rowid
+# برمی‌گردند چون rowid آن‌ها معادلِ همان کلیدِ مرکّب است.
+_ISO_KEYS = {"users": "id", "channels": "id", "articles": "id", "pay_requests": "id",
+             "referrals": "id", "pub_journal": "article_id", "support_map": "msg_id",
+             "ch_tokens": "token", "deeplinks": "key", "kv_cache": "key", "ai_cache": "key"}
+
+def _iso_key_for(conn, tbl):
+    """کلیدِ خنثی از بک‌اند برای صفحه‌بندی — کلیدِ واقعیِ جدول، وگرنه rowid.
+
+    اگر جدولِ خیلی قدیمی آن کلید را نداشته باشد ⇒ rowid (که همیشه هست) استفاده می‌شود."""
+    key = _ISO_KEYS.get(tbl)
+    if not key: return "rowid"
+    try:
+        cols = _table_cols(conn, tbl)
+    except Exception:
+        return "rowid"
+    return key if key in cols else "rowid"
 
 def normalize_iso_columns(conn, chunk=2000):
     """DB-14: یکسان‌سازی یک‌بارهٔ قالب زمانی ستون‌های مقایسه‌ای (UTC + کسر ثانیهٔ ثابت).
@@ -517,14 +622,22 @@ def normalize_iso_columns(conn, chunk=2000):
     failed = []
     for tbl, col in _ISO_COLS:
         marker = f"iso_norm_v1:{tbl}.{col}"
+        key = _iso_key_for(conn, tbl)
         try:
             if conn.execute("SELECT value FROM meta WHERE key=?", (marker,)).fetchone():
                 continue                      # این ستون قبلاً کامل شده ⇒ ادامه بده، تکرار نکن
-            last = 0
+            last = None
             while True:
-                rows = conn.execute(
-                    f"SELECT rowid AS _rid, {col} AS _v FROM {tbl} "
-                    f"WHERE {col} IS NOT NULL AND rowid > ? ORDER BY rowid LIMIT ?", (last, chunk)).fetchall()
+                if last is None:
+                    rows = conn.execute(
+                        f"SELECT {key} AS _rid, {col} AS _v FROM {tbl} "
+                        f"WHERE {col} IS NOT NULL AND {key} IS NOT NULL ORDER BY {key} LIMIT ?",
+                        (chunk,)).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"SELECT {key} AS _rid, {col} AS _v FROM {tbl} "
+                        f"WHERE {col} IS NOT NULL AND {key} IS NOT NULL AND {key} > ? "
+                        f"ORDER BY {key} LIMIT ?", (last, chunk)).fetchall()
                 if not rows: break
                 upd = []
                 for r in rows:
@@ -536,7 +649,7 @@ def normalize_iso_columns(conn, chunk=2000):
                     except (TypeError, ValueError):
                         continue
                 if upd:
-                    conn.executemany(f"UPDATE {tbl} SET {col}=? WHERE rowid=?", upd)
+                    conn.executemany(f"UPDATE {tbl} SET {col}=? WHERE {key}=?", upd)
                 last = rows[-1]["_rid"]
             # checkpoint این ستون ⇒ اگر پروسه کشته شود، همین ستون دوباره کار نمی‌شود
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (marker, "1"))
@@ -557,6 +670,28 @@ def normalize_iso_columns(conn, chunk=2000):
     if changed: log.info("ISO canonicalization: %d value(s) rewritten", changed)
     return changed
 
+def _legacy_wallet_rows(conn):
+    """PH-01: موجودیِ legacy که باید به کیف پول منتقل شود — [(user_id, amount), …].
+    ``None`` یعنی «قبلاً انجام شده» (کلیدِ meta.legacy_wallet_v1 هست) ⇒ کاری نکن."""
+    try:
+        if conn.execute("SELECT value FROM meta WHERE key='legacy_wallet_v1'").fetchone():
+            return None
+    except sqlite3.Error:
+        return None
+    try:
+        rows = conn.execute("SELECT id, COALESCE(credit,0) AS c FROM users WHERE COALESCE(credit,0) <> 0").fetchall()
+    except sqlite3.Error:
+        rows = []
+    out = []
+    for r in rows:
+        try:
+            amt = round(float(r["c"] or 0), 2)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if amt:
+            out.append((r["id"], amt))
+    return out
+
 def _migrate_legacy_credit(conn):
     """PH-01/Q-1c — یک‌بار برای همیشه: موجودیِ قدیمیِ ``users.credit`` (بدون واحد) به سطلِ
     «legacy» منتقل می‌شود.
@@ -567,29 +702,16 @@ def _migrate_legacy_credit(conn):
     * **بدون تبدیل**: موجودی به «legacy» می‌رود؛ در برابرِ هیچ تعرفه‌ای قابل خرج نیست تا
       تخصیصِ دستیِ آن انجام شود (اسکریپتِ جداگانه و صریحاً مجاز).
     """
-    try:
-        if conn.execute("SELECT value FROM meta WHERE key='legacy_wallet_v1'").fetchone():
-            return 0
-    except sqlite3.Error:
-        return 0
+    rows = _legacy_wallet_rows(conn)
+    if rows is None: return 0
     n = 0
-    try:
-        rows = conn.execute("SELECT id, COALESCE(credit,0) AS c FROM users WHERE COALESCE(credit,0) <> 0").fetchall()
-    except sqlite3.Error:
-        rows = []
-    for r in rows:
-        try:
-            amt = round(float(r["c"] or 0), 2)
-        except (TypeError, ValueError):
-            amt = 0.0
-        if not amt:
-            continue
+    for uid, amt in rows:
         # «ست» می‌شود نه «افزوده» ⇒ اجرای دوباره هم بی‌اثر است (idempotent به‌خودِ‌خود،
-        # نه فقط به‌خاطرِ کلیدِ meta). چون users.credit دیگر نوشته نمی‌شود، مقدارِ آن
+        # نه فقط به‌خاطرِ کلیدِ meta). چون users.credit دیگز نوشته نمی‌شود، مقدارِ آن
         # هیچ‌وقت از مقدارِ منتقل‌شده تازه‌تر نمی‌شود.
         conn.execute("INSERT INTO wallet(user_id,cur,amount,updated_at) VALUES(?,?,?,?) "
                      "ON CONFLICT(user_id,cur) DO UPDATE SET amount=excluded.amount, updated_at=excluded.updated_at",
-                     (r["id"], "legacy", amt, now_iso()))
+                     (uid, "legacy", amt, now_iso()))
         n += 1
     conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('legacy_wallet_v1',?)", (str(n),))
     if n:
@@ -597,57 +719,142 @@ def _migrate_legacy_credit(conn):
     return n
 
 
+def _split_ddl(script):
+    """تفکیکِ اسکریپت DDL به (جدول‌ها، ایندکس‌ها) — ایندکس‌ها بعد از مهاجرت ساخته می‌شوند."""
+    tables, idxs = [], []
+    for s in [x.strip() for x in script.split(";") if x.strip()]:
+        if re.match(r"CREATE\s+(UNIQUE\s+)?INDEX", s, re.I): idxs.append(s)
+        else: tables.append(s)
+    return tables, idxs
+
+
+def _ensure_schema_d1(conn):
+    """DB-02/DB-03 — مهاجرتِ اسکیما روی D1 در فازهای *اتمیک* (batch).
+
+    D1 تراکنش تعاملی ندارد، ولی هر batch یک تراکنش است: شکستِ یک دستور ⇒ کل batch رول‌بک.
+    بخشی از کار نیاز به *خواندن* دارد (ستون‌های موجود، ردیف‌های تکراری، موجودیِ legacy)،
+    پس کلِ مهاجرت در یک batchِ واحد ممکن نیست؛ به‌جای آن «برنامه‌ریزی ⇒ اجرا» می‌شود:
+
+      A) جدول‌ها (+ جدولِ meta)                        — اتمیک
+      B) ستون‌های جاافتاده (ALTER TABLE … ADD COLUMN)   — اتمیک (با برنامه‌ریزیِ دوباره
+         در برابرِ «duplicate column name»ِ هم‌زمان)
+      C) ایندکس‌ها، trigger، مهاجرتِ ژورنال، ایندکسِ یکتا و نسخهٔ اسکیما — اتمیک
+
+    هر فاز «همه یا هیچ» است و کلِ توالی idempotent است ⇒ نیمه‌مهاجرتِ باقی‌مانده در
+    استارتاپِ بعدی ادامه پیدا می‌کند و «اسکیمای نیمه‌کاره» دیده نمی‌شود (DB-02)."""
+    tbl_stmts, sch_idx = _split_ddl(SCHEMA)
+    db_idx = [x.strip() for x in DB_INDEXES.split(";") if x.strip()]
+    # ── فاز A: جدول‌ها ──
+    _d1_batch([(s, ()) for s in tbl_stmts], require_insert_id=False)
+    _d1_batch([("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)", ())],
+              require_insert_id=False)
+    _sv = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+    _sv = str(_sv["value"]).strip() if _sv else ""
+    if _sv.isdigit() and int(_sv) > SCHEMA_VERSION:   # اجرای بیلد قدیمی روی دیتابیس جدیدتر ممنوع
+        log.error("DB schema_version=%s newer than code schema_version=%s — downgrade refused", _sv, SCHEMA_VERSION)
+        raise SystemExit(f"database schema_version {_sv} is newer than this build ({SCHEMA_VERSION}); run the newer build or restore a backup")
+    # ── فاز B: ستون‌های جاافتاده (اتمیک) ──
+    _apply_migrations(conn)
+    # ── خواندنِ دادهٔ لازم برای فاز C ──
+    legacy = _legacy_wallet_rows(conn)
+    dups, idx_stmts = [], []
+    for label, check_sql, create_sql in UNIQUE_INDEXES:
+        try:
+            if conn.execute(check_sql).fetchone():
+                log.warning("unique index %s skipped: existing duplicate rows", label); dups.append(label)
+            else:
+                idx_stmts.append(create_sql)
+        except sqlite3.Error as e:
+            log.warning("unique index %s creation skipped: %s", label, e); dups.append(f"{label}: {e}")
+    # ── فاز C: ایندکس‌ها، trigger، ژورنال و نسخهٔ اسکیما (اتمیک) ──
+    stmts = [(s, ()) for s in sch_idx] + [(s, ()) for s in db_idx]
+    # DB-03: جایگزینیِ trigger در *همان* batch ⇒ هیچ پنجره‌ای بدون trigger وجود ندارد
+    # و شکستِ CREATE هم triggerِ قبلی را از بین نمی‌برد.
+    stmts.append(("DROP TRIGGER IF EXISTS trg_referral_credit_wallet", ()))
+    stmts.append((REFERRAL_CREDIT_TRIGGER.strip(), ()))
+    if legacy is not None:
+        for uid, amt in legacy:
+            stmts.append(("INSERT INTO wallet(user_id,cur,amount,updated_at) VALUES(?,?,?,?) "
+                          "ON CONFLICT(user_id,cur) DO UPDATE SET amount=excluded.amount, updated_at=excluded.updated_at",
+                          (uid, "legacy", amt, now_iso())))
+        stmts.append(("INSERT OR REPLACE INTO meta(key,value) VALUES('legacy_wallet_v1',?)", (str(len(legacy)),)))
+    stmts.append(("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),)))
+    # ژورنال انتشار از جدول عمومی settings به جدول اختصاصی منتقل می‌شود (مهاجرت افزایشی و غیرمخرب)
+    stmts.append(("INSERT OR REPLACE INTO pub_journal(article_id,journal,updated_at) SELECT CAST(substr(key,6) AS INTEGER), value, ? FROM settings WHERE key LIKE 'pubj:%'", (now_iso(),)))
+    stmts.append(("DELETE FROM settings WHERE key LIKE 'pubj:%'", ()))
+    stmts.append(("UPDATE channels SET original_admin_id=admin_id WHERE original_admin_id IS NULL", ()))
+    stmts += [(s, ()) for s in idx_stmts]
+    if dups:
+        stmts.append(("INSERT OR REPLACE INTO settings(key,value) VALUES('db_dup_warn',?)",
+                      (json.dumps(dups, ensure_ascii=False),)))
+    _d1_batch(stmts, require_insert_id=False)
+    try:   # جدول لاگ حذف‌شده؛ جدا از batchِ اصلی تا خطایِ احتمالی بقیهٔ مهاجرت را از بین نبرد
+        _d1_batch([("DROP TABLE IF EXISTS logs", ())], require_insert_id=False)
+    except sqlite3.Error as e:
+        log.warning("could not drop the legacy 'logs' table: %s", e)
+
+
+def _ensure_schema_sqlite(conn):
+    """DB-24: اسکیمای پایه + مهاجرتِ idempotent + نسخهٔ اسکیما — همه در *یک* تراکنش.
+    هر خطا ⇒ rollback کامل (بدون نیمه‌اسکیما)."""
+    if config.DB_BACKEND != "d1":
+        try: os.chmod(config.DB_FILE, 0o600)   # کلیدهای API متن ساده در این فایل‌اند؛ دسترسی فقط برای مالک
+        except Exception: pass
+        _ensure_wal_mode(conn)
+    atomic = config.DB_BACKEND != "d1"
+    if atomic: conn.execute("BEGIN IMMEDIATE")
+    try:
+        # DB-27 (رخداد تولید ۲۰۲۶-۱۰-۲۱): **ترتیب حیاتی است** —
+        #   ۱) جدول‌ها، ۲) مهاجرتِ افزایشیِ ستون‌ها، ۳) ایندکس‌ها.
+        # ``CREATE TABLE IF NOT EXISTS`` روی جدولِ موجود ستون اضافه نمی‌کند، پس روی یک
+        # دیتابیسِ قدیمی (مثلاً D1ِ تولید) ستونِ ``super_notified_at`` فقط با migration
+        # ساخته می‌شود. اگر ایندکس‌ها *قبل* از migration ساخته شوند، دستورِ
+        # ``CREATE INDEX … ON pay_requests(status, super_notified_at)`` با «no such
+        # column» می‌میرد (روی D1 کل batch رول‌بک می‌شود) ⇒ ``init_core()`` می‌افتد ⇒
+        # سرویس بالا نمی‌آید. این ترتیب همچنین «مهاجرت افزایشی» را تضمین می‌کند:
+        # هیچ داده‌ای حذف یا بازنشانی نمی‌شود و اجرای دوباره بی‌اثر است.
+        _exec_schema(conn, SCHEMA)
+        conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+        _sv = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        _sv = str(_sv["value"]).strip() if _sv else ""
+        if _sv.isdigit() and int(_sv) > SCHEMA_VERSION:   # اجرای بیلد قدیمی روی دیتابیس جدیدتر ممنوع
+            log.error("DB schema_version=%s newer than code schema_version=%s — downgrade refused", _sv, SCHEMA_VERSION)
+            raise SystemExit(f"database schema_version {_sv} is newer than this build ({SCHEMA_VERSION}); run the newer build or restore a backup")
+        _apply_migrations(conn)          # DB-27: مقاوم در برابر ستونِ موجود و خطای هم‌زمان
+        _exec_schema(conn, DB_INDEXES)   # ← بعد از مهاجرت: هر ستونِ وابسته حالا وجود دارد
+        # PHASE-04: کانُنیکال‌سازیِ زمان بیرون از تراکنشِ اسکیما اجرا می‌شود (پایینِ تابع)
+        # v8: trigger عوض شده (شارژ کیف پولِ واحد‌دار + رسید)؛ نسخه‌های قدیمی جایگزین می‌شوند
+        conn.execute("DROP TRIGGER IF EXISTS trg_referral_credit_wallet")
+        conn.execute(REFERRAL_CREDIT_TRIGGER)
+        # v8/PH-01: موجودیِ قدیمیِ بدونِ واحد ⇒ سطلِ منجمدِ «legacy» (یک‌بار، idempotent)
+        _migrate_legacy_credit(conn)
+        conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
+        # ژورنال انتشار از جدول عمومی settings به جدول اختصاصی منتقل می‌شود (مایگریشن افزایشی و غیرمخرب)
+        conn.execute("INSERT OR REPLACE INTO pub_journal(article_id,journal,updated_at) SELECT CAST(substr(key,6) AS INTEGER), value, ? FROM settings WHERE key LIKE 'pubj:%'", (now_iso(),))
+        conn.execute("DELETE FROM settings WHERE key LIKE 'pubj:%'")
+        conn.execute("UPDATE channels SET original_admin_id=admin_id WHERE original_admin_id IS NULL")
+        _ensure_unique_indexes(conn)
+        try: conn.execute("DROP TABLE IF EXISTS logs")   # جدول لاگ حذف‌شده؛ در دیتابیس‌های قدیمی هم پاک می‌شود
+        except Exception: pass
+        if atomic: conn.commit()
+    except BaseException:
+        if atomic:
+            try: conn.rollback()
+            except Exception: pass
+        raise
+
+
 def _ensure_schema(conn):
     """اسکیمای پایه + مایگریشن idempotent + ثبت نسخهٔ اسکیما — یک‌بار در هر پروسه.
-    DB-24: روی SQLite کل مراحل داخل یک تراکنش اجرا می‌شود؛ هر خطا ⇒ rollback کامل (بدون نیمه‌اسکیما)."""
+    DB-24: روی SQLite کل مراحل داخل یک تراکنش اجرا می‌شود؛ هر خطا ⇒ rollback کامل (بدون نیمه‌اسکیما).
+    DB-02: روی D1 همان ترتیب با batchهای اتمیک اجرا می‌شود (_ensure_schema_d1)."""
     global _SCHEMA_READY
     with _lock:
         if _SCHEMA_READY: return
-        if config.DB_BACKEND != "d1":
-            try: os.chmod(config.DB_FILE, 0o600)   # کلیدهای API متن ساده در این فایل‌اند؛ دسترسی فقط برای مالک
-            except Exception: pass
-            _ensure_wal_mode(conn)
-        atomic = config.DB_BACKEND != "d1"
-        if atomic: conn.execute("BEGIN IMMEDIATE")
-        try:
-            # DB-27 (رخداد تولید ۲۰۲۶-۱۰-۲۱): **ترتیب حیاتی است** —
-            #   ۱) جدول‌ها، ۲) مهاجرتِ افزایشیِ ستون‌ها، ۳) ایندکس‌ها.
-            # ``CREATE TABLE IF NOT EXISTS`` روی جدولِ موجود ستون اضافه نمی‌کند، پس روی یک
-            # دیتابیسِ قدیمی (مثلاً D1ِ تولید) ستونِ ``super_notified_at`` فقط با migration
-            # ساخته می‌شود. اگر ایندکس‌ها *قبل* از migration ساخته شوند، دستورِ
-            # ``CREATE INDEX … ON pay_requests(status, super_notified_at)`` با «no such
-            # column» می‌میرد (روی D1 کل batch رول‌بک می‌شود) ⇒ ``init_core()`` می‌افتد ⇒
-            # سرویس بالا نمی‌آید. این ترتیب همچنین «مهاجرت افزایشی» را تضمین می‌کند:
-            # هیچ داده‌ای حذف یا بازنشانی نمی‌شود و اجرای دوباره بی‌اثر است.
-            _exec_schema(conn, SCHEMA)
-            conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
-            _sv = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-            _sv = str(_sv["value"]).strip() if _sv else ""
-            if _sv.isdigit() and int(_sv) > SCHEMA_VERSION:   # اجرای بیلد قدیمی روی دیتابیس جدیدتر ممنوع
-                log.error("DB schema_version=%s newer than code schema_version=%s — downgrade refused", _sv, SCHEMA_VERSION)
-                raise SystemExit(f"database schema_version {_sv} is newer than this build ({SCHEMA_VERSION}); run the newer build or restore a backup")
-            _apply_migrations(conn)          # DB-27: مقاوم در برابر ستونِ موجود و خطای هم‌زمان
-            _exec_schema(conn, DB_INDEXES)   # ← بعد از مهاجرت: هر ستونِ وابسته حالا وجود دارد
-            # PHASE-04: کانُنیکال‌سازیِ زمان بیرون از تراکنشِ اسکیما اجرا می‌شود (پایینِ تابع)
-            # v8: trigger عوض شده (شارژ کیف پولِ واحد‌دار + رسید)؛ نسخه‌های قدیمی جایگزین می‌شوند
-            conn.execute("DROP TRIGGER IF EXISTS trg_referral_credit_wallet")
-            conn.execute(REFERRAL_CREDIT_TRIGGER)
-            # v8/PH-01: موجودیِ قدیمیِ بدونِ واحد ⇒ سطلِ منجمدِ «legacy» (یک‌بار، idempotent)
-            _migrate_legacy_credit(conn)
-            conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
-            # ژورنال انتشار از جدول عمومی settings به جدول اختصاصی منتقل می‌شود (مایگریشن افزایشی و غیرمخرب)
-            conn.execute("INSERT OR REPLACE INTO pub_journal(article_id,journal,updated_at) SELECT CAST(substr(key,6) AS INTEGER), value, ? FROM settings WHERE key LIKE 'pubj:%'", (now_iso(),))
-            conn.execute("DELETE FROM settings WHERE key LIKE 'pubj:%'")
-            conn.execute("UPDATE channels SET original_admin_id=admin_id WHERE original_admin_id IS NULL")
-            _ensure_unique_indexes(conn)
-            try: conn.execute("DROP TABLE IF EXISTS logs")   # جدول لاگ حذف‌شده؛ در دیتابیس‌های قدیمی هم پاک می‌شود
-            except Exception: pass
-            if atomic: conn.commit()
-        except BaseException:
-            if atomic:
-                try: conn.rollback()
-                except Exception: pass
-            raise
+        if isinstance(conn, D1Conn):
+            _ensure_schema_d1(conn)              # DB-02/DB-03: فازهای اتمیک روی D1
+        else:
+            _ensure_schema_sqlite(conn)          # DB-24: یک تراکنش، بدون نیمه‌اسکیما
         # PHASE-04 (رخداد تولید 2026-10-21): کانُنیکال‌سازیِ زمان **بیرون از تراکنشِ اسکیما**
         # اجرا می‌شود و checkpoint هر ستون را جداگانه commit می‌کند ⇒ اگر پروسه وسطِ کار کشته
         # شود، ری‌استارتِ بعدی **ادامه می‌دهد** نه اینکه کلِ اسکن را از صفر تکرار کند
@@ -656,6 +863,7 @@ def _ensure_schema(conn):
             normalize_iso_columns(conn)
         except Exception as e:
             log.error("ISO canonicalisation failed (continues; resumes on next start): %s", e)
+        _COLS.clear()          # ستون‌های تازهٔ migration ⇒ کشِ نامِ ستون‌ها باطل شود
         _SCHEMA_READY = True
 
 def db():

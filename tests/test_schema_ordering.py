@@ -85,7 +85,7 @@ def test_index_creation_does_not_precede_the_column_migration():
     برگرداند، این تست می‌افتد (چون روی دیتابیسِ قدیمی، ایندکس شکست می‌خورد)."""
     import inspect
     from newsbot import db as dbmod
-    src = inspect.getsource(dbmod._ensure_schema)
+    src = inspect.getsource(dbmod._ensure_schema_sqlite)
     i_schema = src.find("_exec_schema(conn, SCHEMA)")
     i_mig = src.find("_apply_migrations(conn)")
     i_idx = src.find("_exec_schema(conn, DB_INDEXES)")

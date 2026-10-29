@@ -35,9 +35,13 @@ class _Resp:
 
 
 class FakeD1:
-    """D1 ساختگی با سه تواناییِ مستقل: PRAGMA table_info، تابعِ table-valued و sqlite_master."""
+    """D1 ساختگی با سه تواناییِ مستقل: PRAGMA table_info، تابعِ table-valued و sqlite_master.
 
-    def __init__(self, tables=None, support=("pragma", "fn", "master"), pragma_empty=False):
+    DB-01/DB-02: رول‌بکِ واقعیِ batch (شکستِ یک دستور ⇒ هیچ‌کدام اعمال نمی‌شود)،
+    ``meta.last_row_id`` برای INSERTها، و قلاب‌هایی برای بازتولیدِ خطاهای D1."""
+
+    def __init__(self, tables=None, support=("pragma", "fn", "master"), pragma_empty=False,
+                 omit_last_row_id=False, fail_on=None, fail_after_alters=None, reject_rowid=False):
         self.tables = {}                        # tbl -> create-sql
         for tbl, cols in (tables or {}).items():
             self.tables[tbl] = "CREATE TABLE %s (%s)" % (tbl, ", ".join("%s TEXT" % c for c in cols))
@@ -45,6 +49,16 @@ class FakeD1:
         self.pragma_empty = pragma_empty        # PRAGMA بی‌صدا خالی برمی‌گرداند (رفتارِ قدیمی)
         self.calls = []
         self.alters = []
+        self.applied = []                       # دستورهای «اعمال‌شده»
+        self.batches = []                       # هر batch: فهرستِ sqlها
+        self.singles = []                       # درخواست‌های تک‌دستوره (خارج از batch)
+        self.meta = {}                          # جدول meta: key -> value
+        self.omit_last_row_id = omit_last_row_id   # D1ای که meta.last_row_id نمی‌دهد
+        self.fail_on = fail_on                  # تابعِ (sql) -> bool
+        self.fail_after_alters = fail_after_alters   # n-اُمین ALTER شکست بخورد
+        self.reject_rowid = reject_rowid        # D1ای که rowid را رد می‌کند
+        self._rid = 0
+        self._alter_count = 0
 
     # ── کمکی‌ها ──
     def _cols(self, tbl):
@@ -59,18 +73,30 @@ class FakeD1:
     def post(self, url, json=None, headers=None):
         payload = json or {}
         if "batch" in payload:
+            # D1: کل batch یک تراکنش است ⇒ شکستِ یک دستور همه را رول‌بک می‌کند
+            snap = (dict(self.tables), list(self.alters), list(self.applied),
+                    dict(self.meta), self._rid, self._alter_count)
+            self.batches.append([it.get("sql", "") for it in payload["batch"]])
             results = []
             for item in payload["batch"]:
                 r = self._exec_one(item.get("sql", ""), item.get("params") or [])
                 if r.status_code >= 400:
+                    self.tables, self.alters, self.applied, self.meta, self._rid, self._alter_count = snap
                     return r                      # D1: شکستِ یک دستور ⇒ کل batch رول‌بک
                 results.append(r.json()["result"][0])
             return _Resp({"success": True, "result": results})
+        self.singles.append(payload.get("sql", ""))
         return self._exec_one(payload.get("sql", ""), payload.get("params") or [])
 
     def _exec_one(self, sql, params):
         self.calls.append(sql)
         u = sql.strip().upper()
+        if self.reject_rowid and "rowid" in u.lower():
+            return _Resp({"success": False,
+                          "errors": [{"code": "SQLITE_ERROR", "message": "no such column: rowid"}]}, 400)
+        if self.fail_on is not None and self.fail_on(sql):
+            return _Resp({"success": False,
+                          "errors": [{"code": "SQLITE_ERROR", "message": "simulated failure"}]}, 400)
         if u.startswith("PRAGMA TABLE_INFO"):
             if "pragma" not in self.support:
                 return _Resp({"success": False, "errors": [{"message": "PRAGMA not supported"}]}, 400)
@@ -97,10 +123,15 @@ class FakeD1:
         if u.startswith("CREATE TABLE"):
             m = re.match(r"CREATE TABLE (?:IF NOT EXISTS )?([A-Za-z_][\w]*)\s*\((.*)\)\s*$",
                          sql.strip(), re.I | re.S)
-            if m:
+            if m and not ("IF NOT EXISTS" in u.upper() and m.group(1) in self.tables):
+                # «IF NOT EXISTS» روی جدولِ موجود بی‌اثر است (شکلِ جدول عوض نمی‌شود)
                 self.tables[m.group(1)] = "CREATE TABLE %s (%s)" % (m.group(1), m.group(2))
             return _Resp({"success": True, "result": [{"results": [], "meta": {"changes": 0}}]})
         if u.startswith("ALTER TABLE"):
+            self._alter_count += 1
+            if self.fail_after_alters is not None and self._alter_count == self.fail_after_alters:
+                return _Resp({"success": False,
+                              "errors": [{"code": "SQLITE_ERROR", "message": "simulated failure"}]}, 400)
             self.alters.append(sql)
             parts = sql.split()
             tbl, col = parts[2], parts[parts.index("COLUMN") + 1]
@@ -110,6 +141,33 @@ class FakeD1:
                              400)
             self.tables[tbl] = self.tables.get(tbl, "CREATE TABLE %s ()" % tbl)[:-1] + ", %s TEXT)" % col
             return _Resp({"success": True, "result": [{"results": [], "meta": {"changes": 1}}]})
+        if u.startswith("INSERT"):
+            self.applied.append(sql)
+            if "INTO META" in u:
+                lit = re.search(r"VALUES\s*\(\s*'([^']*)'\s*,", sql, re.I)
+                try:
+                    if lit: self.meta[lit.group(1)] = (params or [None])[0]
+                    else: self.meta[params[0]] = params[1]
+                except Exception: pass
+            changes = 0 if "OR IGNORE" in u else 1
+            self._rid += 1
+            meta = {"changes": changes}
+            if changes and not self.omit_last_row_id: meta["last_row_id"] = self._rid
+            return _Resp({"success": True, "result": [{"results": [], "meta": meta}]})
+        if u.startswith("UPDATE") or u.startswith("DELETE"):
+            self.applied.append(sql)
+            return _Resp({"success": True, "result": [{"results": [], "meta": {"changes": 1}}]})
+        if u.startswith("SELECT"):
+            if "FROM META" in u:
+                key = (params or [None])[0]
+                if key is None:
+                    m = re.search(r"key\s*=\s*'([^']*)'", sql, re.I)
+                    key = m.group(1) if m else None
+                if key is not None and key in self.meta:
+                    return _Resp({"success": True, "result": [{"results": [{"value": self.meta[key]}],
+                                                               "meta": {"changes": 0}}]})
+                return _Resp({"success": True, "result": [{"results": [], "meta": {"changes": 0}}]})
+            return _Resp({"success": True, "result": [{"results": [], "meta": {"changes": 0}}]})
         return _Resp({"success": True, "result": [{"results": [], "meta": {"changes": 0}}]})
 
 
@@ -139,7 +197,24 @@ def test_migration_does_not_re_add_existing_column_on_sqlite():
     adds = [s for s in stmts if "ADD COLUMN" in s.upper()]
     assert not [s for s in adds if "next_plan_id" in s], "ستونِ موجود دوباره اضافه شد"
     assert not [s for s in adds if "next_plan_days" in s], "ستونِ موجود دوباره اضافه شد"
+    # DB-05: اسکیمای پایه باید کامل باشد ⇒ روی دیتابیسِ تازه هیچ ALTER لازم نیست
+    assert not adds, "اسکیمای پایه ناقص است ⇒ migration بی‌دلیل اجرا می‌شود: %r" % (adds,)
+
+
+def test_migration_adds_a_genuinely_missing_column_on_sqlite():
+    """ستونِ واقعاً غایب باید ADD COLUMN شود (مهاجمتِ افزایشی)."""
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.executescript(dbmod.SCHEMA)
+    con.execute("ALTER TABLE users DROP COLUMN credit")     # دیتابیسِ «قدیمی»
+    con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+    stmts = []
+    con.set_trace_callback(stmts.append)
+    _apply_migrations(con)
+    adds = [s for s in stmts if "ADD COLUMN" in s.upper()]
     assert [s for s in adds if "credit" in s], "ستونِ واقعاً غایب باید اضافه شود"
+    cols = {r[1] for r in con.execute("PRAGMA table_info(users)")}
+    assert "credit" in cols
 
 
 # ── D1 ───────────────────────────────────────────────────────────────────────────────
@@ -271,3 +346,194 @@ def test_ensure_schema_bootstrap_on_d1_succeeds(monkeypatch):
         "ستونِ موجود دوباره اضافه شد: %r" % (fake.alters,)
     assert "users" in fake.tables
     assert "next_plan_id" in _create_sql_cols(fake.tables["users"])
+
+
+# ── DB-01: شناسهٔ درج فقط از meta.last_row_id ─────────────────────────────────────────
+def test_d1_batch_insert_reads_the_id_from_meta(monkeypatch):
+    """شناسهٔ درج باید از meta.last_row_id بیاید (همان پاسخِ batch)."""
+    fake = FakeD1()
+    _d1(fake, monkeypatch)
+    curs = dbmod._d1_batch([("INSERT INTO t(a) VALUES(?)", (1,))])
+    assert len(curs) == 1
+    assert curs[0].lastrowid == 1
+    assert not [c for c in fake.calls if "last_insert_rowid" in c.lower()], \
+        "نباید درخواستِ جداگانهٔ last_insert_rowid زده شود"
+
+
+def test_d1_batch_without_last_row_id_raises_instead_of_faking_an_id(monkeypatch):
+    """DB-01: اگر D1 شناسهٔ درج را ندهد، باید خطا بدهد — نه شناسهٔ ساختگی."""
+    fake = FakeD1(omit_last_row_id=True)
+    _d1(fake, monkeypatch)
+    with pytest.raises(sqlite3.OperationalError):
+        dbmod._d1_batch([("INSERT INTO t(a) VALUES(?)", (1,))])
+    assert not [c for c in fake.calls if "last_insert_rowid" in c.lower()], \
+        "نباید درخواستِ جداگانهٔ last_insert_rowid زده شود"
+
+
+def test_d1_batch_insert_without_changes_needs_no_id(monkeypatch):
+    """INSERT بی‌اثر (changes=0) ⇒ نبودِ شناسه خطا نیست."""
+    fake = FakeD1(omit_last_row_id=True)
+    _d1(fake, monkeypatch)
+    curs = dbmod._d1_batch([("INSERT OR IGNORE INTO t(a) VALUES(?)", (1,))],
+                           require_insert_id=True)
+    assert curs[0].lastrowid in (None, 0)
+
+
+# ── DB-02: مهاجرتِ D1 اتمیک است ─────────────────────────────────────────────────────
+OLD_PAY_REQUESTS = ["id", "user_id", "plan_id", "status", "created_at", "receipt_chat",
+                     "receipt_msg", "note", "decided_at", "discount", "final_price", "cur",
+                     "decided_by", "notified_at"]
+
+
+def _d1_schema_env(fake, monkeypatch):
+    import newsbot.config as config
+    monkeypatch.setattr(config, "DB_BACKEND", "d1")
+    monkeypatch.setattr(dbmod, "_SCHEMA_READY", False)
+    monkeypatch.setattr(dbmod, "_d1_client", lambda: fake)
+    monkeypatch.setattr(dbmod, "_d1_url", lambda: "https://fake/d1/query")
+    return D1Conn()
+
+
+def test_d1_migration_writes_go_through_atomic_batches(monkeypatch):
+    """DB-02: هیچ نوشتنیِ مهاجرت نباید تک‌دستوره (خارج از batch) به D1 برود."""
+    fake = FakeD1()
+    monkeypatch.setattr(dbmod, "normalize_iso_columns", lambda conn, chunk=2000: 0)
+    conn = _d1_schema_env(fake, monkeypatch)
+    dbmod._ensure_schema(conn)
+    writes = [s for s in fake.singles
+              if s.strip().upper()[:6] in ("INSERT", "UPDATE", "DELET", "CREATE", "ALTER ", "DROP ")]
+    assert writes == [], "نوشتنِ مهاجرت باید داخلِ batch باشد: %r" % (writes,)
+    assert fake.batches, "مهاجرت باید batch بفرستد"
+
+
+def test_d1_migration_batch_is_atomic_when_an_alter_fails(monkeypatch):
+    """DB-02: اگر یکی از ALTERها شکست بخورد، هیچ ALTERی اعمال نمی‌شود."""
+    fake = FakeD1({"pay_requests": list(OLD_PAY_REQUESTS)}, fail_after_alters=3)
+    monkeypatch.setattr(dbmod, "normalize_iso_columns", lambda conn, chunk=2000: 0)
+    conn = _d1_schema_env(fake, monkeypatch)
+    with pytest.raises(sqlite3.OperationalError):
+        dbmod._ensure_schema(conn)
+    assert _create_sql_cols(fake.tables["pay_requests"]) == set(OLD_PAY_REQUESTS), \
+        "batch باید اتمیک باشد: هیچ ALTER نباید اعمال شده باشد"
+
+
+def test_d1_migration_survives_a_duplicate_column_race(monkeypatch):
+    """DB-27/DB-02: اگر نمونهٔ دیگری هم‌زمان ستون را ساخته باشد، مهاجرت باید ادامه یابد."""
+    fake = FakeD1({"pay_requests": list(OLD_PAY_REQUESTS)})
+    real_table_cols = dbmod._table_cols
+
+    def stale_table_cols(c, tbl):
+        cols = real_table_cols(c, tbl)
+        return {x for x in cols if x != "pc"}      # بررسیِ کهنه: «pc» را ناموجود نشان می‌دهد
+
+    monkeypatch.setattr(dbmod, "_table_cols", stale_table_cols)
+    monkeypatch.setattr(dbmod, "normalize_iso_columns", lambda conn, chunk=2000: 0)
+    conn = _d1_schema_env(fake, monkeypatch)
+    dbmod._ensure_schema(conn)                      # نباید استثنا بدهد
+    assert "super_notified_at" in _create_sql_cols(fake.tables["pay_requests"])
+
+
+# ── DB-03: جایگزینیِ trigger اتمیک است ───────────────────────────────────────────────
+def test_d1_trigger_replacement_happens_in_one_atomic_batch(monkeypatch):
+    """DB-03: DROP و CREATEِ trigger باید در *یک* batch باشند (نه دو درخواست)."""
+    fake = FakeD1()
+    monkeypatch.setattr(dbmod, "normalize_iso_columns", lambda conn, chunk=2000: 0)
+    conn = _d1_schema_env(fake, monkeypatch)
+    dbmod._ensure_schema(conn)
+    trig = [b for b in fake.batches if any("DROP TRIGGER" in s for s in b)]
+    assert trig, "trigger باید در batch جایگزین شود"
+    for b in trig:
+        assert any("CREATE TRIGGER" in s for s in b), \
+            "DROP و CREATEِ trigger باید در یک batch (اتمیک) باشند"
+    assert not [s for s in fake.singles if "DROP TRIGGER" in s.upper()], \
+        "trigger نباید جداگانه حذف شود"
+
+
+# ── DB-04: کانُنیکال‌سازیِ ISO روی D1 ───────────────────────────────────────────────
+ISO_TABLES = {
+    "users": ["id", "created_at", "last_seen", "plan_expires"],
+    "channels": ["id", "created_at"],
+    "articles": ["id", "created_at"],
+    "posted": ["channel_id", "hash", "posted_at"],
+    "ch_tokens": ["token", "issued_at", "expires_at"],
+    "deeplinks": ["key", "created_at"],
+    "kv_cache": ["key", "cached_at"],
+    "ai_cache": ["key", "cached_at"],
+    "dedup": ["channel_id", "fp", "ts"],
+    "support_map": ["msg_id", "ts"],
+    "pay_requests": ["id", "created_at", "decided_at", "claimed_at"],
+    "referrals": ["id", "created_at"],
+    "pub_journal": ["article_id", "updated_at"],
+}
+
+
+def test_d1_iso_flag_stays_unset_when_d1_rejects_rowid(monkeypatch):
+    """DB-04: D1ای که rowid را رد می‌کند ⇒ پرچمِ «انجام شد» نباید نوشته شود."""
+    fake = FakeD1(ISO_TABLES, reject_rowid=True)
+    conn = _d1(fake, monkeypatch)
+    dbmod.normalize_iso_columns(conn)
+    assert "iso_norm_v1" not in fake.meta, \
+        "پرچمِ نهایی فقط وقتی نوشته می‌شود که همهٔ ستون‌ها موفق باشند"
+    assert "iso_norm_v1:users.created_at" in fake.meta, \
+        "ستون‌های موفق باید checkpoint بخورند (ادامهٔ کار در استارتاپِ بعد)"
+
+
+def test_d1_iso_uses_the_real_primary_key_instead_of_rowid(monkeypatch):
+    """DB-04: کلیدِ خنثی از بک‌اند — فقط جدول‌های با کلیدِ مرکّب از rowid استفاده می‌کنند."""
+    fake = FakeD1(ISO_TABLES, reject_rowid=True)
+    conn = _d1(fake, monkeypatch)
+    dbmod.normalize_iso_columns(conn)
+    rowid_uses = [c for c in fake.calls if "rowid" in c.lower()]
+    assert rowid_uses, "جدول‌های با کلیدِ مرکّب (posted/dedup) هنوز rowid دارند"
+    assert all(("posted" in c or "dedup" in c) for c in rowid_uses), \
+        "rowid نباید برای جدول‌های دارای کلیدِ واقعی استفاده شود: %r" % (rowid_uses,)
+
+
+def test_d1_iso_writes_the_final_flag_when_every_column_succeeded(monkeypatch):
+    """مسیرِ سالم: وقتی همهٔ ستون‌ها موفق شدند، پرچمِ نهایی نوشته می‌شود."""
+    fake = FakeD1(ISO_TABLES)
+    conn = _d1(fake, monkeypatch)
+    dbmod.normalize_iso_columns(conn)
+    assert "iso_norm_v1" in fake.meta
+
+
+def test_d1_conn_executemany_sends_one_atomic_batch(monkeypatch):
+    """DB-04: executemany روی D1 باید یک batch باشد (نه یک درخواست per ردیف)."""
+    fake = FakeD1()
+    conn = _d1(fake, monkeypatch)
+    conn.executemany("UPDATE users SET name=? WHERE id=?", [("a", 1), ("b", 2)])
+    assert len(fake.batches) == 1
+    assert len(fake.batches[0]) == 2
+
+
+# ── پاریتیِ D1Row/D1Cur با sqlite3 ──────────────────────────────────────────────────
+def test_d1_row_and_cursor_have_sqlite3_parity():
+    row = dbmod.D1Row({"a": 1, "b": 2})
+    assert len(row) == 2
+    assert list(row) == [1, 2]
+    assert dict(row) == {"a": 1, "b": 2}
+    cur = dbmod.D1Cur([dbmod.D1Row({"a": 1}), dbmod.D1Row({"a": 2})])
+    assert cur.description[0][0] == "a"
+    assert len(cur.fetchmany(1)) == 1
+    assert cur.fetchone()["a"] == 2
+    assert list(cur) == []
+    cur.close()
+
+
+# ── DB-05: اسکیمای پایه و فهرستِ migration هم‌خوان‌اند ───────────────────────────────
+def _schema_tables():
+    tables = {}
+    for stmt in dbmod.SCHEMA.split(";"):
+        stmt = "\n".join(l for l in stmt.splitlines() if not l.strip().startswith("--")).strip()
+        if not stmt.upper().startswith("CREATE TABLE"): continue
+        m = re.match(r"CREATE TABLE(?: IF NOT EXISTS)?\s+([A-Za-z_]\w*)", stmt, re.I)
+        if not m: continue
+        tables[m.group(1)] = _create_sql_cols(stmt)
+    return tables
+
+
+def test_schema_ddl_contains_every_migrated_column():
+    """DB-05: اسکیمای پایه باید همهٔ ستون‌های MIGRATIONS را داشته باشد (یک منبعِ حقیقت)."""
+    tables = _schema_tables()
+    missing = [(t, c) for t, c, _d in dbmod.MIGRATIONS if c not in tables.get(t, set())]
+    assert missing == [], "ستون‌های مهاجرت که در اسکیمای پایه نیستند: %r" % (missing,)

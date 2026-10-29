@@ -147,7 +147,7 @@ def pay_approve_atomic(rid, by_uid=None):
         admin_limits_invalidate(r["user_id"])
         return exp, False, None
     if config.DB_BACKEND == "d1":
-        return _pay_approve_d1(rid, r, pc)
+        return _pay_approve_d1(rid, r, pc, by_uid)
     cur_code = (r["cur"] if "cur" in r.keys() else "") or (pc.get("cur") or "")
     lang = lang_of_currency(cur_code) or "fa"
     def _go(conn):
@@ -220,28 +220,59 @@ def _revalidate_quote(conn, r, p, pc, lang):
     if abs(round(float(q2["payable"] or 0), 2) - frozen_payable) > tol:
         raise PayQuoteStale(r["id"])
 
-def _pay_approve_d1(rid, r, pc):
-    """مسیر d1: CASهای تک‌دستوره (هر کدام auto-commit اتمیک روی D1) + نشان applied_at."""
-    from newsbot.core_plans import assign_plan, apply_plan_change
+def _pay_approve_d1(rid, r, pc, by_uid=None):
+    """مسیر d1: یک CAS برای claim + **یک batch اتمیک** برای کلِ اعمال (PH-01/FIN-011).
+
+    D1 تراکنش تعاملی ندارد، ولی batch را «یک تراکنش» می‌بیند ⇒ مصرفِ تخفیف، حرکتِ کیف پول،
+    سابقهٔ تغییر پلن، واگذاریِ پلن، پاداشِ ارجاع، نشانِ ``applied_at`` و وضعیتِ approved
+    یا **همه** اعمال می‌شوند یا **هیچ‌کدام** (پنجره‌های دوباره‌کسری/دوباره‌اعمال بسته می‌شود).
+
+    دو دستورِ *شرطی* (claim و مصرفِ تخفیف) به ``rowcount`` نیاز دارند که در batchِ D1
+    پیش از اجرا معلوم نیست ⇒ هرکدام **به‌صورت یک دستورِ اتمیکِ جدا** اجرا می‌شوند. اگر batch
+    شکست بخورد، تخفیف برگردانده و پرداخت به «pending» برمی‌گردد (جبرانِ کامل)."""
+    from newsbot.core_plans import _assign_state, _assign_writes, _apply_plan_change_sql
     from newsbot.core_discounts import disc_use, disc_refund
+    from newsbot.core_referrals import _credit_in_tx, referral_cfg
+    from newsbot.core_users import admin_limits_invalidate
+    from newsbot.core_wallet import lang_of_currency
+    p = q("SELECT * FROM plans WHERE id=?", (r["plan_id"],), one=True)
+    if not p or p["is_free"] or ("active" in p.keys() and not p["active"]): raise PayNoPlan(rid)
+    cur_code = (r["cur"] if "cur" in r.keys() else "") or (pc.get("cur") or "")
+    lang = lang_of_currency(cur_code) or "fa"
     if not pay_claim(rid): raise PayAlreadyDecided(rid)
     if r["discount"] and not disc_use(r["discount"]):
         pay_set(rid, "pending"); raise PayDiscountExhausted(rid)
+    def _go(conn):
+        # PH-01/Q-2a: قیمت هم مثلِ مسیرِ sqlite با موجودیِ زنده دوباره سنجیده می‌شود
+        _revalidate_quote(conn, r, p, pc, lang)
+        st = _assign_state(r["user_id"], r["plan_id"])
+        if not st: raise PayNoPlan(rid)
+        _apply_plan_change_sql(conn, r["user_id"], r["plan_id"], pc, ref=f"pay:{rid}")
+        exp, queued = _assign_writes(conn, r["user_id"], r["plan_id"], st)
+        if exp is None: raise PayNoPlan(rid)
+        ref_reward = None
+        paid_num = _paid_amount(r, p, pc, lang)
+        if paid_num:
+            _pct, cap = referral_cfg()
+            amount = round(paid_num * _pct / 100.0, 2)
+            if amount > 0:
+                got = _credit_in_tx(conn, r["user_id"], amount, cur_code, cap, ref_key=f"pay:{rid}")
+                if got: ref_reward = got
+        conn.execute("UPDATE pay_requests SET status='approved', decided_at=?, applied_at=?, decided_by=? WHERE id=?",
+                     (now_iso(), now_iso(), by_uid, rid))
+        return exp, queued, ref_reward
     try:
-        apply_plan_change(r["user_id"], r["plan_id"], pc, ref=f"pay:{rid}")
-        exp, queued = assign_plan(r["user_id"], r["plan_id"])
-    except Exception:
+        out = _trx(_go)
+    except BaseException:
+        # جبران: نه تخفیفی مصرف‌شده بماند، نه پرداخت در «processing» گیر کند (و اعمالِ نیمه‌کاره نماند)
         if r["discount"]:
-            disc_refund(r["discount"])
-        pay_set(rid, "pending")
+            try: disc_refund(r["discount"])
+            except Exception: pass
+        try: pay_set(rid, "pending")
+        except Exception: pass
         raise
-    if exp is None:
-        if r["discount"]:
-            disc_refund(r["discount"])
-        pay_set(rid, "pending"); raise PayNoPlan(rid)
-    _apply_applied_at(rid)
-    pay_set(rid, "approved")
-    return exp, queued, None
+    admin_limits_invalidate(r["user_id"])
+    return out
 
 
 def pay_mark_notified(rid):

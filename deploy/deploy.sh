@@ -25,7 +25,23 @@
 #   OPS-25  re-deploying the SHA that is already deployed still backs up and health-checks;
 #   OPS-26  a failed `systemctl restart` triggers the real rollback instead of exiting.
 #
+# Deploy safety (2026-10-28):
+#   OPS-27  the database path/backend come from the application's own configuration
+#            (newsbot/config.py) — never from a guess;
+#   OPS-28  the mirrored article-archive folder is pruned like the database backups;
+#   OPS-29  a rollback takes a verified backup of the current database first and
+#            changes nothing when that backup fails.
+#
 # Overridable for tests: APP_DIR, BACKUP_DIR, SERVICE, KEEP_BACKUPS, HEALTH_TRIES.
+# DB resolution (OPS-27): the deploy never guesses between data/newsbot.db and
+# newsbot.db. DB_FILE/DB_BACKEND are read from $APP_DIR/.env with the application's
+# own configuration module (newsbot/config.py — python-dotenv), a relative DB_FILE
+# is resolved against the service's real WorkingDirectory, and a missing configured
+# database aborts the deploy unless ALLOW_MISSING_DB=1 is set explicitly.
+#   DEPLOY_DB_FILE       explicit DB path, overrides DB_FILE from .env
+#   DEPLOY_DB_BACKEND    explicit backend, overrides DB_BACKEND from .env
+#   DEPLOY_WORKING_DIR   explicit service cwd, replaces the systemd WorkingDirectory lookup
+#   ALLOW_MISSING_DB=1   allow a first deploy with no database (skips the backup, loudly)
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/bot-official-telegram}"
@@ -38,8 +54,9 @@ HEALTH_TRIES="${HEALTH_TRIES:-180}"
 # Support the live VPS layout (venv/ + data/newsbot.db) while retaining legacy sandbox compatibility.
 VENV_DIR="${VENV_DIR:-$APP_DIR/venv}"
 if [ ! -x "$VENV_DIR/bin/python" ] && [ -x "$APP_DIR/.venv/bin/python" ]; then VENV_DIR="$APP_DIR/.venv"; fi
-DB_PATH="${DB_PATH:-$APP_DIR/data/newsbot.db}"
-if [ ! -f "$DB_PATH" ] && [ -f "$APP_DIR/newsbot.db" ]; then DB_PATH="$APP_DIR/newsbot.db"; fi
+DB_PATH_EFFECTIVE=""
+DB_BACKEND_EFFECTIVE=""
+DB_ALLOW_MISSING=0
 RESTARTED=0
 RESTART_EPOCH=0
 
@@ -51,6 +68,123 @@ die() { err "$*"; exit 1; }
 unit_info() { systemctl show "$SERVICE" 2>/dev/null || true; }
 
 prop() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -n 1; }
+
+# OPS-27: resolve DB_BACKEND/DB_FILE from the application's own configuration.
+# The deploy asks the service's own interpreter for `newsbot.config` — the very
+# module the bot imports — so the .env is read by the same parser (python-dotenv),
+# the same defaults apply (DB_FILE unset ⇒ newsbot.db, DB_BACKEND ⇒ sqlite) and
+# process-environment values keep their precedence, exactly like config.py.
+# The .env is never sourced or eval'd, and no value other than the resolved
+# database path/backend ever leaves this function.
+resolve_db_config() {
+  local workdir="${DEPLOY_WORKING_DIR:-}"
+  if [ -z "$workdir" ]; then
+    workdir="$(systemctl show -p WorkingDirectory "$SERVICE" 2>/dev/null | sed -n 's/^WorkingDirectory=//p' | head -n 1 || true)"
+    workdir="${workdir#-}"
+  fi
+  # The unit's own environment is not visible to this shell; if it injects DB_*
+  # or reads another EnvironmentFile, the deploy cannot know the precedence —
+  # say so instead of guessing, and let DEPLOY_DB_FILE/DEPLOY_DB_BACKEND win.
+  local unit_env unit_env_files
+  unit_env="$(systemctl show -p Environment "$SERVICE" 2>/dev/null || true)"
+  if printf '%s\n' "$unit_env" | grep -qE '(^|[[:space:]])DB_(FILE|BACKEND)='; then
+    err "WARNING: the systemd unit sets DB_FILE/DB_BACKEND in Environment= — the deploy reads the app config only;"
+    err "         set DEPLOY_DB_FILE / DEPLOY_DB_BACKEND so both use exactly the same value."
+  fi
+  unit_env_files="$(systemctl show -p EnvironmentFiles "$SERVICE" 2>/dev/null || true)"
+  if [ -n "$unit_env_files" ] && ! printf '%s\n' "$unit_env_files" | grep -qF "$APP_DIR/.env"; then
+    err "WARNING: the unit's EnvironmentFiles do not include $APP_DIR/.env — the service may read different DB settings;"
+    err "         set DEPLOY_DB_FILE / DEPLOY_DB_BACKEND explicitly."
+  fi
+  local status="" backend="" path="" message=""
+  {
+    IFS= read -r -d '' status || true
+    IFS= read -r -d '' backend || true
+    IFS= read -r -d '' path || true
+    IFS= read -r -d '' message || true
+  } < <(cd "$APP_DIR" && "$VENV_DIR/bin/python" - "$APP_DIR" "$workdir" "${DEPLOY_DB_FILE:-}" "${DEPLOY_DB_BACKEND:-}" <<'PY'
+import os
+import sys
+
+
+def emit(status, backend, path, message):
+    sys.stdout.buffer.write(
+        b"\0".join(v.encode("utf-8") for v in (status, backend, path, message)) + b"\0"
+    )
+
+
+app_dir, workdir, dep_file, dep_backend = sys.argv[1:5]
+sys.path.insert(0, app_dir)
+# The service's environment comes from systemd, not from this SSH shell; a DB_FILE
+# that happens to be exported in the deploy shell must not silently win over the
+# unit's own configuration. systemd-injected DB_* values are reported as a warning
+# by the caller and can be pinned with DEPLOY_DB_FILE / DEPLOY_DB_BACKEND.
+for _key in ("DB_FILE", "DB_BACKEND"):
+    os.environ.pop(_key, None)
+try:
+    from newsbot import config
+except Exception:
+    emit("error", "", "", "could not import newsbot.config from the service venv")
+    raise SystemExit(0)
+
+backend = (dep_backend or config.DB_BACKEND or "sqlite").strip().lower()
+
+if dep_file:
+    raw = dep_file
+    raw_set = True
+else:
+    # config.DB_FILE already carries the app's effective value; the presence check
+    # in os.environ tells "unset" (⇒ the app default) from "explicitly empty".
+    raw = config.DB_FILE
+    raw_set = "DB_FILE" in os.environ
+
+if backend == "d1":
+    emit("d1", backend, "", "backend=d1 — the database lives in Cloudflare D1; skipping the local SQLite backup")
+    raise SystemExit(0)
+if not raw_set:
+    raw = "newsbot.db"
+elif raw is None or raw == "":
+    emit("error", backend, "", "DB_FILE is set but empty in .env — refusing to guess the database path")
+    raise SystemExit(0)
+
+if os.path.isabs(raw):
+    path = os.path.normpath(raw)
+else:
+    if not workdir:
+        emit("error", backend, "",
+             "DB_FILE is relative but the service WorkingDirectory is unknown — "
+             "set DEPLOY_WORKING_DIR (or an absolute DEPLOY_DB_FILE) explicitly")
+        raise SystemExit(0)
+    path = os.path.normpath(os.path.join(workdir, raw))
+
+emit("ok" if os.path.isfile(path) else "missing", backend, path, "")
+PY
+)
+  case "$status" in
+    d1)
+      DB_BACKEND_EFFECTIVE="d1"
+      log "$message"
+      ;;
+    ok)
+      DB_BACKEND_EFFECTIVE="$backend"
+      DB_PATH_EFFECTIVE="$path"
+      log "database: $DB_PATH_EFFECTIVE (backend=$backend)"
+      ;;
+    missing)
+      DB_BACKEND_EFFECTIVE="$backend"
+      DB_PATH_EFFECTIVE="$path"
+      if [ "${ALLOW_MISSING_DB:-0}" = "1" ]; then
+        DB_ALLOW_MISSING=1
+        err "WARNING: database not found at $DB_PATH_EFFECTIVE — continuing WITHOUT A BACKUP because ALLOW_MISSING_DB=1"
+      else
+        die "database not found at $DB_PATH_EFFECTIVE (backend=$backend) — refusing to deploy without a backup; fix DB_FILE, or set DEPLOY_DB_FILE (or ALLOW_MISSING_DB=1 for an intentional first deploy)"
+      fi
+      ;;
+    *)
+      die "cannot resolve the database configuration: ${message:-no output from the app config}"
+      ;;
+  esac
+}
 
 preflight() {
   command -v git >/dev/null 2>&1 || die "git not found in PATH"
@@ -74,14 +208,22 @@ preflight() {
 
 # Online SQLite backup (safe under WAL — `cp` of a live DB is not) + verification.
 backup_db() {
-  local db="$DB_PATH"
-  if [ ! -f "$db" ]; then
-    log "no database yet — skipping backup"
+  if [ "$DB_BACKEND_EFFECTIVE" = "d1" ]; then
     return 0
+  fi
+  local db="$DB_PATH_EFFECTIVE"
+  if [ ! -f "$db" ]; then
+    if [ "$DB_ALLOW_MISSING" -eq 1 ]; then
+      log "no database yet — skipping backup (ALLOW_MISSING_DB=1)"
+      return 0
+    fi
+    err "database file not found: $db"
+    return 1
   fi
   mkdir -p "$BACKUP_DIR" || return 1
   local dest="$BACKUP_DIR/newsbot-$(date +%Y%m%d-%H%M%S).$$.db"
-  python3 - "$db" "$dest" <<'PY' || return 1
+  local rc=0
+  python3 - "$db" "$dest" <<'PY' || rc=$?
 import sqlite3, sys
 src = sqlite3.connect(sys.argv[1], timeout=30)
 dst = sqlite3.connect(sys.argv[2])
@@ -105,17 +247,64 @@ if ok != "ok" or d_objs != s_objs:
     raise SystemExit("backup verification failed: quick_check=%r backup_objects=%r source_objects=%r"
                      % (ok, d_objs, s_objs))
 PY
+  if [ "$rc" -ne 0 ]; then
+    # a failed/unverified backup must not stay behind as if it were a good one
+    rm -f "$dest"
+    err "database backup failed (sqlite backup/verification error) — no backup file kept"
+    return 1
+  fi
   chmod 600 "$dest" || return 1
   # OPS-10: پوشهٔ آرشیوِ مقالاتِ قدیمی (کنارِ دیتابیس) هم باید پشتیبانی شود
-  local archive_dir="$(dirname "$db")/backups"
-  if [ -d "$archive_dir" ]; then
-    mkdir -p "$BACKUP_DIR/archive" || return 1
-    cp -p "$archive_dir"/*.db "$BACKUP_DIR/archive/" 2>/dev/null || true
-    log "archive folder mirrored to $BACKUP_DIR/archive"
-  fi
+  mirror_article_archive "$db" || return 1
   # فقط KEEP_BACKUPS بکاپ اخیر نگه داشته می‌شود
   ls -1t "$BACKUP_DIR"/newsbot-*.db 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm --
+  prune_archive_backups
   log "backup written and verified: $dest"
+  return 0
+}
+
+# OPS-10: mirror the article-archive folder that sits next to the database.
+# A missing archive folder is legitimate (no archived article yet); a failing copy
+# is not — the deploy must stop before any code or service change.
+mirror_article_archive() {
+  local db="$1"
+  local archive_dir
+  archive_dir="$(dirname "$db")/backups"
+  if [ ! -d "$archive_dir" ]; then
+    log "no article archive folder at $archive_dir — nothing to mirror"
+    return 0
+  fi
+  mkdir -p "$BACKUP_DIR/archive" || return 1
+  local copied=0 f
+  for f in "$archive_dir"/*.db; do
+    [ -e "$f" ] || continue
+    if ! cp -p "$f" "$BACKUP_DIR/archive/"; then
+      err "failed to copy the article archive $f into $BACKUP_DIR/archive — refusing to deploy with an incomplete backup set"
+      return 1
+    fi
+    copied=$((copied + 1))
+  done
+  if [ "$copied" -gt 0 ]; then
+    log "archive folder mirrored to $BACKUP_DIR/archive ($copied file(s))"
+  else
+    log "article archive folder $archive_dir has no .db snapshot to mirror"
+  fi
+  return 0
+}
+
+# OPS-28: keep the mirrored archive bounded like the database backups.
+# Only files that match the application's archive naming (newsbot-archive-*.db)
+# are ever removed; anything else in the folder is left untouched.
+prune_archive_backups() {
+  local dir="$BACKUP_DIR/archive"
+  [ -d "$dir" ] || return 0
+  local list f
+  list="$(ls -1t "$dir"/newsbot-archive-*.db 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) || true)"
+  [ -n "$list" ] || return 0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    rm -f -- "$f" || err "WARNING: could not prune the old archive backup $f"
+  done <<< "$list"
   return 0
 }
 
@@ -211,6 +400,7 @@ rollback_and_die() {
 do_deploy() {
   local target="$1"
   preflight
+  resolve_db_config
   cd "$APP_DIR" || die "cannot cd into $APP_DIR"
   local prev
   prev="$(git rev-parse HEAD)" || die "cannot read HEAD of $APP_DIR"
@@ -237,12 +427,17 @@ do_deploy() {
 
 do_rollback() {
   preflight
+  resolve_db_config
   cd "$APP_DIR" || die "cannot cd into $APP_DIR"
   [ -f "$APP_DIR/.deployed_sha.prev" ] || die "no previous sha recorded (.deployed_sha.prev) — nothing to roll back to"
   local back
   back="$(tr -d '[:space:]' < "$APP_DIR/.deployed_sha.prev")"
   [ -n "$back" ] || die "recorded previous sha is empty"
   git cat-file -e "${back}^{commit}" 2>/dev/null || die "previous sha $back not present in repository"
+  # OPS-29: the rollback swaps the running version — take a verified backup of the
+  # current database first (from the same resolved path as the deploy), so a failed
+  # backup leaves both the database and the active version untouched.
+  backup_db || die "database backup failed — refusing to roll back without a backup"
   git reset -q --hard "$back" || die "git reset to $back failed"
   [ "$(git rev-parse HEAD)" = "$back" ] || die "rollback verification failed (HEAD != $back)"
   install_deps || die "could not restore the previous dependency set"

@@ -171,6 +171,7 @@ def sandbox(tmp_path):
         '    echo "Result=success"\n'
         '    echo "ExecMainStatus=0"\n'
         '    echo "FragmentPath=/etc/systemd/system/${STUB_SERVICE_NAME}.service"\n'
+        '    [ -f "$STUB_DIR/no-workdir" ] || echo "WorkingDirectory=${APP_DIR:-}"\n'
         "    exit 0 ;;\n"
         "  cat) cat \"$STUB_DIR/unit.conf\" 2>/dev/null; exit 0 ;;\n"
         "  *) exit 0 ;;\n"
@@ -362,3 +363,248 @@ def test_optional_environment_file_is_reported(sandbox):
     sha = sandbox.commit_push("feature.txt", "v2\n")
     r = sandbox.deploy(sha, check=True)
     assert "OPTIONAL EnvironmentFile" in r.stderr
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# OPS-27 — مسیر دیتابیس باید از .env/سرویس حل شود، نه با حدس
+# ══════════════════════════════════════════════════════════════════════════════════════
+BASE_ENV = (
+    "BOT_TOKEN=123456789:AAsandbox_dummy_token_0000000000000\n"
+    "SUPER_ADMIN_IDS=1\n"
+)
+
+
+def _write_env(sandbox, extra=""):
+    (sandbox.app / ".env").write_text(BASE_ENV + extra, encoding="utf-8")
+
+
+def _make_db(path, marker):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(path))
+    try:
+        con.execute("CREATE TABLE IF NOT EXISTS deploy_probe(marker TEXT)")
+        con.execute("DELETE FROM deploy_probe")
+        con.execute("INSERT INTO deploy_probe(marker) VALUES (?)", (marker,))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _latest_backup(sandbox):
+    files = sorted(sandbox.backups.glob("newsbot-*.db"), key=lambda p: p.stat().st_mtime_ns)
+    assert files, "بکاپی نوشته نشده است"
+    return files[-1]
+
+
+def _backup_marker(path):
+    con = sqlite3.connect(str(path))
+    try:
+        row = con.execute("SELECT marker FROM deploy_probe").fetchone()
+        return row[0] if row else None
+    finally:
+        con.close()
+
+
+def test_unset_db_file_defaults_to_the_working_directory(sandbox):
+    """DB_FILE تعریف‌نشده ⇒ پیش‌فرض newsbot.db نسبت به WorkingDirectory سرویس."""
+    _write_env(sandbox)
+    _make_db(sandbox.app / "newsbot.db", "default-db")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha, check=True)
+    assert _backup_marker(_latest_backup(sandbox)) == "default-db"
+    assert "backend=sqlite" in r.stdout
+
+
+def test_relative_db_file_is_resolved_against_the_service_working_directory(sandbox):
+    """DB_FILE نسبی باید دقیقاً مثل برنامه (نسبت به cwd سرویس) حل شود."""
+    _write_env(sandbox, "DB_FILE=data/live.db\n")
+    _make_db(sandbox.app / "data" / "live.db", "relative-db")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    sandbox.deploy(sha, check=True)
+    assert _backup_marker(_latest_backup(sandbox)) == "relative-db"
+
+
+def test_absolute_db_file_is_used_verbatim(sandbox):
+    """DB_FILE مطلق نباید داخل APP_DIR بازنویسی شود."""
+    db = sandbox.tmp / "outside" / "live.db"
+    _write_env(sandbox, f"DB_FILE={db.as_posix()}\n")
+    _make_db(db, "absolute-db")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    sandbox.deploy(sha, check=True)
+    assert _backup_marker(_latest_backup(sandbox)) == "absolute-db"
+
+
+def test_configured_db_wins_over_a_stale_legacy_file(sandbox):
+    """وجود newsbot.db کهنه نباید باعث بکاپ‌گرفتن از فایل اشتباه شود."""
+    _write_env(sandbox, "DB_FILE=data/live.db\n")
+    _make_db(sandbox.app / "data" / "live.db", "configured-db")
+    _make_db(sandbox.app / "newsbot.db", "stale-db")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    sandbox.deploy(sha, check=True)
+    assert _backup_marker(_latest_backup(sandbox)) == "configured-db"
+
+
+def test_missing_configured_db_aborts_the_deploy(sandbox):
+    """نبودِ DB پیکربندی‌شده نباید «دیتابیس جدید» تعبیر شود."""
+    _write_env(sandbox, "DB_FILE=data/missing.db\n")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha)
+    assert r.returncode != 0
+    assert "database not found" in r.stderr
+    assert "refusing to deploy without a backup" in r.stderr
+    assert _git(sandbox.app, "rev-parse", "HEAD").strip() == sandbox.head0, "هیچ کدی نباید تغییر کند"
+    assert sandbox.restart_count() == 0, "سرویس نباید restart شود"
+    assert not list(sandbox.backups.glob("newsbot-*.db"))
+
+
+def test_missing_db_is_allowed_only_with_the_explicit_opt_in(sandbox):
+    """استقرار اولیه فقط با ALLOW_MISSING_DB=1 مجاز است و بدون بکاپ ادامه می‌دهد."""
+    _write_env(sandbox, "DB_FILE=data/missing.db\n")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha, check=True, extra={"ALLOW_MISSING_DB": "1"})
+    assert "ALLOW_MISSING_DB=1" in r.stderr
+    assert "no database yet" in r.stdout
+    assert not list(sandbox.backups.glob("newsbot-*.db"))
+
+
+def test_d1_backend_skips_the_local_sqlite_backup(sandbox):
+    """DB_BACKEND=d1 یعنی دیتابیس محلی مرجع نیست؛ بکاپ SQLite نباید گرفته شود."""
+    _write_env(sandbox,
+               "DB_BACKEND=d1\nCF_ACCOUNT_ID=acct\nCF_D1_DATABASE_ID=dbid\nCF_D1_TOKEN=tok\n")
+    _make_db(sandbox.app / "newsbot.db", "not-the-source-of-truth")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha, check=True)
+    assert "backend=d1" in r.stdout
+    assert not list(sandbox.backups.glob("newsbot-*.db"))
+
+
+def test_archive_is_mirrored_from_the_configured_db_directory(sandbox):
+    """آرشیو باید از پوشهٔ backups کنار همان DB انتخاب‌شده کپی شود، نه از APP_DIR/backups."""
+    _write_env(sandbox, "DB_FILE=data/live.db\n")
+    _make_db(sandbox.app / "data" / "live.db", "archive-db")
+    _make_db(sandbox.app / "data" / "backups" / "newsbot-archive-right.db", "archive-right")
+    _make_db(sandbox.app / "backups" / "newsbot-archive-stale.db", "archive-stale")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    sandbox.deploy(sha, check=True)
+    mirrored = sandbox.backups / "archive" / "newsbot-archive-right.db"
+    assert mirrored.exists(), "آرشیوِ کنارِ DB انتخاب‌شده باید در بکاپ بیاید"
+    assert _backup_marker(mirrored) == "archive-right"
+    assert not (sandbox.backups / "archive" / "newsbot-archive-stale.db").exists()
+
+
+def test_relative_db_file_fails_closed_without_a_known_working_directory(sandbox):
+    """اگر WorkingDirectory قابل‌تعیین نباشد، مسیر نسبی نباید حدس زده شود."""
+    (Path(sandbox.env["STUB_DIR"]) / "no-workdir").write_text("1")
+    _write_env(sandbox, "DB_FILE=data/live.db\n")
+    _make_db(sandbox.app / "data" / "live.db", "should-not-be-used")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha)
+    assert r.returncode != 0
+    assert "WorkingDirectory is unknown" in r.stderr
+    assert not list(sandbox.backups.glob("newsbot-*.db"))
+
+
+def test_explicit_deploy_working_dir_resolves_a_relative_db_file(sandbox):
+    """DEPLOY_WORKING_DIR باید ابهام cwd را صریح حل کند."""
+    (Path(sandbox.env["STUB_DIR"]) / "no-workdir").write_text("1")
+    _write_env(sandbox, "DB_FILE=data/live.db\n")
+    _make_db(sandbox.app / "data" / "live.db", "explicit-workdir")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    sandbox.deploy(sha, check=True,
+                   extra={"DEPLOY_WORKING_DIR": sandbox.app.as_posix()})
+    assert _backup_marker(_latest_backup(sandbox)) == "explicit-workdir"
+
+
+def test_empty_db_file_is_rejected(sandbox):
+    """DB_FILE خالی با تعریف‌نشده یکی نیست و نباید حدس زده شود."""
+    _write_env(sandbox, "DB_FILE=\n")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha)
+    assert r.returncode != 0
+    assert "DB_FILE is set but empty" in r.stderr
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# OPS-10/OPS-28/OPS-29 — آرشیو، نگهداری و بکاپِ پیش از Rollback
+# ══════════════════════════════════════════════════════════════════════════════════════
+def test_failing_archive_copy_aborts_the_deploy(sandbox):
+    """کپی ناموفقِ آرشیو باید Deploy را متوقف کند (پوشهٔ آرشیو موجود ولی کپی خراب)."""
+    _write_env(sandbox, "DB_FILE=newsbot.db\n")
+    _make_db(sandbox.app / "newsbot.db", "archive-copy-failure")
+    archive = sandbox.app / "backups"
+    archive.mkdir(parents=True, exist_ok=True)
+    # یک پوشه به‌جای فایلِ آرشیو ⇒ cp قطعاً شکست می‌خورد (بدون وابستگی به سطح دسترسی)
+    (archive / "newsbot-archive-broken.db").mkdir()
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha)
+    assert r.returncode != 0, "کپی ناموفقِ آرشیو نباید اجازهٔ انتشار بدهد"
+    assert "failed to copy the article archive" in r.stderr
+    assert _git(sandbox.app, "rev-parse", "HEAD").strip() == sandbox.head0, "هیچ کدی نباید عوض شود"
+    assert sandbox.restart_count() == 0, "سرویس نباید restart شود"
+
+
+def test_missing_archive_folder_is_not_an_error(sandbox):
+    """نبودِ پوشهٔ آرشیو مجاز است و با کپی ناموفق فرق دارد."""
+    _write_env(sandbox, "DB_FILE=newsbot.db\n")
+    _make_db(sandbox.app / "newsbot.db", "no-archive-folder")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    r = sandbox.deploy(sha, check=True)
+    assert "no article archive folder" in r.stdout
+    assert _backup_marker(_latest_backup(sandbox)) == "no-archive-folder"
+
+
+def test_rollback_takes_a_backup_before_switching_versions(sandbox):
+    """OPS-29 — پیش از جایگزینی نسخه، از دیتابیس فعلی بکاپ معتبر گرفته می‌شود."""
+    _write_env(sandbox, "DB_FILE=newsbot.db\n")
+    _make_db(sandbox.app / "newsbot.db", "rollback-db")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    sandbox.deploy(sha, check=True)
+    assert len(list(sandbox.backups.glob("newsbot-*.db"))) == 1
+    sandbox.rollback(check=True)
+    backups = sorted(sandbox.backups.glob("newsbot-*.db"), key=lambda p: p.stat().st_mtime_ns)
+    assert len(backups) == 2, "rollback هم باید بکاپ بگیرد"
+    assert _backup_marker(backups[-1]) == "rollback-db"
+
+
+def test_rollback_stops_when_the_database_backup_fails(sandbox):
+    """OPS-29 — شکستِ بکاپ ⇒ نه دیتابیس و نه نسخهٔ فعال تغییر می‌کند."""
+    _write_env(sandbox, "DB_FILE=newsbot.db\n")
+    _make_db(sandbox.app / "newsbot.db", "rollback-backup-failure")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    sandbox.deploy(sha, check=True)
+    deployed_head = _git(sandbox.app, "rev-parse", "HEAD").strip()
+    restarts_before = sandbox.restart_count()
+    # دیتابیس را خراب می‌کنیم تا بکاپ حتماً شکست بخورد
+    (sandbox.app / "newsbot.db").write_bytes(b"this is not a sqlite database")
+    r = sandbox.rollback()
+    assert r.returncode != 0, "rollback بدون بکاپ نباید ادامه یابد"
+    assert "database backup failed" in r.stderr
+    assert _git(sandbox.app, "rev-parse", "HEAD").strip() == deployed_head, "نسخهٔ فعال نباید عوض شود"
+    assert (sandbox.app / ".deployed_sha").read_text(encoding="utf-8").strip() == sha
+    assert sandbox.restart_count() == restarts_before, "سرویس نباید restart شود"
+    assert len(list(sandbox.backups.glob("newsbot-*.db"))) == 1, "بکاپِ نیم‌بند نباید باقی بماند"
+
+
+def test_archive_pruning_keeps_the_newest_snapshots_and_other_files(sandbox):
+    """OPS-28 — پوشهٔ آرشیو محدود می‌شود، ولی فایل‌های نامرتبط دست‌نخورده می‌مانند."""
+    _write_env(sandbox, "DB_FILE=newsbot.db\n")
+    _make_db(sandbox.app / "newsbot.db", "prune-db")
+    archive = sandbox.app / "backups"
+    archive.mkdir(parents=True, exist_ok=True)
+    names = ["newsbot-archive-a.db", "newsbot-archive-b.db",
+             "newsbot-archive-c.db", "newsbot-archive-d.db"]
+    for i, name in enumerate(names):
+        snap = archive / name
+        _make_db(snap, name)
+        os.utime(snap, (1_600_000_000 + i * 60, 1_600_000_000 + i * 60))
+    mirror = sandbox.backups / "archive"
+    mirror.mkdir(parents=True, exist_ok=True)
+    (mirror / "notes.txt").write_text("keep me", encoding="utf-8")
+    (mirror / "manual.db").write_text("keep me too", encoding="utf-8")
+    sha = sandbox.commit_push("feature.txt", "v2\n")
+    sandbox.deploy(sha, check=True, extra={"KEEP_BACKUPS": "2"})
+    kept = sorted(p.name for p in mirror.glob("newsbot-archive-*.db"))
+    assert kept == ["newsbot-archive-c.db", "newsbot-archive-d.db"], "فقط تازه‌ترین آرشیوها می‌مانند"
+    assert (mirror / "notes.txt").exists(), "فایل نامرتبط نباید حذف شود"
+    assert (mirror / "manual.db").exists(), "فایل با نامِ متفاوت نباید حذف شود"

@@ -39,8 +39,10 @@ Deploy: preflight (وجود secrets) ──▶ checkout ──▶ scp deploy.sh 
 
 | مرحله | شکست چه می‌شود؟ |
 |---|---|
-| preflight (git/python3/systemctl/.env/.venv) | هیچ تغییری در کد/سرویس نمی‌شود |
+| preflight (git/python3/systemctl/.env/venv) | هیچ تغییری در کد/سرویس نمی‌شود |
+| تعیین مسیر دیتابیس (خواندن `.env` با پیکربندیِ خودِ برنامه) | قبل از هر تغییری متوقف؛ مسیر حدس زده نمی‌شود (بخش ۳.۱) |
 | بکاپ آنلاین (`sqlite3.backup` — سازگار با WAL) | قبل از هر تغییری متوقف (OPS-04/D12) |
+| کپیِ آرشیوِ مقالات (پوشهٔ `backups` کنارِ دیتابیس) | نبودِ پوشه مجاز است؛ **کپی ناموفق ⇒ توقف** پیش از هر تغییری (OPS-10) |
 | sync به SHA | سرویس دست‌نخورده؛ کد یا reset شده یا نه (rollback لازم نیست) |
 | نصب requirements / دروازه (`compileall` + `run.py --check`) | **کد به SHA قبلی برمی‌گردد**؛ سرویس هرگز restart نشده (OPS-03) |
 | سلامت بعد از restart (۱۰× فعال‌شدن + NRestarts=0 + نبود traceback تازه در ۲ دقیقهٔ اخیر ژورنال) | **کد برمی‌گردد و سرویس دوباره روی کد قبلی restart می‌شود** — رول‌بک واقعی نه فقط ادعا (OPS-15/D7) |
@@ -48,6 +50,38 @@ Deploy: preflight (وجود secrets) ──▶ checkout ──▶ scp deploy.sh 
 نشانگرها در `APP_DIR`:
 - `.deployed_sha` — نسخهٔ فعلیِ مستقر (فقط پس از سلامت کامل)
 - `.deployed_sha.prev` — نسخهٔ قبلی (پیش از sync نوشته می‌شود؛ مبنای rollback)
+
+### ۳.۱ تعیین مسیر دیتابیس و بکاپ (پیش‌فرض‌های همین کد)
+
+`deploy.sh` مسیر دیتابیس را **حدس نمی‌زند**: همان ماژولی را که خودِ ربات import می‌کند
+(`newsbot/config.py`) در همان مفسرِ سرویس اجرا می‌کند و `DB_FILE`/`DB_BACKEND` را از
+`.env` با همان parser (`python-dotenv`) می‌خواند. قواعد قابل‌اثبات از روی کد:
+
+| وضعیت | رفتار `deploy.sh` |
+|---|---|
+| `DB_FILE` تعریف‌نشده | پیش‌فرض برنامه: `newsbot.db` نسبت به `WorkingDirectory` سرویس |
+| `DB_FILE` نسبی | نسبت به `WorkingDirectory` سرویس حل می‌شود (همان قرارداد `sqlite3.connect`) |
+| `DB_FILE` مطلق | عیناً استفاده می‌شود |
+| `DB_FILE=` خالی | خطا: مسیر حدس زده نمی‌شود |
+| `WorkingDirectory` نامعلوم (DB نسبی) | خطا؛ `DEPLOY_WORKING_DIR` یا `DEPLOY_DB_FILE` لازم است |
+| فایل دیتابیس پیکربندی‌شده موجود نیست | خطا: «database not found … refusing to deploy without a backup»؛ برای استقرار اولیه `ALLOW_MISSING_DB=1` |
+| `DB_BACKEND=d1` | دیتابیس محلی مرجع نیست: بکاپ SQLite محلی گرفته نمی‌شود و پیام صریح داده می‌شود |
+
+متغیرهای اختیاری (همگی از محیطِ اجرای `deploy.sh`):
+
+| متغیر | کار |
+|---|---|
+| `DEPLOY_DB_FILE` | مسیر صریح دیتابیس؛ بر `DB_FILE` از `.env` مقدم است (نسبی ⇒ نسبت به `WorkingDirectory`) |
+| `DEPLOY_DB_BACKEND` | بک‌اند صریح (`sqlite`/`d1`)؛ بر `DB_BACKEND` مقدم است |
+| `DEPLOY_WORKING_DIR` | مسیر کاری سرویس، وقتی از یونیت قابل‌خواندن نیست |
+| `ALLOW_MISSING_DB=1` | اجازهٔ استقرار اولیه بدون دیتابیس (بکاپ گرفته نمی‌شود و هشدار چاپ می‌شود) |
+
+اگر یونیت `DB_FILE`/`DB_BACKEND` را در `Environment=` تعریف کند یا `EnvironmentFile` دیگری
+داشته باشد، `deploy.sh` هشدار می‌دهد و از حدس‌زدن پرهیز می‌کند؛ در آن حالت
+`DEPLOY_DB_FILE`/`DEPLOY_DB_BACKEND` را بدهید تا سرویس و اسکریپت دقیقاً یک مقدار ببینند.
+
+مسیر آرشیوِ مقالات هم از همان دیتابیسِ حل‌شده مشتق می‌شود: `<پوشهٔ DB>/backups`
+(همان جایی که `newsbot/core_articles.py` snapshot می‌نویسد).
 
 ## ۴. رول‌بک
 
@@ -62,6 +96,9 @@ bash /tmp/newsbot-deploy.sh rollback    # یا نسخهٔ deploy/deploy.sh
 
 rollback: `HEAD ← .deployed_sha.prev` با تأیید `rev-parse`، سپس restart و همان
 دروازهٔ سلامت. تکرارش idempotent است. اگر `.deployed_sha.prev` نبود، متوقف می‌شود.
+**پیش از جایگزینی نسخه، از دیتابیسِ فعلی بکاپِ معتبر گرفته می‌شود** (همان مسیرِ حل‌شدهٔ
+بخش ۳.۱)؛ اگر آن بکاپ شکست بخورد، rollback متوقف می‌شود و **نه دیتابیس و نه نسخهٔ فعال
+تغییر نمی‌کند**. برای بک‌اند `d1` بکاپ محلی گرفته نمی‌شود.
 
 **بازگشت کاملِ محیط (که ادعاشده بود ولی در کد نبود — D7):**
 
@@ -73,19 +110,23 @@ rollback: `HEAD ← .deployed_sha.prev` با تأیید `rev-parse`، سپس res
 
 - **روش:** `sqlite3.backup` (پروتکل رسمی — زیر WAL هم یکپارچه). `cp` خامِ دیتابیسِ
   در حال نوشتن ممنوع (OPS-04).
-- **مکان:** `/opt/backups/newsbot-YYYYMMDD-HHMMSS.<pid>.db` با `chmod 600`؛ فقط ۷ نسخهٔ
-  اخیر نگه داشته می‌شود.
-- **بازیابی:**
+- **مکان:** `BACKUP_DIR` (پیش‌فرض کد: `/opt/backups`) با نام
+  `newsbot-YYYYMMDD-HHMMSS.<pid>.db` و `chmod 600`؛ فقط `KEEP_BACKUPS` نسخهٔ اخیر
+  (پیش‌فرض کد: ۷) نگه داشته می‌شود.
+- **آرشیوِ مقالات:** پوشهٔ `backups` کنارِ دیتابیس به `BACKUP_DIR/archive` آینه می‌شود؛
+  در آن پوشه هم فقط فایل‌های `newsbot-archive-*.db` تا `KEEP_BACKUPS` تازه نگه داشته
+  می‌شوند و فایل‌های دیگر دست‌نخورده می‌مانند.
+- **بازیابی** (مسیرِ دیتابیس را با `DB_FILE`/`WorkingDirectory` خودتان تعیین کنید):
 
 ```bash
-systemctl stop bot-ai-automatic
+systemctl stop newsbot.service
 python3 - <<'PY'
 import sqlite3
 src = sqlite3.connect('/opt/backups/newsbot-<stamp>.db')
-dst = sqlite3.connect('/opt/bot-ai-automatic/newsbot.db')
+dst = sqlite3.connect('<مسیر دیتابیسِ پیکربندی‌شده>')
 src.backup(dst); dst.close(); src.close()
 PY
-systemctl start bot-ai-automatic
+systemctl start newsbot.service
 ```
 
 - **اثباتِ بازیابی:** دو مسیر جداگانه تمرین شده‌اند:
@@ -100,7 +141,7 @@ systemctl start bot-ai-automatic
 
 1. **توقف ربات توصیه‌شده:** اگر ربات در ۵ دقیقهٔ گذشته heartbeat زده باشد، ابزار بدون
    `--force` اجرا نمی‌شود (گارد `LIVE_HEARTBEAT_SEC=300`). اول سرویس را ببندید:
-   `systemctl stop bot-ai-automatic`.
+   `systemctl stop newsbot.service`.
 2. ابزار خودش از مبدأ یک **snapshot سازگار** (`sqlite3.backup`، WAL-safe) می‌سازد؛ حتی در
    اجرای هم‌زمان هم دادهٔ نیمه‌نوشته خوانده نمی‌شود؛ snapshot موقت پایان کار حذف می‌گردد.
 3. **گارد مقصد (DB-03):** اگر D1 داده داشته باشد فقط با `--force`؛ اگر `meta.schema_version`
@@ -168,7 +209,8 @@ add_header Content-Security-Policy "default-src 'self'" always;
 
 ### ۹.۱ نصب تازه — واحد کامل
 
-روی VPS، فایل `/etc/systemd/system/bot-ai-automatic.service`:
+روی VPS، فایل `/etc/systemd/system/newsbot.service` (نام یونیت = پیش‌فرض `SERVICE` در
+`deploy/deploy.sh`؛ مسیرها = پیش‌فرض `APP_DIR` همان اسکریپت):
 
 ```ini
 [Unit]
@@ -180,14 +222,14 @@ StartLimitIntervalSec=0
 [Service]
 Type=notify
 User=botapp
-WorkingDirectory=/opt/bot-ai-automatic
-EnvironmentFile=-/opt/bot-ai-automatic/.env
-ExecStart=/opt/bot-ai-automatic/.venv/bin/python run.py
+WorkingDirectory=/opt/bot-official-telegram
+EnvironmentFile=/opt/bot-official-telegram/.env
+ExecStart=/opt/bot-official-telegram/venv/bin/python run.py
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/bot-ai-automatic
+ReadWritePaths=/opt/bot-official-telegram
 StandardOutput=journal
 StandardError=journal
 Restart=always
@@ -196,7 +238,7 @@ TimeoutStartSec=180
 TimeoutStopSec=60
 WatchdogSec=300
 NotifyAccess=main
-ExecStopPost=/bin/sh -c 'logger -t bot-ai-automatic "stop result=$SERVICE_RESULT exit=$EXIT_CODE status=$EXIT_STATUS"'
+ExecStopPost=/bin/sh -c 'logger -t newsbot "stop result=$SERVICE_RESULT exit=$EXIT_CODE status=$EXIT_STATUS"'
 
 [Install]
 WantedBy=multi-user.target
@@ -204,37 +246,44 @@ WantedBy=multi-user.target
 
 - `User=botapp` کاربر اختصاصیِ غیرمدیر است؛ اگر روی نصب موجود کاربر دیگری دارید،
   unit اصلی را عوض نکنید و از drop-inهای بخش ۹.۲ استفاده کنید.
+- نامِ محیطِ مجازی: `deploy.sh` اول `APP_DIR/venv` را امتحان می‌کند و اگر نبود به
+  `APP_DIR/.venv` برمی‌گردد (`VENV_DIR`)؛ نام پوشه را با یونیت هماهنگ کنید.
+- `WorkingDirectory` لنگرِ حلِ مسیرهای نسبی است: `DB_FILE` نسبی نسبت به همین پوشه
+  حل می‌شود (بخش ۳.۱). اگر `WorkingDirectory` نباشد یا ناشناخته بماند، `deploy.sh`
+  برای `DB_FILE` نسبی خطا می‌دهد و حدس نمی‌زند.
+- `EnvironmentFile` نباید با `-` اختیاری باشد؛ `deploy.sh` در حالت `-` هشدار می‌دهد
+  (حلقهٔ بی‌پایانِ ری‌استارت).
 - `READY=1` را کد فاز ۱۵ در پایان `post_init` می‌فرستد؛ کد قدیمی آن را نمی‌فرستد.
 
 ### ۹.۲ نصب موجود — مرحلهٔ ۱ (همین حالا، با کد فعلی)
 
 ```bash
-cd /opt/bot-ai-automatic
+cd /opt/bot-official-telegram
 install -D -m 0644 deploy/systemd/10-restart-always.conf \
-  /etc/systemd/system/bot-ai-automatic.service.d/10-restart-always.conf
+  /etc/systemd/system/newsbot.service.d/10-restart-always.conf
 systemctl daemon-reload
-systemctl enable bot-ai-automatic
-systemctl reset-failed bot-ai-automatic 2>/dev/null || true
-systemctl restart bot-ai-automatic
-systemctl show bot-ai-automatic -p Restart -p StartLimitIntervalUSec -p ActiveState -p NRestarts
+systemctl enable newsbot.service
+systemctl reset-failed newsbot.service 2>/dev/null || true
+systemctl restart newsbot.service
+systemctl show newsbot.service -p Restart -p StartLimitIntervalUSec -p ActiveState -p NRestarts
 ```
 
 انتظار: `Restart=always` · `StartLimitIntervalUSec=0` · `ActiveState=active`.
-`ExecStopPost` دلیل هر توقف را با تگ `bot-ai-automatic` در ژورنال ثبت می‌کند.
+`ExecStopPost` دلیل هر توقف را با تگ `newsbot` در ژورنال ثبت می‌کند.
 دلیل حادثهٔ واقعی: `Restart=on-failure` + رسیدن به سقف start-limit باعث شد سرویس پس از
 ۳۱٬۱۲۰ restart با `Failed with result 'resources'` رها شود.
 
 ### ۹.۳ نصب موجود — مرحلهٔ ۲ (فقط بعد از استقرار کد فاز ۱۵)
 
 ```bash
-cd /opt/bot-ai-automatic
+cd /opt/bot-official-telegram
 ./deploy/deploy.sh deploy <MAIN_SHA>
 install -D -m 0644 deploy/systemd/20-watchdog.conf \
-  /etc/systemd/system/bot-ai-automatic.service.d/20-watchdog.conf
+  /etc/systemd/system/newsbot.service.d/20-watchdog.conf
 systemctl daemon-reload
-systemctl restart bot-ai-automatic
-systemctl show bot-ai-automatic -p Type -p NotifyAccess -p WatchdogUSec -p ActiveState
-journalctl -u bot-ai-automatic -n 80 --no-pager
+systemctl restart newsbot.service
+systemctl show newsbot.service -p Type -p NotifyAccess -p WatchdogUSec -p ActiveState
+journalctl -u newsbot.service -n 80 --no-pager
 ```
 
 انتظار: `Type=notify` · `NotifyAccess=main` · `WatchdogUSec=5min` · `ActiveState=active` و
@@ -266,8 +315,9 @@ sshd کانتینر (فقط IPv6) دسترسی ندارد.
 `python tools/migrate_sqlite_to_d1.py` ستون را منتقل می‌کند. بررسی سریع پس از استقرار:
 
 ```bash
-sqlite3 /opt/bot-ai-automatic/newsbot.db "SELECT value FROM meta WHERE key='schema_version';"   # باید 7 باشد
-sqlite3 /opt/bot-ai-automatic/newsbot.db "SELECT COUNT(*) FROM credit_log;"
+# مسیر دیتابیس = همان چیزی که سرویس استفاده می‌کند (DB_FILE + WorkingDirectory)
+sqlite3 "<مسیر دیتابیسِ پیکربندی‌شده>" "SELECT value FROM meta WHERE key='schema_version';"   # باید 9 باشد
+sqlite3 "<مسیر دیتابیسِ پیکربندی‌شده>" "SELECT COUNT(*) FROM credit_log;"
 ```
 
 **بنچمارک پایهٔ بار (QA-08):** پیش از هر تغییر مهم در لایهٔ دیتابیس و پس از هر استقرار،

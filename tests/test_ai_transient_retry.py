@@ -251,6 +251,18 @@ def test_empty_stream_response_is_not_reported_as_invalid_output(monkeypatch, mo
     assert box["n"] == 2
 
 
+def test_model_unavailable_error_is_transient_and_retried(monkeypatch, model):
+    """«This model is currently unavailable. Please try again later.» گذراست (نه دائمی)."""
+    box = _calls(monkeypatch, [FakeResp(200, {"error": {"message": "This model is currently unavailable. Please try again later.",
+                                                         "code": "service_unavailable"}}),
+                               FakeResp(200, _ok_payload("READY"))])
+    out, label, err = asyncio.run(amod.ai_chat("sys", "user"))
+    assert err is None and out == "READY", f"خطای «مدل موقتاً در دسترس نیست» باید دوباره امتحان شود: {err}"
+    assert box["n"] == 2
+    row = q("SELECT * FROM ai_models WHERE id=?", (model,), one=True)
+    assert row["fail_count"] == 0 and row["status"] == "ok"
+
+
 def test_transient_retry_is_bounded(monkeypatch, model):
     """تعدادِ تلاشِ دوباره سقف دارد (بی‌نهایت تکرار ممنوع)."""
     monkeypatch.setattr(config, "AI_TRANSIENT_RETRIES", 2)

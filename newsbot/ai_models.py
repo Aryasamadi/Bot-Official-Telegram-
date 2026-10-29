@@ -102,10 +102,14 @@ def _is_transient_response(r):
     return False
 
 def _error_is_transient(text):
-    """آیا پیامِ خطای provider مربوط به سمتِ سرور است (گذرا) یا سمتِ درخواست (دائمی)؟"""
+    """آیا پیامِ خطای provider مربوط به سمتِ سرور است (گذرا) یا سمتِ درخواست (دائمی)؟
+
+    پیامِ «This model is currently unavailable. Please try again later.» در تولیدِ واقعی
+    از vyceai.com دیده شد ⇒ گذراست (وگرنه مدل ساعت‌ها خاموش می‌ماند)."""
     t = str(text or "").lower()
     return any(k in t for k in ("timeout", "timed out", "overload", "upstream", "temporar",
                                 "too many requests", "rate limit", "service unavailable",
+                                "currently unavailable", "model unavailable", "try again later",
                                 "internal error", "bad gateway", "try again"))
 
 def _error_message(err):

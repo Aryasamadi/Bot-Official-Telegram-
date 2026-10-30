@@ -719,6 +719,18 @@ def test_a_content_error_does_not_disable_the_rich_path():
         srv.close()
 
 
+def test_a_successful_native_send_is_logged(caplog):
+    """لاگ باید نشان دهد پیام بومی فرستاده شد (نه اینکه به مسیر کلاسیک رفته باشد)."""
+    srv = FakeTelegram("ok")
+    try:
+        bot = Bot(srv)
+        with caplog.at_level("INFO", logger="core"):
+            asyncio.run(rich_send.send_content(bot, 55, POST_HTML))
+        assert "rich message sent natively" in caplog.text
+    finally:
+        srv.close()
+
+
 def test_a_content_error_mentioning_unsupported_does_not_disable_the_rich_path():
     """«unsupported» دربارهٔ *محتوا* است، نه دربارهٔ نبودِ قابلیت ⇒ مدار باز می‌ماند."""
     srv = FakeTelegram("unsupported_content")

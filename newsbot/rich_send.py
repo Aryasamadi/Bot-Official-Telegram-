@@ -256,6 +256,10 @@ async def send_content(bot, chat_id, text, *, kind=None, doc=None, reply_to_mess
                                               disable_notification=disable_notification,
                                               is_rtl=is_rtl)
                 _note_success()
+                # لاگِ موفقیت: تا وقتی این نبود، از روی لاگ معلوم نبود که پیام بومی
+                # واقعاً فرستاده شده یا به مسیر کلاسیک افتاده است.
+                log.info("rich message sent natively: chat=%s blocks=%s chars=%s",
+                         chat_id, len(document.blocks), len(rich_html))
                 return msg
             except BadRequest as e:
                 # ۴xx یعنی «چیزی ارسال نشد» ⇒ fallback بی‌خطر است.

@@ -220,6 +220,33 @@ def test_provider_request_uses_streaming_and_falls_back_when_refused(monkeypatch
     assert "stream" not in bodies[-1], "درخواستِ دوم باید بدونِ stream باشد"
 
 
+def test_stream_usage_is_requested_and_dropping_it_keeps_the_stream(monkeypatch, model):
+    """مصرفِ توکن در پاسخِ جریانی فقط با «include_usage» می‌آید.
+
+    ریشهٔ خرابیِ حسابداریِ توکن: بعد از فعال‌شدنِ stream، هیچ provider پارامترِ
+    include_usage را نگرفت ⇒ مصرفِ هر فراخوانی ثبت نمی‌شد و «توکنِ ۲۴ساعته» خالی ماند.
+    اگر provider پارامتر را رد کند ⇒ باید *همچنان جریانی* بمانیم (جریان فقط وقتی رها
+    می‌شود که خودِ stream هم رد شود).
+    """
+    bodies = []
+
+    async def _fake(url, **kw):
+        bodies.append(dict(kw.get("json") or {}))
+        if len(bodies) == 1:
+            return FakeResp(400, _err_payload(400, "unsupported parameter: stream_options"))
+        if len(bodies) == 2:
+            return FakeResp(200, _ok_payload("READY"))
+        return FakeResp(200, _ok_payload("READY"))
+    monkeypatch.setattr(amod, "_post", _fake)
+    out, label, err = asyncio.run(amod.ai_chat("sys", "user"))
+    assert err is None and out == "READY", f"مسیرِ fallback باید کار کند: {err}"
+    assert bodies[0].get("stream") is True
+    assert bodies[0].get("stream_options") == {"include_usage": True}, "مصرفِ توکن باید درخواست شود"
+    assert len(bodies) >= 2
+    assert bodies[1].get("stream") is True, "جریان نباید فقط به‌خاطرِ پارامترِ مصرف رها شود"
+    assert "stream_options" not in bodies[1], "پارامترِ ردشده نباید دوباره فرستاده شود"
+
+
 def test_http_client_is_rebuilt_for_a_new_event_loop():
     """کلاینتِ مشترکِ HTTP به حلقهٔ رویداد گره خورده است؛ با حلقهٔ تازه باید بازسازی شود
     (وگرنه httpx خطای «attached to a different loop» می‌دهد و درخواستِ AI می‌میرد)."""

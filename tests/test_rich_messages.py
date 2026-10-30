@@ -253,6 +253,9 @@ class FakeTelegram:
             return 404, {"ok": False, "error_code": 404, "description": "Not Found: method not found"}
         if self.mode == "bad_parse":
             return 400, {"ok": False, "error_code": 400, "description": "Bad Request: can't parse rich message"}
+        if self.mode == "unsupported_content":
+            return 400, {"ok": False, "error_code": 400,
+                         "description": "Bad Request: unsupported rich message element: <blink>"}
         if self.mode == "server_error":
             return 500, {"ok": False, "error_code": 500, "description": "Internal Server Error"}
         if self.mode == "flood":
@@ -706,6 +709,19 @@ def test_rtl_is_decided_by_the_text_not_by_the_html_tags():
 
 def test_a_content_error_does_not_disable_the_rich_path():
     srv = FakeTelegram("bad_parse")
+    try:
+        bot = Bot(srv)
+        for _ in range(5):
+            asyncio.run(rich_send.send_content(bot, 55, POST_HTML))
+            assert rich_send.rich_available() is True, \
+                "خطای محتوایی نباید پیام بومی را برای کل فرایند خاموش کند"
+    finally:
+        srv.close()
+
+
+def test_a_content_error_mentioning_unsupported_does_not_disable_the_rich_path():
+    """«unsupported» دربارهٔ *محتوا* است، نه دربارهٔ نبودِ قابلیت ⇒ مدار باز می‌ماند."""
+    srv = FakeTelegram("unsupported_content")
     try:
         bot = Bot(srv)
         for _ in range(5):

@@ -23,6 +23,7 @@ from newsbot.core_channels import get_channel, get_settings, msg_link
 from newsbot.core_articles import (get_article, article_update, get_pub_journal, set_pub_journal, reserve_publication,
                                    release_publication, settle_publication, posted_before, PublicationTransport)
 from newsbot.text_format import clean_ai_text, strip_source_url, split_post_html, hard_html, downgrade_html, strip_tags
+from newsbot import rich_send
 from newsbot.generate import signature_of
 from newsbot.opctx import operation_checkpoint, _current_operation
 from newsbot.ui_widgets import esc
@@ -183,7 +184,9 @@ async def send_post(bot, chat_id, text, media=None):
 
 async def _send_post_locked(bot, chat_id, text, media=None):
     """رسانه + کپشنِ یک‌تکه (کپشن همیشه زیر محدودیت ۱۰۲۴ تلگرام می‌ماند) · خطای پارس → تنزل تدریجی فرمت (معمولی → ساده).
-    هیچ‌وقت پست را به دو پیام نمی‌شکند: ادامهٔ محتوا فقط از راه «بیشتر» داخل ربات دیده می‌شود."""
+    هیچ‌وقت پست را به دو پیام نمی‌شکند: ادامهٔ محتوا فقط از راه «بیشتر» داخل ربات دیده می‌شود.
+    مسیرِ متنی اول با پیامِ بومیِ تلگرام (تیتر/جدول/فهرست واقعی) امتحان می‌شود و در صورت
+    عدم پشتیبانیِ سرور، خودکار به پیامِ کلاسیک تنزل می‌کند — محتوا هیچ‌وقت حذف نمی‌شود."""
     variants = [(text, "HTML"), (downgrade_html(text), "HTML"), (strip_tags(text), None)]
     sent_media = SimpleNamespace(message_id=media["_sent_id"]) if media and media.get("_sent_id") else None
     for i, (t, pm) in enumerate(variants):
@@ -197,7 +200,11 @@ async def _send_post_locked(bot, chat_id, text, media=None):
                 m = sent_media or await _send_media(bot, chat_id, cap, pm, media)
                 if m: return m
             if len(t) > config.MSG_LIMIT: t = hard_html(t, config.MSG_LIMIT - 100)   # وگرنه پست بالای ۴۰۹۶ با «too long» هرگز منتشر نمی‌شد
-            return await bot.send_message(chat_id, t, parse_mode=pm, disable_web_page_preview=True, **({"reply_to_message_id": sent_media.message_id} if sent_media else {}))
+            reply = {"reply_to_message_id": sent_media.message_id} if sent_media else {}
+            if i == 0 and pm == "HTML" and not media:
+                return await rich_send.send_content(bot, chat_id, t, disable_web_page_preview=True,
+                                                    split_legacy=False, **reply)
+            return await bot.send_message(chat_id, t, parse_mode=pm, disable_web_page_preview=True, **reply)
         except RetryAfter as e:
             wait = float(e.retry_after) + 1
             # قبلاً سقف ثابت ۳۰ ثانیه بود: اگر تلگرام ۶۰ ثانیه می‌خواست، بعد از ۳۰ ثانیه دوباره محدود می‌شدیم.
@@ -207,6 +214,10 @@ async def _send_post_locked(bot, chat_id, text, media=None):
             if media and not sent_media and cap is not None:
                 m = await _send_media(bot, chat_id, cap, pm, media)
                 if m: return m
+            if i == 0 and pm == "HTML" and not media:
+                # همان مسیرِ اول (بومی) دوباره امتحان می‌شود تا قالبِ پیام هم یکسان بماند
+                return await rich_send.send_content(bot, chat_id, t, disable_web_page_preview=True,
+                                                    split_legacy=False, **reply)
             return await bot.send_message(chat_id, t, parse_mode=pm, disable_web_page_preview=True, **({"reply_to_message_id": sent_media.message_id} if sent_media else {}))
         except BadRequest as e:
             if _is_parse_err(e) and i < len(variants) - 1: continue

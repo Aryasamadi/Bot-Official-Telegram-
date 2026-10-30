@@ -103,6 +103,14 @@ MAX_MEDIA_BYTES = MAX_MEDIA_MB * 1024 * 1024
 MAX_PAGE_BYTES = _env_int("MAX_PAGE_MB", 8, 1) * 1024 * 1024
 CAPTION_LIMIT, MSG_LIMIT = 1024, 4096
 RETRY_AFTER_MAX = _env_int("RETRY_AFTER_MAX", 120, 5, 600)
+# پیام بومی تلگرام (Rich Messages): "auto" با پشتیبانیِ خودکار و fallback،
+# "on" اجباری، "off" فقط پیام کلاسیک.
+RICH_MESSAGES = os.getenv("RICH_MESSAGES", "auto").strip().lower()
+if RICH_MESSAGES not in ("auto", "on", "off"):
+    CONFIG_ERRORS.append(f"RICH_MESSAGES='{RICH_MESSAGES}' نامعتبر است ⇒ auto استفاده شد")
+    RICH_MESSAGES = "auto"
+RICH_MAX_CHARS = _env_int("RICH_MAX_CHARS", 32000, 1024, 32768)
+RICH_FAIL_LIMIT = _env_int("RICH_FAIL_LIMIT", 3, 1, 20)
 # ARCH-02 (فاز ۷): سقفِ کلِ یک درخواست fetch/دانلود رسانه — httpx فقط per-read timeout دارد
 FETCH_TOTAL_SEC = max(5, _env_int("FETCH_TOTAL_SEC", 60, 5, 3600))
 MEDIA_TOTAL_SEC = max(10, _env_int("MEDIA_TOTAL_SEC", 600, 10, 7200))

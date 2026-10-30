@@ -2,15 +2,15 @@
 """دستورات، دکوریتور مدیریت‌شده (ضد سوءاستفاده) و دیپ‌لینک «بیشتر».
 NEW v4: پیشوند ref_ در /start انتساب ارجاع را ثبت می‌کند (قبل از r_؛ «ref_» هرگز با «r_» collide نمی‌کند).
 """
-import asyncio, html
-from telegram.error import BadRequest
+import html
 from newsbot import config
 from newsbot.logutils import log
 from newsbot.ratelimit import rate_ok, global_rate_ok
 from newsbot.core_users import ensure_user, is_super, user_lang, can_admin
 from newsbot.core_payments import support_open
 from newsbot.net_http import load_deeplink
-from newsbot.text_format import fit_html, split_html, downgrade_html, preview_text
+from newsbot.text_format import fit_html, preview_text
+from newsbot import rich_send
 from newsbot.ui_i18n import tr, gtext
 from newsbot.ui_widgets import B, render, popup, operation_text, run_user_operation, go_home
 from newsbot.ui_views_user import view_lang, view_plans, view_referral
@@ -59,10 +59,7 @@ async def send_deeplink(update, context, key):
     if media.get("kind") in ("photo", "video", "animation"):
         try: await getattr(context.bot, f"send_{media['kind']}")(chat_id, media["url"], caption=preview_text(short, 100), parse_mode="HTML")
         except Exception as e: log.warning(f"deeplink media: {e}")
-    for chunk in split_html(body):
-        try: await context.bot.send_message(chat_id, chunk, parse_mode="HTML", disable_web_page_preview=True)
-        except BadRequest: await context.bot.send_message(chat_id, downgrade_html(chunk), parse_mode="HTML", disable_web_page_preview=True)
-        await asyncio.sleep(.3)
+    await rich_send.send_content(context.bot, chat_id, body)
 
 async def cmd_start(update, context):
     lang = await _prep(update, context)

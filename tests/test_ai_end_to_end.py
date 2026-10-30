@@ -133,6 +133,19 @@ def provider(monkeypatch):
     p.stop()
 
 
+@pytest.fixture(autouse=True)
+def _clean_e2e_models():
+    """مدل‌های آزمون نباید به آزمون‌های دیگر نشت کنند.
+
+    نشتِ یک مدلِ فعال، کدِ خطای «همهٔ مدل‌ها» را جابه‌جا می‌کند و آزمون‌های
+    دیگر را بی‌دلیل خراب می‌کند (این دقیقاً همان اتفاقی بود که در CI افتاد:
+    آزمون‌های transient به‌خاطرِ مدل‌های باقی‌مانده «ai_all_failed» گرفتند).
+    """
+    yield
+    q("DELETE FROM ai_models WHERE name LIKE 'e2e-%'", commit=True)
+    q("DELETE FROM ai_usage WHERE model_id NOT IN (SELECT id FROM ai_models)", commit=True)
+
+
 def _add_model(base_url, name, priority=10, model_name=None):
     q("DELETE FROM ai_models WHERE name=?", (name,), commit=True)
     amod.add_model(base_url, "sk-test-not-a-real-key", model_name or ("test-model-" + name), name=name, priority=priority)

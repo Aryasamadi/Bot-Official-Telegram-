@@ -5,6 +5,7 @@
 import asyncio, html, os, time
 from datetime import timedelta
 from newsbot import config
+from newsbot import rich_format
 from newsbot.db import q, gget, gset, arun, arun_maint
 from newsbot.logutils import log, log_event, metrics_text
 from newsbot.timeutils import now_utc, now_iso, parse_dt, fmt_date, ago_text, off_label
@@ -296,81 +297,136 @@ def _do_cleanup():
     except Exception as e:
         log_event("ERROR", f"cleanup: {type(e).__name__}: {e}", exc_info=True, error_class=type(e).__name__)
 
-def report_text(uid=None, cid=None, lang="fa"):
+def report_markdown(uid=None, cid=None, lang="fa"):
+    """ساختارِ گزارش به‌صورت مارک‌داونِ ساختاریافته (تیتر/بخش/فهرست).
+
+    متنِ نهایی با موتورِ مشترکِ قالب‌بندی ساخته می‌شود؛ همین متن می‌تواند
+    به‌صورت پیامِ بومیِ تلگرام هم فرستاده شود.
+    """
     from newsbot.core_channels import get_settings as _gs
     fa = lang != "en"; hb = gget("heartbeat"); hb_age = (now_utc() - parse_dt(hb)).total_seconds() if hb else 1e9; hb_icon = "🟢" if hb_age < config.TICK_SECONDS * 4 else "🔴"
     if cid is None:
         roles = {r["role"]: r["c"] for r in count_users()}; models = list_models(); ok = sum(1 for m in models if m["active"] and m["status"] == "ok"); down = sum(1 for m in models if m["active"] and m["status"] == "down")
         tk = tokens_today()   # PLB-03 (فاز ۷): متریک توکن/هزینهٔ AI از جدول ai_usage
         size = os.path.getsize(config.DB_FILE) / 1024 / 1024 if os.path.exists(config.DB_FILE) else 0; auto = gget("automation_enabled", True)
-        # یک اسکن گروه‌بندی‌شده به‌جای ۵ کوئری شمارش جدا (گزارش مالک روی دیتابیس بزرگ محسوس بود)
+        # یک اسکن گروه‌بندی‌شده به‌جای ۵ کوئری شمارش جدا (گزارش مالک روی دیتابیس بزرگ محسوب بود)
         _a24 = {r["status"]: r["c"] for r in q("SELECT status, COUNT(*) c FROM articles WHERE created_at >=? GROUP BY status", ((now_utc() - timedelta(hours=24)).isoformat(),))}
         _a72r = q("SELECT COUNT(*) c FROM articles WHERE created_at >=? AND status='ready'", ((now_utc() - timedelta(hours=72)).isoformat(),), one=True)["c"]
         n = lambda st=None, h=24: sum(_a24.values()) if st is None else _a24.get(st, 0)
         nq = _a72r
-        if fa: return (f"📊 <b>گزارش سیستم</b>\n\n"
-                       f"{'🟢' if auto else '🔴'} اتوماسیون · 💓 {ago_text(hb, lang)} {hb_icon}\n"
-                       f"⚖️ صف زمان‌بند {gget('load_due', 0)}\n"
-                       f"👥 کاربران {sum(roles.values())} · مدیران {roles.get('admin', 0)} · کلان {roles.get('super', 0)}\n"
-                       f"🧾 پلن‌ها {len(list_plans())} · 🛎 پرداخت معلق {len(pay_pending())} · 🎟 کد تخفیف {len(disc_list())}\n"
-                       f"🤖 مدل‌ها ✅{ok} 🔴{down} از {len(models)}\n"
-                       f"🧮 توکن AI ۲۴h: {tk['calls']} فراخوانی · ↑{tk['prompt']} ↓{tk['completion']}\n"
-                       f"📢 کانال‌ها {q('SELECT COUNT(*) c FROM channels', one=True)['c']} · 🌐 منابع فعال {q('SELECT COUNT(*) c FROM sources WHERE active=1', one=True)['c']}\n"
-                       f"📰 ۲۴h · 🔎 کشف {n()} · ✅ منتشر {n('published')} · ♻️ ردشده {n('rejected')}\n"
-                       f"❌ ناموفق {n('failed')} · 📝 صف {nq}\n"
-                       f"🔗 دیپ‌لینک {q('SELECT COUNT(*) c FROM deeplinks', one=True)['c']} · {'☁️ CF KV' if config.CF_ENABLED else '💾 محلی'} · 💾 {size:.2f} MB\n"
-                       f"🕐 چرخه {fmt_date(gget('last_cycle_start'), config.DEFAULT_UTC_OFFSET, True)} ➜ {fmt_date(gget('last_cycle_end'), config.DEFAULT_UTC_OFFSET, True)}\n"
+        if fa: return ("# 📊 گزارش سیستم\n\n"
+                       "## وضعیت\n"
+                       f"- {'🟢' if auto else '🔴'} اتوماسیون\n"
+                       f"- 💓 {ago_text(hb, lang)} {hb_icon}\n"
+                       f"- ⚖️ صف زمان‌بند {gget('load_due', 0)}\n\n"
+                       "## کاربران و پلن‌ها\n"
+                       f"- 👥 کاربران {sum(roles.values())}\n"
+                       f"- 👑 مدیران {roles.get('admin', 0)}\n"
+                       f"- 🛡 کلان {roles.get('super', 0)}\n"
+                       f"- 🧾 پلن‌ها {len(list_plans())}\n"
+                       f"- 🛎 پرداخت معلق {len(pay_pending())}\n"
+                       f"- 🎟 کد تخفیف {len(disc_list())}\n\n"
+                       "## مدل‌ها و هوش مصنوعی\n"
+                       f"- 🤖 مدل‌ها ✅{ok} 🔴{down} از {len(models)}\n"
+                       f"- 🧮 توکن AI ۲۴h: {tk['calls']} فراخوانی · ↑{tk['prompt']} ↓{tk['completion']}\n\n"
+                       "## کانال‌ها و منابع\n"
+                       f"- 📢 کانال‌ها {q('SELECT COUNT(*) c FROM channels', one=True)['c']}\n"
+                       f"- 🌐 منابع فعال {q('SELECT COUNT(*) c FROM sources WHERE active=1', one=True)['c']}\n\n"
+                       "## ۲۴ ساعت اخیر\n"
+                       f"- 🔎 کشف {n()}\n"
+                       f"- ✅ منتشر {n('published')}\n"
+                       f"- ♻️ ردشده {n('rejected')}\n"
+                       f"- ❌ ناموفق {n('failed')}\n"
+                       f"- 📝 صف {nq}\n\n"
+                       "## سیستم\n"
+                       f"- 🔗 دیپ‌لینک {q('SELECT COUNT(*) c FROM deeplinks', one=True)['c']}\n"
+                       f"- {'☁️ CF KV' if config.CF_ENABLED else '💾 محلی'}\n"
+                       f"- 💾 {size:.2f} MB\n"
+                       f"- 🕐 چرخه {fmt_date(gget('last_cycle_start'), config.DEFAULT_UTC_OFFSET, True)} ➜ {fmt_date(gget('last_cycle_end'), config.DEFAULT_UTC_OFFSET, True)}\n\n"
                        + metrics_text(lang))
-        return (f"📊 <b>System report</b>\n\n"
-                f"{'🟢' if auto else '🔴'} automation · 💓 {ago_text(hb, lang)} {hb_icon}\n"
-                f"⚖️ scheduler queue {gget('load_due', 0)}\n"
-                f"👥 users {sum(roles.values())} · admins {roles.get('admin', 0)} · super {roles.get('super', 0)}\n"
-                f"🧾 plans {len(list_plans())} · 🛎 pending payments {len(pay_pending())} · 🎟 discount codes {len(disc_list())}\n"
-                f"🤖 models ✅{ok} 🔴{down} of {len(models)}\n"
-                f"🧮 AI tokens 24h: {tk['calls']} calls · ↑{tk['prompt']} ↓{tk['completion']}\n"
-                f"📢 channels {q('SELECT COUNT(*) c FROM channels', one=True)['c']} · 🌐 active sources {q('SELECT COUNT(*) c FROM sources WHERE active=1', one=True)['c']}\n"
-                f"📰 24h · 🔎 found {n()} · ✅ published {n('published')} · ♻️ rejected {n('rejected')}\n"
-                f"❌ failed {n('failed')} · 📝 queue {nq}\n"
-                f"🔗 deep links {q('SELECT COUNT(*) c FROM deeplinks', one=True)['c']} · {'☁️ CF KV' if config.CF_ENABLED else '💾 local'} · 💾 {size:.2f} MB\n"
-                f"🕐 cycle {fmt_date(gget('last_cycle_start'), config.DEFAULT_UTC_OFFSET, True)} ➜ {fmt_date(gget('last_cycle_end'), config.DEFAULT_UTC_OFFSET, True)}\n"
+        return ("# 📊 System report\n\n"
+                "## Status\n"
+                f"- {'🟢' if auto else '🔴'} automation\n"
+                f"- 💓 {ago_text(hb, lang)} {hb_icon}\n"
+                f"- ⚖️ scheduler queue {gget('load_due', 0)}\n\n"
+                "## Users & plans\n"
+                f"- 👥 users {sum(roles.values())}\n"
+                f"- 👑 admins {roles.get('admin', 0)}\n"
+                f"- 🛡 super {roles.get('super', 0)}\n"
+                f"- 🧾 plans {len(list_plans())}\n"
+                f"- 🛎 pending payments {len(pay_pending())}\n"
+                f"- 🎟 discount codes {len(disc_list())}\n\n"
+                "## Models & AI\n"
+                f"- 🤖 models ✅{ok} 🔴{down} of {len(models)}\n"
+                f"- 🧮 AI tokens 24h: {tk['calls']} calls · ↑{tk['prompt']} ↓{tk['completion']}\n\n"
+                "## Channels & sources\n"
+                f"- 📢 channels {q('SELECT COUNT(*) c FROM channels', one=True)['c']}\n"
+                f"- 🌐 active sources {q('SELECT COUNT(*) c FROM sources WHERE active=1', one=True)['c']}\n\n"
+                "## Last 24h\n"
+                f"- 🔎 found {n()}\n"
+                f"- ✅ published {n('published')}\n"
+                f"- ♻️ rejected {n('rejected')}\n"
+                f"- ❌ failed {n('failed')}\n"
+                f"- 📝 queue {nq}\n\n"
+                "## System\n"
+                f"- 🔗 deep links {q('SELECT COUNT(*) c FROM deeplinks', one=True)['c']}\n"
+                f"- {'☁️ CF KV' if config.CF_ENABLED else '💾 local'}\n"
+                f"- 💾 {size:.2f} MB\n"
+                f"- 🕐 cycle {fmt_date(gget('last_cycle_start'), config.DEFAULT_UTC_OFFSET, True)} ➜ {fmt_date(gget('last_cycle_end'), config.DEFAULT_UTC_OFFSET, True)}\n\n"
                 + metrics_text(lang))
     s = _gs(cid); ch = get_channel(cid); lim = admin_limits(uid); use = usage_today(uid); off = s.get("tz") or s["utc_offset"]; cap = lambda v: "∞" if v is None else v
     quiet = f"{s['quiet_start']:02d}→{s['quiet_end']:02d}" if s["quiet_start"] is not None and s["quiet_end"] is not None else ("—")
     pname = "∞" if is_super(uid) else (plan_txt(lim["plan"], "name", lang) or ("بدون پلن" if fa else "no plan")); until = f" · {fmt_date(lim['expires'], off)}" if lim["expires"] else ""
     c = lambda st=None: count_articles(cid=cid, hours=24, status=st)
-    if fa: return (f"📊 <b>گزارش</b> · 📢 {html.escape(ch['title'])}\n\n"
-                   f"{'🟢' if s['enabled'] else '🔴'} اتوماسیون: {'روشن' if s['enabled'] else 'خاموش'}\n"
-                   f"⚙️ حالت: {'خودکار' if s['mode'] == 'auto' else 'بازبینی'}\n"
-                   f"🧾 پلن: {html.escape(pname)}{until}\n\n"
-                   f"🌐 منابع فعال: {len(list_sources(cid, True))}\n"
-                   f"📥 در صف انتشار: {ready_count(cid)}\n"
-                   f"📰 کشف ۲۴ ساعت: {c()}\n"
-                   f"♻️ رد‌شده ۲۴ ساعت: {c('rejected')}\n"
-                   f"❌ ناموفق ۲۴ ساعت: {c('failed')}\n\n"
-                   f"📢 پست امروز: {use['posts']}/{cap(lim['daily_posts'])} · این کانال: {channel_posts_today(cid, off)}/{cap(s.get('daily_posts_cap'))}\n"
-                   f"🧪 تست امروز: {use['tests']}/{cap(lim['daily_tests'])}\n\n"
-                   f"⭐ حداقل امتیاز: {s['min_score']}\n"
-                   f"🕰 بازهٔ خبر: {s['lookback_hours']} ساعت\n"
-                   f"⏱ فاصلهٔ چرخه: {s['interval_minutes']} دقیقه\n"
-                   f"🌙 ساعت خاموشی: {quiet}\n"
-                   f"🌍 منطقه: {off_label(off)}\n\n"
-                   f"🕐 آخرین چرخه: {fmt_date(s['last_run'], off, True)}\n"
-                   f"💓 {ago_text(hb, lang)} {hb_icon}")
-    return (f"📊 <b>Report</b> · 📢 {html.escape(ch['title'])}\n\n"
-            f"{'🟢' if s['enabled'] else '🔴'} Automation: {'on' if s['enabled'] else 'off'}\n"
-            f"⚙️ Mode: {'auto' if s['mode'] == 'auto' else 'review'}\n"
-            f"🧾 Plan: {html.escape(pname)}{until}\n\n"
-            f"🌐 Active sources: {len(list_sources(cid, True))}\n"
-            f"📥 In publish queue: {ready_count(cid)}\n"
-            f"📰 Found 24h: {c()}\n"
-            f"♻️ Rejected 24h: {c('rejected')}\n"
-            f"❌ Failed 24h: {c('failed')}\n\n"
-            f"📢 Posts today: {use['posts']}/{cap(lim['daily_posts'])} · this channel: {channel_posts_today(cid, off)}/{cap(s.get('daily_posts_cap'))}\n"
-            f"🧪 Tests today: {use['tests']}/{cap(lim['daily_tests'])}\n\n"
-            f"⭐ Min score: {s['min_score']}\n"
-            f"🕰 News window: {s['lookback_hours']}h\n"
-            f"⏱ Cycle interval: {s['interval_minutes']} min\n"
-            f"🌙 Quiet hours: {quiet}\n"
-            f"🌍 Time zone: {off_label(off)}\n\n"
-            f"🕐 Last cycle: {fmt_date(s['last_run'], off, True)}\n"
-            f"💓 {ago_text(hb, lang)} {hb_icon}")
+    if fa: return ("# 📊 گزارش · 📢 " + html.escape(ch['title']) + "\n\n"
+                   "## وضعیت\n"
+                   f"- {'🟢' if s['enabled'] else '🔴'} اتوماسیون: {'روشن' if s['enabled'] else 'خاموش'}\n"
+                   f"- ⚙️ حالت: {'خودکار' if s['mode'] == 'auto' else 'بازبینی'}\n"
+                   f"- 🧾 پلن: {html.escape(pname)}{until}\n\n"
+                   "## ۲۴ ساعت اخیر\n"
+                   f"- 🌐 منابع فعال: {len(list_sources(cid, True))}\n"
+                   f"- 📥 در صف انتشار: {ready_count(cid)}\n"
+                   f"- 📰 کشف ۲۴ ساعت: {c()}\n"
+                   f"- ♻️ رد‌شده ۲۴ ساعت: {c('rejected')}\n"
+                   f"- ❌ ناموفق ۲۴ ساعت: {c('failed')}\n\n"
+                   "## سهمیه\n"
+                   f"- 📢 پست امروز: {use['posts']}/{cap(lim['daily_posts'])} · این کانال: {channel_posts_today(cid, off)}/{cap(s.get('daily_posts_cap'))}\n"
+                   f"- 🧪 تست امروز: {use['tests']}/{cap(lim['daily_tests'])}\n\n"
+                   "## تنظیمات\n"
+                   f"- ⭐ حداقل امتیاز: {s['min_score']}\n"
+                   f"- 🕰 بازهٔ خبر: {s['lookback_hours']} ساعت\n"
+                   f"- ⏱ فاصلهٔ چرخه: {s['interval_minutes']} دقیقه\n"
+                   f"- 🌙 ساعت خاموشی: {quiet}\n"
+                   f"- 🌍 منطقه: {off_label(off)}\n\n"
+                   "## زمان‌بندی\n"
+                   f"- 🕐 آخرین چرخه: {fmt_date(s['last_run'], off, True)}\n"
+                   f"- 💓 {ago_text(hb, lang)} {hb_icon}")
+    return ("# 📊 Report · 📢 " + html.escape(ch['title']) + "\n\n"
+            "## Status\n"
+            f"- {'🟢' if s['enabled'] else '🔴'} Automation: {'on' if s['enabled'] else 'off'}\n"
+            f"- ⚙️ Mode: {'auto' if s['mode'] == 'auto' else 'review'}\n"
+            f"- 🧾 Plan: {html.escape(pname)}{until}\n\n"
+            "## Last 24h\n"
+            f"- 🌐 Active sources: {len(list_sources(cid, True))}\n"
+            f"- 📥 In publish queue: {ready_count(cid)}\n"
+            f"- 📰 Found 24h: {c()}\n"
+            f"- ♻️ Rejected 24h: {c('rejected')}\n"
+            f"- ❌ Failed 24h: {c('failed')}\n\n"
+            "## Quota\n"
+            f"- 📢 Posts today: {use['posts']}/{cap(lim['daily_posts'])} · this channel: {channel_posts_today(cid, off)}/{cap(s.get('daily_posts_cap'))}\n"
+            f"- 🧪 Tests today: {use['tests']}/{cap(lim['daily_tests'])}\n\n"
+            "## Settings\n"
+            f"- ⭐ Min score: {s['min_score']}\n"
+            f"- 🕰 News window: {s['lookback_hours']}h\n"
+            f"- ⏱ Cycle interval: {s['interval_minutes']} min\n"
+            f"- 🌙 Quiet hours: {quiet}\n"
+            f"- 🌍 Time zone: {off_label(off)}\n\n"
+            "## Schedule\n"
+            f"- 🕐 Last cycle: {fmt_date(s['last_run'], off, True)}\n"
+            f"- 💓 {ago_text(hb, lang)} {hb_icon}")
+
+
+def report_text(uid=None, cid=None, lang="fa"):
+    """گزارشِ HTML برای پنل (همان ساختارِ ساختاریافتهٔ گزارش، با قالبِ کلاسیک تلگرام)."""
+    return rich_format.render_legacy(rich_format.parse_content(report_markdown(uid, cid, lang),
+                                                                kind=rich_format.KIND_REPORT))

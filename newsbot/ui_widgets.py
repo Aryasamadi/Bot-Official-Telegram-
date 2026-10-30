@@ -14,6 +14,7 @@ from newsbot import config
 from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc
 from newsbot.text_format import strip_tags
+from newsbot import rich_send
 from newsbot.core_users import user_lang, is_super, can_admin
 from newsbot.ratelimit import rate_ok, rate_left
 from newsbot.ai_models import (ai_err_text, test_model, get_model, _model_label,
@@ -628,9 +629,10 @@ async def wiz_prompt(update, context):
 async def notify_supers(text, kb=None):
     """تعداد گیرنده‌های موفق را برمی‌گرداند؛ صفر یعنی هیچ مدیری پیام را ندید (شکست واقعی)."""
     delivered = 0
+    markup = kbm(kb) if kb and isinstance(kb[0][0], tuple) else (InlineKeyboardMarkup(kb) if kb else None)
     for sid in config.SUPER_ADMIN_IDS:
         try:
-            await BOT.send_message(sid, redact(text), parse_mode=HTML, reply_markup=kbm(kb) if kb and isinstance(kb[0][0], tuple) else (InlineKeyboardMarkup(kb) if kb else None), disable_web_page_preview=True)
+            await rich_send.send_content(BOT, sid, redact(text), reply_markup=markup, split_legacy=False)
             delivered += 1
         except Exception as e:
             log.warning("notify super failed (%s)", type(e).__name__)
@@ -639,7 +641,7 @@ async def notify_supers(text, kb=None):
 async def notify_user_fn(uid, text, kb=None):
     """True فقط وقتی تلگرام ارسال را تأیید کرده است؛ outbox/زمان‌بند به این نتیجه وابسته است."""
     try:
-        await BOT.send_message(uid, text, parse_mode=HTML, reply_markup=kbm(kb), disable_web_page_preview=True)
+        await rich_send.send_content(BOT, uid, text, reply_markup=kbm(kb), split_legacy=False)
         return True
     except Exception as e:
         log.warning("notify user failed (%s)", type(e).__name__)

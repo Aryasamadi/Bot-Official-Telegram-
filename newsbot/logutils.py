@@ -97,15 +97,26 @@ def bump(key, n=1, sub=None):
     else: _metrics[key][sub] = _metrics[key].get(sub, 0) + n
 
 def metrics_text(lang="fa"):
+    """بخشِ کارکرد به‌صورت مارک‌داونِ ساختاریافته (برای موتور قالب‌بندیِ گزارش)."""
     from newsbot.db import gget   # import داخلی: جلوگیری از وابستگی دایره‌ای
     d = gget("metrics") or _metrics
     fails = sorted((d.get("model_fail") or {}).items(), key=lambda x: -x[1])[:3]
     cyc = (d.get("cycle_ms", 0) / d["cycle_n"]) if d.get("cycle_n") else 0
     if lang == "en":
-        return (f"📈 <b>Throughput</b> ✅{d.get('posts_ok', 0)} ❌{d.get('posts_fail', 0)} · 🌐 src-fail {d.get('source_fail', 0)}\n"
-                f"🤖 model fails {', '.join(f'{k}:{v}' for k, v in fails) or '—'} · ⏱ cycle ~{cyc / 1000:.1f}s · 📝 queue {d.get('queue', 0)}")
-    return (f"📈 <b>کارکرد</b> ✅{d.get('posts_ok', 0)} ❌{d.get('posts_fail', 0)} · 🌐 شکست منبع {d.get('source_fail', 0)}\n"
-            f"🤖 شکست مدل {', '.join(f'{k}:{v}' for k, v in fails) or '—'} · ⏱ چرخه ~{cyc / 1000:.1f}s · 📝 صف {d.get('queue', 0)}")
+        return ("## Throughput\n"
+                f"- ✅ posts {d.get('posts_ok', 0)}\n"
+                f"- ❌ failed {d.get('posts_fail', 0)}\n"
+                f"- 🌐 src-fail {d.get('source_fail', 0)}\n"
+                f"- 🤖 model fails {', '.join(f'{k}:{v}' for k, v in fails) or '—'}\n"
+                f"- ⏱ cycle ~{cyc / 1000:.1f}s\n"
+                f"- 📝 queue {d.get('queue', 0)}")
+    return ("## کارکرد\n"
+            f"- ✅ موفق {d.get('posts_ok', 0)}\n"
+            f"- ❌ ناموفق {d.get('posts_fail', 0)}\n"
+            f"- 🌐 شکست منبع {d.get('source_fail', 0)}\n"
+            f"- 🤖 شکست مدل {', '.join(f'{k}:{v}' for k, v in fails) or '—'}\n"
+            f"- ⏱ چرخه ~{cyc / 1000:.1f}s\n"
+            f"- 📝 صف {d.get('queue', 0)}")
 
 def _actor_ref(admin_id):
     """SEC-011: شناسهٔ خامِ مدیر در لاگ نباید بنشیند؛ یک اثرانگشتِ کوتاه کافی است."""

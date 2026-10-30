@@ -88,6 +88,9 @@ class PublicationTransport:
     def __getattr__(self, name):
         method = getattr(self.bot, name)
         if not name.startswith("send_"): return method
+        return self._tracked(name, method, text_like=(name == "send_message"))
+    def _tracked(self, name, method, text_like=False):
+        """اجرای یک send تحتِ کنترلِ ژورنال؛ ``text_like`` یعنی پیامِ متنی (فاز ack)."""
         async def send(*args, **kwargs):
             operation_checkpoint()
             if self.parent.cancelling(): raise asyncio.CancelledError
@@ -103,13 +106,19 @@ class PublicationTransport:
                 raise
             except Exception:
                 raise
-            if name != "send_message" and not self.caption_complete:
+            if not text_like and not self.caption_complete:
                 self.journal.update(phase="partial", media_id=message.message_id)
             else:
                 self.journal.update(phase="ack", message_id=message.message_id)
             await arun(set_pub_journal, self.aid, self.journal)
             return message
         return send
+    async def send_rich_message(self, chat_id, rich_html, **kwargs):
+        """پیام بومی تلگرام (Rich Message) با همان کنترلِ ژورنالِ مسیرِ متنی."""
+        from newsbot import rich_send
+        return await self._tracked("send_rich_message",
+                                   lambda *a, **kw: rich_send.send_rich_raw(self.bot, *a, **kw),
+                                   text_like=True)(chat_id, rich_html, **kwargs)
 
 def reserve_publication(aid, admin_id, count_usage, test_user, previous):
     day = today_str(admin_offset(admin_id))

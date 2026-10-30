@@ -31,7 +31,8 @@ from newsbot.publish import publish_article
 from newsbot.cycle import _pub_err
 from newsbot.scheduler import report_text
 from newsbot.logutils import log, log_event
-from newsbot.text_format import fit_html, split_html, strip_tags
+from newsbot.text_format import fit_html, strip_tags
+from newsbot import rich_send
 from newsbot.ui_i18n import tr, TOGGLABLE, tz_city, FIELD_LABEL, SCHED_FIELDS
 from newsbot.ui_widgets import (B, pairs, esc, render, popup, ask, wiz_start, operation_status, onoff,
                                 operation_text, run_user_operation, run_model_test,
@@ -186,7 +187,7 @@ async def _dispatch(update, context, data):
                 if art["full_html"]:
                     fv = art["full_html"]
                     if len(fv) > config.BOT_FULL_MAX: fv, _ = fit_html(fv, config.BOT_FULL_MAX)
-                    for chunk in split_html(tr(lang, "full_head") + fv): await context.bot.send_message(uid, chunk, parse_mode="HTML", disable_web_page_preview=True)
+                    await rich_send.send_content(context.bot, uid, tr(lang, "full_head") + fv)
                 return await view_article(update, context, aid)
             if b == "pub":
                 rem = remaining_pub(uid, cid)

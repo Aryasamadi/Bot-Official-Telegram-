@@ -103,6 +103,41 @@ def test_manual_dispatch_requires_a_sha_and_a_green_ci_run():
     assert "conclusion" in src and "!= \"success\"" in src
 
 
+def test_deploy_fails_fast_when_the_vps_port_is_unreachable():
+    """۲۰ اکتبر ۲۰۲۶: دیوارِ آتشِ سرویس‌دهنده همهٔ ترافیکِ ورودی را دور می‌ریخت و
+    خطا فقط به شکلِ timeoutِ مبهم در مرحلهٔ scp دیده می‌شد. یک پیش‌شرطِ صریح لازم است."""
+    src = _src(DEPLOY_YML)
+    assert "the VPS must accept TCP on the SSH port" in src
+    assert "/dev/tcp/$VPS_HOST/$VPS_PORT" in src, "باید پیش از scp پورتِ SSH سنجیده شود"
+    assert "::error::" in src, "خطای نامفهوم ممنوع؛ پیام باید صریح باشد"
+    # آدرسِ VPS نباید چاپ شود (secret است)
+    assert 'echo "$VPS_HOST"' not in src and "echo $VPS_HOST" not in src
+
+
+def test_ssh_port_is_configurable_without_editing_the_workflow():
+    """پورتِ SSH باید از secret بیاید تا تغییرِ پورت نیازی به ویرایشِ کد نداشته باشد."""
+    src = _src(DEPLOY_YML)
+    assert "secrets.VPS_SSH_PORT" in src
+    assert src.count("port: ${{ env.VPS_PORT }}") == 2, "هر دو اکشن (scp و ssh) باید پورت را از env بگیرند"
+    assert "port: 22" not in src, "پورتِ ثابتِ ۲۲ دیگر نباید hardcode شود"
+
+
+def test_pending_manual_approval_does_not_lock_the_deploy_queue():
+    """قفلِ هم‌زمانی باید در سطحِ job باشد.
+
+    پیش‌تر قفل در سطحِ workflow بود ⇒ یک اجرای معلقِ «در انتظارِ تأییدِ دستی»
+    همهٔ استقرارهای بعدی را قفل می‌کرد (و یک اجرای معلقِ ۲۹ اکتبر، استقرارهای
+    ۳۰ اکتبر را هم متوقف نگه داشت).
+    """
+    src = _src(DEPLOY_YML)
+    head, _, jobs = src.partition("\njobs:")
+    assert "concurrency:" not in head, "قفل نباید در سطحِ workflow باشد"
+    assert "concurrency:" in jobs and "production-vps-deploy" in jobs
+    # قفل باید درونِ تعریفِ job باشد (نه در سطحِ بالاتر)
+    job_block = jobs.split("\n  deploy:", 1)[1]
+    assert "concurrency:" in job_block
+
+
 # ── ابزارهای مهاجرت: پیش‌نمایش بدونِ نوشتن ─────────────────────────────────────────
 def _run(args, env=None):
     e = dict(os.environ)

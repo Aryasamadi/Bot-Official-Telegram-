@@ -72,6 +72,9 @@ async def run_once(owner_id=None, tag="live"):
     s = settings or _default_settings()
     art = dict(SAMPLE_ARTICLE)
     art["published"] = art["published"] or now_iso()
+    # هر اجرا باید واقعاً به پروایدر برسد: «ai_cache» خلاصهٔ همان متن را نگه می‌دارد،
+    # پس بدونِ یک نشانهٔ یکتا، اجرای دوم فقط cache را می‌خواند و «تستِ زنده» نیست.
+    art["text"] = SAMPLE_ARTICLE["text"] + "\n(نشانهٔ اجرای زنده: %s)" % time.strftime("%Y%m%d-%H%M%S") + "-%d" % (time.monotonic_ns() % 100000)
 
     models = amod.list_models(active_only=True, owner_id=owner_id)
     if not models:
@@ -93,12 +96,15 @@ async def run_once(owner_id=None, tag="live"):
     ms = int((time.monotonic() - t0) * 1000)
     after_usage = amod.tokens_today()
 
+    posts_delta = amod.ai_posts_total() - before_posts
+    calls_delta = after_usage["calls"] - before_usage["calls"]
     report.update({
         "error_code": err,
         "model_used": model,
         "duration_ms": ms,
-        "provider_posts": amod.ai_posts_total() - before_posts,
-        "tokens_delta": {"calls": after_usage["calls"] - before_usage["calls"],
+        "provider_posts": posts_delta,
+        "provider_called": bool(posts_delta or calls_delta),
+        "tokens_delta": {"calls": calls_delta,
                          "prompt": after_usage["prompt"] - before_usage["prompt"],
                          "completion": after_usage["completion"] - before_usage["completion"]},
     })

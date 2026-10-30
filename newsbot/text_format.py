@@ -339,6 +339,11 @@ def _hard_split(text, limit):
     return [c for c in chunks if c.strip()]
 
 
+def split_inline_html(text, limit):
+    """یک رشتهٔ HTML درون‌خطی را به تکه‌های معتبر و ≤ limit می‌شکند (بدون حذف محتوا)."""
+    return _hard_split(text, limit)
+
+
 def split_html(text, limit=None):
     """متن را به تکه‌های معتبرِ تلگرام می‌شکند.
 

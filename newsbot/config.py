@@ -103,6 +103,14 @@ MAX_MEDIA_BYTES = MAX_MEDIA_MB * 1024 * 1024
 MAX_PAGE_BYTES = _env_int("MAX_PAGE_MB", 8, 1) * 1024 * 1024
 CAPTION_LIMIT, MSG_LIMIT = 1024, 4096
 RETRY_AFTER_MAX = _env_int("RETRY_AFTER_MAX", 120, 5, 600)
+# پیام بومی تلگرام (Rich Messages): "auto" با پشتیبانیِ خودکار و fallback،
+# "on" اجباری، "off" فقط پیام کلاسیک.
+RICH_MESSAGES = os.getenv("RICH_MESSAGES", "auto").strip().lower()
+if RICH_MESSAGES not in ("auto", "on", "off"):
+    CONFIG_ERRORS.append(f"RICH_MESSAGES='{RICH_MESSAGES}' نامعتبر است ⇒ auto استفاده شد")
+    RICH_MESSAGES = "auto"
+RICH_MAX_CHARS = _env_int("RICH_MAX_CHARS", 32000, 1024, 32768)
+RICH_FAIL_LIMIT = _env_int("RICH_FAIL_LIMIT", 3, 1, 20)
 # ARCH-02 (فاز ۷): سقفِ کلِ یک درخواست fetch/دانلود رسانه — httpx فقط per-read timeout دارد
 FETCH_TOTAL_SEC = max(5, _env_int("FETCH_TOTAL_SEC", 60, 5, 3600))
 MEDIA_TOTAL_SEC = max(10, _env_int("MEDIA_TOTAL_SEC", 600, 10, 7200))
@@ -120,9 +128,12 @@ POST_LIMIT_MAX = 900
 # ── هوش مصنوعی ──
 AI_INPUT_TEXT_CHARS = _env_int("AI_INPUT_TEXT_CHARS", 8000)
 AI_MERGE_MAX_DEPTH = _env_int("AI_MERGE_MAX_DEPTH", 3)
-AI_MAX_CALLS_PER_ARTICLE = _env_int("AI_MAX_CALLS_PER_ARTICLE", 12)
-AI_ARTICLE_TIME_BUDGET = _env_int("AI_ARTICLE_TIME_BUDGET", 300)
-AI_MAX_MODEL_ATTEMPTS = _env_int("AI_MAX_MODEL_ATTEMPTS", 6)
+# P0-C: سقفِ فراخوانی باید *پیش* از خلاصه‌سازی/chunk اعمال شود ⇒ متنِ بلند قطع می‌شود،
+# نه اینکه ده‌ها فراخوانیِ ترتیبی ساخته شود.
+AI_MAX_CALLS_PER_ARTICLE = _env_int("AI_MAX_CALLS_PER_ARTICLE", 12, 2, 60)
+AI_ARTICLE_TIME_BUDGET = _env_int("AI_ARTICLE_TIME_BUDGET", 300, 30, 1800)
+# P0-C: سقفِ «تلاشِ مدل» در هر مقاله — ۲ یعنی حداکثر دو مدل در یک مقاله امتحان می‌شوند.
+AI_MAX_MODEL_ATTEMPTS = _env_int("AI_MAX_MODEL_ATTEMPTS", 2, 1, 20)
 AI_CONTENT_RETRY_MODELS = _env_int("AI_CONTENT_RETRY_MODELS", 1)
 AI_CACHE_TTL_DAYS = _env_int("AI_CACHE_TTL_DAYS", 14)
 AI_DAILY_FREE = _env_int("AI_DAILY_FREE", 20)     # BIZ-01: سقف روزانهٔ AI کاربر بدون پلن/پلن رایگان
@@ -133,12 +144,16 @@ MODEL_PROBE_MIN = 10
 MODEL_PROBE_BATCH = _env_int("MODEL_PROBE_BATCH", 3)
 # ── P0: پایداریِ مسیرِ تولید با AI ──────────────────────────────────────────────
 # سقفِ زمانیِ کلِ یک درخواستِ پروایدر (بودجهٔ fetchِ منابع نباید آن را قطع کند:
-# پیش‌تر FETCH_TOTAL_SEC=60 روی درخواستِ AI هم اعمال می‌شد ⇒ خطای 504ِ کاذب)
-AI_PROVIDER_TIMEOUT_SEC = _env_int("AI_PROVIDER_TIMEOUT_SEC", 240, 10, 900)
+# پیش‌تر FETCH_TOTAL_SEC=60 روی درخواستِ AI هم اعمال می‌شد ⇒ خطای 504ِ کاذب).
+# P0-C: ۲۴۰ ثانیه برای هر مدل یعنی چند دقیقه انتظار برای هر پروایدر ⇒ ۴۵ ثانیه.
+AI_PROVIDER_TIMEOUT_SEC = _env_int("AI_PROVIDER_TIMEOUT_SEC", 45, 10, 900)
 # تلاشِ دوباره برای خطاهای گذرا (۴۲۹/۵xx/timeout) — خطاهای دائمی هرگز تکرار نمی‌شوند
-AI_TRANSIENT_RETRIES = _env_int("AI_TRANSIENT_RETRIES", 2, 0, 5)
+# P0-C: ۱ یعنی حداکثر دو تلاش برای همان درخواستِ منطقی.
+AI_TRANSIENT_RETRIES = _env_int("AI_TRANSIENT_RETRIES", 1, 0, 5)
 AI_RETRY_BASE_SEC = _env_float("AI_RETRY_BASE_SEC", 2.0, 0.1, 60.0)
 AI_RETRY_MAX_DELAY_SEC = _env_float("AI_RETRY_MAX_DELAY_SEC", 20.0, 1.0, 300.0)
+# P0-E: timeout اختصاصیِ probe (کوتاه!) — probe نباید scheduler را برای مدتِ طولانی بگیرد.
+AI_PROBE_TIMEOUT_SEC = _env_int("AI_PROBE_TIMEOUT_SEC", 15, 5, 120)
 # خاموشیِ کوتاهِ مدل بعد از خطای گذرا (پیش‌تر ۲۰ دقیقه ⇒ کلِ تولیدِ محتوا متوقف می‌شد)
 MODEL_TRANSIENT_BACKOFF_MIN = _env_int("MODEL_TRANSIENT_BACKOFF_MIN", 2, 1, 60)
 MODEL_TRANSIENT_BACKOFF_MAX_MIN = _env_int("MODEL_TRANSIENT_BACKOFF_MAX_MIN", 15, 1, 120)
@@ -210,6 +225,15 @@ TELEGRAM_POOL_SIZE = _env_int("TELEGRAM_POOL_SIZE", 32, 4, 256)
 RECOVER_EVERY_MIN = _env_int("RECOVER_EVERY_MIN", 5)
 STALE_UPDATE_MAX_MIN = _env_int("STALE_UPDATE_MAX_MIN", 60)
 TICK_SECONDS = _env_int("TICK_SECONDS", 120)
+# ── P0-A: سقفِ زمانیِ واقعیِ چرخه و تیک ──────────────────────────────────────────
+# سقف باید *کل* فرایند را بپوشاند (کشف → استخراج → خلاصه‌سازی → AI → انتشار) و کوتاه‌تر
+# از فاصلهٔ تیک باشد، وگرنه scheduler را starve می‌کند و چرخه‌ها روی هم می‌افتند.
+# چرخهٔ دستیِ تست هم سقف دارد (≤۹۰ ثانیه) تا «تستِ فوری» هرگز ربات را قفل نکند.
+_TICK_HEADROOM = max(10, TICK_SECONDS - 5)
+CYCLE_TEST_DEADLINE_SEC = _env_int("CYCLE_TEST_DEADLINE_SEC", 80, 10, 90)
+CYCLE_AUTO_DEADLINE_SEC = _env_int("CYCLE_AUTO_DEADLINE_SEC", 100, 10, _TICK_HEADROOM)
+# سقفِ کلِ تیک (کشف + همهٔ چرخه‌های موازی) ⇒ مجموعِ چند کانال از تیکِ بعدی جلو نمی‌زند.
+SCHEDULER_TICK_DEADLINE_SEC = _env_int("SCHEDULER_TICK_DEADLINE_SEC", 110, 10, _TICK_HEADROOM)
 # PH-06/OBS-002: اگر اتوماسیون روشن است و کانالی وجود دارد ولی هیچ انتشار موفقی در این
 # بازه ثبت نشده، «سبزِ بیکار» را با یک هشدار durable به مدیر کلان اعلام کن.
 DEADMAN_STALE_HOURS = _env_int("DEADMAN_STALE_HOURS", 24, 1, 720)

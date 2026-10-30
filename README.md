@@ -9,7 +9,7 @@
 [![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-21.6%2B-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://python-telegram-bot.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-default-003B57?style=flat-square&logo=sqlite&logoColor=white)](#-پیکربندی)
 [![Cloudflare D1](https://img.shields.io/badge/Cloudflare-D1%20optional-F38020?style=flat-square&logo=cloudflare&logoColor=white)](#-پیکربندی)
-[![Tests](https://img.shields.io/badge/tests-454%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
+[![Tests](https://img.shields.io/badge/tests-754%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
 [![i18n](https://img.shields.io/badge/i18n-fa%20%7C%20en-8B5CF6?style=flat-square)](#)
 
 **ربات تک‌پروسه‌ای مدیریت خودکار کانال تلگرام** — منابع خبری را می‌خواند، با چند مدل هوش مصنوعی بازنویسی و امتیازدهی می‌کند، و به‌صورت **crash-safe** منتشر می‌کند.
@@ -69,6 +69,21 @@
 
 ### 📣 انتشار idempotent و crash-safe
 **ژورنال انتشار** + جدول `posted` تضمین می‌کند هیچ مقاله‌ای دو بار منتشر نشود — حتی اگر پروسه وسط آپلود کشته شود.
+
+### 🎨 پیام بومی تلگرام (Rich Messages)
+یک **موتور قالب‌بندی مشترک** (`newsbot/rich_format.py`) همهٔ پیام‌ها را به بلوک‌های ساختاریافته
+(تیتر، پاراگراف، فهرست، نقل‌قول، **جدول واقعی**، جداکننده، بخش بازشونده) تبدیل می‌کند و
+`newsbot/rich_send.py` آن‌ها را با `sendRichMessage` می‌فرستد: تیتر و جدول **بومی** تلگرام،
+نه متنِ GFM با `|`.
+- **fallback خودکار**: اگر سرور/کلاینت پشتیبانی نکند، همان متن با پیام کلاسیک و **بدون حذف محتوا** فرستاده می‌شود
+- خطای شبکه/۵xx/۴۲۹ هرگز به ارسالِ دوباره منجر نمی‌شود (خطر پست تکراری)
+- مدار قطع‌کننده فقط وقتی «خودِ قابلیت» موجود نباشد (۴۰۴) خاموش می‌شود، نه با یک خطای محتوایی
+- سقف‌های رسمیِ تلگرام رعایت می‌شود: ۳۲۷۶۸ کاراکتر، ۵۰۰ بلوک، ۲۰ ستونِ جدول
+- قالبِ فعلیِ پروژه (تیتر بولد، «•»، `<blockquote>`) **بیت‌به‌بیت حفظ** می‌شود
+- مسیرهای متصل: پستِ متنیِ کانال · «نسخهٔ کامل» در ربات · کپیِ دیپ‌لینک · همهٔ اعلان‌ها
+
+> آزمونِ زنده (پیام‌های نمونه به چتِ مدیر کلان + بررسیِ ساختارِ رندرشده):
+> `python tools/rich_live_test.py --env-file /opt/bot-official-telegram/.env`
 
 </td>
 <td width="50%" valign="top">
@@ -226,14 +241,15 @@ INFO | در حال اجرا…
 | `AI_INPUT_TEXT_CHARS` | `8000` | متن ورودی به مدل |
 | `AI_MAX_CALLS_PER_ARTICLE` | `12` | سقف فراخوانی برای هر مقاله |
 | `AI_ARTICLE_TIME_BUDGET` | `300` | بودجهٔ زمانی هر مقاله (ثانیه) |
-| `AI_MAX_MODEL_ATTEMPTS` | `6` | سقف تلاش روی مدل‌ها |
+| `AI_MAX_MODEL_ATTEMPTS` | `2` | سقف تلاش روی مدل‌ها (یک مدلِ شخصی + یک مدلِ عمومی) |
 | `AI_CACHE_TTL_DAYS` | `14` | عمر کش پاسخ |
-| `AI_PROVIDER_TIMEOUT_SEC` | `240` | سقف زمانی یک درخواست پروایدر (مستقل از بودجهٔ fetch منابع) |
-| `AI_TRANSIENT_RETRIES` | `2` | تلاش دوباره برای خطاهای گذرا (۴۲۹/۵xx/timeout) |
+| `AI_PROVIDER_TIMEOUT_SEC` | `45` | سقف زمانی یک درخواست پروایدر (مستقل از بودجهٔ fetch منابع) |
+| `AI_TRANSIENT_RETRIES` | `1` | تلاش دوباره برای خطاهای گذرا (۴۲۹/۵xx/timeout) |
 | `AI_RETRY_BASE_SEC` | `2` | تأخیر پایهٔ تلاش دوباره (ثانیه) |
 | `AI_RETRY_MAX_DELAY_SEC` | `20` | سقف تأخیر هر تلاش دوباره (ثانیه) |
 | `MODEL_TRANSIENT_BACKOFF_MIN` | `2` | خاموشی کوتاه مدل بعد از خطای موقت (دقیقه) |
 | `MODEL_TRANSIENT_BACKOFF_MAX_MIN` | `15` | سقف خاموشی کوتاه مدل (دقیقه) |
+| `AI_PROBE_TIMEOUT_SEC` | `15` | timeout اختصاصیِ probe (کوتاه) |
 
 </details>
 
@@ -246,6 +262,9 @@ INFO | در حال اجرا…
 | `FETCH_CONCURRENCY` | `8` | هم‌زمانی واکشی منابع |
 | `CYCLE_CONCURRENCY` | `2` | هم‌زمانی چرخه‌ها |
 | `MAX_CYCLES_PER_TICK` | `4` | سقف چرخه در هر tick |
+| `CYCLE_TEST_DEADLINE_SEC` | `80` | سقف زمانی چرخهٔ دستی/تست (≤۹۰ ثانیه) |
+| `CYCLE_AUTO_DEADLINE_SEC` | `100` | سقف زمانی چرخهٔ خودکار (کوتاه‌تر از فاصلهٔ tick) |
+| `SCHEDULER_TICK_DEADLINE_SEC` | `110` | سقف زمانی کلِ tick (کشف + همهٔ چرخه‌ها) |
 | `DB_POOL_SIZE` | `8` | اندازهٔ استخر تردهای عملیات DB |
 | `MAINT_POOL_SIZE` | `1` | استخر جدا برای نگهداری/بکاپ (بدون گرسنگی‌دادن مسیر اصلی) |
 | `PUBLISH_CONCURRENCY` | `2` | سقف آپلود هم‌زمان تلگرام |
@@ -283,6 +302,17 @@ INFO | در حال اجرا…
 | `CF_API_TOKEN` | توکن API کلادفلر (برای KV) |
 | `TELEGRAM_API_BASE` | سرور Bot API محلی → آپلود تا ۲۰۰۰MB (≈۲GB؛ پیش‌فرض ۵۰MB) |
 | `ALLOW_PRIVATE_MODEL_HOSTS` | PH-02: فهرستِ `host:port`هایی که اجازهٔ دسترسی به میزبانِ خصوصی دارند (برای مدل‌های محلی مثل Ollama). خالی = هیچ. `all` = همه (ریسک) |
+
+</details>
+
+<details>
+<summary><b>اختیاری — پیام بومی تلگرام (Rich Messages)</b></summary>
+
+| متغیر | پیش‌فرض | توضیح |
+|---|---|---|
+| `RICH_MESSAGES` | `auto` | `auto` = با پشتیبانیِ خودکار و fallback · `on` = اجباری · `off` = فقط پیام کلاسیک |
+| `RICH_MAX_CHARS` | `32000` | سقفِ طولِ هر پیام بومی (سقفِ رسمی تلگرام ۳۲۷۶۸ است) |
+| `RICH_FAIL_LIMIT` | `3` | بعد از این تعداد ردِ پیاپی، پیام بومی برای کل فرایند خاموش می‌شود |
 
 </details>
 
@@ -361,7 +391,7 @@ stateDiagram-v2
 ## 🧪 تست‌ها
 
 ```bash
-pytest -q                              # ۴۵۴ تست
+pytest -q                              # ۷۵۴ تست
 python -m pyflakes newsbot tools run.py tests   # نگهبان ایستا
 python tools/final_verification.py     # راستی‌آزمایی مستقل (۱۷ بررسی)
 python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08 · docs/PERFORMANCE.md)
@@ -383,6 +413,7 @@ python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08
 | `test_phase13_business_isolation.py` | ایزولهٔ سهمیه/کیف پول/تنظیمات بین مستأجرها |
 | `test_phase14_payment_ui.py` | پرداخت دوواحدی fa/en (تومان/$) · تمدید/ارتقای کسری/نزول‌بلاک · دوزبانهٔ کامل UI |
 | `test_phase15_watchdog.py` | `Restart=always` · حذف start-limit · sd_notify/READY/STOPPING · watchdog loop |
+| `test_rich_messages.py` | موتور قالب‌بندی · جدول بومی · RTL · **fallback بدون حذف محتوا** · نگاشت خطای Bot API · ژورنال انتشار |
 
 > **«تست‌نشده = رد‌شده».** هیچ تستی برای سبز شدن تغییر نکرده و هیچ `except` خالی‌ای خطا را پنهان نمی‌کند.
 
@@ -405,6 +436,8 @@ newsbot/
 ├── ai_models.py        # مدل‌ها · fallback · circuit breaker · کش
 ├── notify.py           # اعلان مدیر کلان/کاربر (بدون وابستگی تلگرام)
 ├── text_format.py      # نرمال‌سازی · ضدتزریق · HTML تلگرام
+├── rich_format.py      # موتور قالب‌بندی مشترک (بلوک‌ها · جدول بومی · RTL)
+├── rich_send.py        # ارسال پیام بومی تلگرام + fallback کلاسیک
 ├── timeutils.py        # زمان UTC/محلی · منطقه‌های IANA
 ├── net_http.py         # HTTP + دفاع SSRF
 ├── opctx.py            # زمینهٔ عملیات · checkpoint چرخه

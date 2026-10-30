@@ -9,7 +9,8 @@ from datetime import timedelta
 from urllib.parse import urlparse
 import httpx
 from newsbot import config
-from newsbot.db import q, gget, arun, _safe_fields
+from newsbot import net_http as _net_http
+from newsbot.db import q, gget, gset, arun, _safe_fields
 from newsbot.secret_store import decrypt as _sec_decrypt, encrypt as _sec_encrypt   # SEC-09 (فاز ۱۲)
 from newsbot.logutils import log, log_event, bump, redact
 from newsbot.timeutils import now_utc, now_iso, parse_dt
@@ -20,6 +21,101 @@ from newsbot.text_format import strip_tags, INJ_RESIDUE
 from newsbot.net_http import FetchError, retry_after_seconds
 
 _ai_events = ContextVar("ai_events", default=None)
+
+# ── P0-B: خطاهای «نهاییِ» AI ────────────────────────────────────────────────────
+# وقتی generate() همهٔ تلاش‌های مجازِ مدل‌ها را مصرف کرد و خطا برگرداند، چرخه نباید
+# نامزدِ بعدی را به همان پروایدرِ ناسالم بفرستد (هزینهٔ تکراری بدونِ فایده).
+# خطاهای عادیِ محتوا (امتیاز/تبلیغ/اعتبارسنجیِ مقاله) کدِ خطا ندارند و اصلاً
+# در این فهرست نیستند ⇒ آن‌ها فقط همان مقاله را رد می‌کنند.
+AI_FATAL_CODES = frozenset({
+    "ai_timeout",   # پروایدر پاسخ نداد / ۵۰۴
+    "ai_busy",      # ۴۲۹/۵xx یا همهٔ مدل‌ها در backoff
+    "ai_none",      # هیچ مدلِ قابل‌استفاده‌ای نبود
+    "ai_all_failed",# همهٔ مدل‌ها شکست خوردند
+    "ai_invalid",   # خروجیِ نامعتبر
+    "ai_tokens",    # بودجهٔ توکنِ مدل تمام شد
+    "ai_empty",     # پاسخِ خالی
+    "ai_auth",      # احراز هویت/پیکربندی
+    "ai_budget",    # سقفِ فراخوانیِ مقاله پر شد
+    "ai_limit",     # سقفِ روزانهٔ مصرف
+    "ai_error",     # خطای نامشخصِ سرویس
+})
+
+
+def is_ai_fatal(code):
+    """آیا این کد خطا یعنی «تولیدِ AI برای این چرخه تمام شد»؟"""
+    return str(code or "") in AI_FATAL_CODES
+
+
+# ── P0-D: قرنطینهٔ مدلِ خراب در همان چرخه ────────────────────────────────────────
+# یک مدل که پاسخِ خالی/نامعتبر می‌دهد یا خطای سمتِ سرویس می‌گیرد نباید برای
+# مقاله‌های بعدیِ *همان چرخه* دوباره صدا زده شود. این قرنطینه فقط درونِ چرخه است
+# (ContextVar) ⇒ مدل برای مدتِ طولانی از کار نمی‌افتد (مسیرِ fallback پیش‌بینی‌پذیر
+# و قابل‌تست می‌ماند) و «رد شدنِ عادیِ یک مقاله» اصلاً قرنطینه نمی‌سازد.
+_AI_QUARANTINE = ContextVar("ai_quarantine", default=None)
+
+
+def cycle_quarantine_reset():
+    """قرنطینهٔ چرخه را خالی می‌کند (شروعِ هر چرخه — ایزوله per-task)."""
+    d = {}
+    _AI_QUARANTINE.set(d)
+    return d
+
+
+def cycle_quarantine():
+    d = _AI_QUARANTINE.get()
+    if d is None:
+        d = cycle_quarantine_reset()
+    return d
+
+
+def cycle_quarantine_add(mid, code, reason=""):
+    """مدل را برای ادامهٔ همین چرخه کنار می‌گذارد (بدونِ خاموشیِ طولانی)."""
+    try:
+        cycle_quarantine()[int(mid)] = {"code": str(code or ""), "reason": str(reason or "")[:80]}
+    except Exception:
+        pass
+
+
+def cycle_quarantine_has(mid):
+    try:
+        return int(mid) in cycle_quarantine()
+    except Exception:
+        return False
+
+
+def cycle_quarantine_code(mid):
+    try:
+        return (cycle_quarantine().get(int(mid)) or {}).get("code") or ""
+    except Exception:
+        return ""
+
+
+# ── P0/OBS: آمارِ فراخوانیِ AI (منطقی و واقعی) ──────────────────────────────────
+_AI_STATS = ContextVar("ai_stats", default=None)
+
+
+def ai_stats_reset():
+    """آمارِ این چرخه را صفر می‌کند: فراخوانی‌های منطقی، مقاله‌ها و خطاها."""
+    st = {"logical": 0, "articles": 0, "models": {}, "errors": {}}
+    _AI_STATS.set(st)
+    _net_http.post_state_reset()
+    return st
+
+
+def ai_stats():
+    st = _AI_STATS.get()
+    if st is None:
+        st = ai_stats_reset()
+    return st
+
+
+def ai_posts_total():
+    """تعدادِ POSTهای *واقعیِ* ارائه‌دهنده (از محلِ ارسالِ درخواست)."""
+    try:
+        return int(_net_http.post_state().get("posts") or 0)
+    except Exception:
+        return 0
 
 def hostname(u):
     try: return urlparse(u).netloc.replace("www.", "") or u
@@ -197,11 +293,27 @@ def _budget_left():
     if not b: return None
     return config.AI_ARTICLE_TIME_BUDGET - (time.monotonic() - b["t0"])
 
+def budget_calls_left():
+    """تعدادِ فراخوانی‌های باقیمانده در بودجهٔ همین مقاله (None ⇒ بودجه‌ای فعال نیست).
+
+    P0-C: این عدد *پیش* از هر فراخوانیِ خلاصه‌سازی/chunk بررسی می‌شود ⇒ متنِ بلند
+    قطع می‌شود به‌جای آنکه ده‌ها درخواستِ ترتیبی ساخته شود."""
+    b = config.AI_BUDGET.get()
+    if not b: return None
+    return max(0, int(config.AI_MAX_CALLS_PER_ARTICLE) - int(b.get("calls") or 0))
+
+# ── P0-E: deadline اختصاصیِ probe (کوتاه) ───────────────────────────────────────
+_PROBE_DEADLINE = ContextVar("ai_probe_deadline", default=None)
+
 def _provider_timeout():
     """سقفِ زمانیِ یک درخواستِ پروایدر — هرگز بیشتر از بودجهٔ باقیماندهٔ مقاله."""
     t = float(config.AI_PROVIDER_TIMEOUT_SEC)
     left = _budget_left()
     if left is not None: t = min(t, max(5.0, float(left)))
+    d = _PROBE_DEADLINE.get()
+    if d is not None:
+        rem = d - time.monotonic()
+        if rem > 0: t = min(t, max(2.0, rem))
     return t
 
 def _retry_delay(base, headers=None):
@@ -279,7 +391,28 @@ def tokens_today():
         return {"calls": int(r["c"] or 0), "prompt": int(r["p"] or 0), "completion": int(r["t"] or 0)}
     except Exception: return {"calls": 0, "prompt": 0, "completion": 0}
 
+def _mentions_stream_options(r):
+    """آیا خطای provider مشخصاً از پارامترِ «stream_options» شکایت کرده است؟
+
+    تفکیک لازم است: اگر provider فقط پارامترِ مصرف را رد کند، جریان (stream) را نگه
+    می‌داریم؛ اگر خودِ جریان رد شده، به حالتِ غیرجریانی می‌رویم."""
+    try: t = (getattr(r, "text", "") or "").lower()
+    except Exception: t = ""
+    return "stream_options" in t or "stream options" in t
+
+
 async def _call_model(m, system, user):
+    """فراخوانیِ واقعیِ پروایدر.
+
+    شمارندهٔ «POSTهای واقعی» با شناسهٔ همین مدل علامت‌گذاری می‌شود ⇒ در لاگ می‌توان
+    دید هر مدل چند POST واقعی (با retry و fallback) ساخته است."""
+    tok = _net_http.post_model_set(m["id"])
+    try:
+        return await _call_model_impl(m, system, user)
+    finally:
+        _net_http.post_model_reset(tok)
+
+async def _call_model_impl(m, system, user):
     kind = m["kind"] or detect_kind(m["base_url"]); base = (m["base_url"] or "").rstrip("/"); key = _sec_decrypt(m["api_key"] or ""); model = m["model"]; temp = 0.5 if m["temperature"] is None else float(m["temperature"]); mx = int(m["max_tokens"] or 2500)
     if kind == "anthropic":
         url = base + ("/messages" if base.endswith("/v1") else "/v1/messages")
@@ -313,11 +446,24 @@ async def _call_model(m, system, user):
     # (اندازه‌گیری: vyceai.com بدون stream ⇒ ۵۲۴ بعد از ۱۲۵ ثانیه؛ با stream ⇒ پاسخِ کامل
     # در ۱۱۰ ثانیه با JSONِ درست). اگر پروایدر جریان را نپذیرفت ⇒ یک‌بار بدون stream.
     sbody = dict(body); sbody["stream"] = True
+    # مصرفِ توکن در پاسخِ جریانی فقط وقتی برمی‌گردد که provider این پارامتر را بپذیرد.
+    # بدونِ آن، هر فراخوانیِ جریانی مصرفش *ثبت نمی‌شد* ⇒ «توکنِ ۲۴ساعته» و حسابداریِ
+    # هزینه از زمانِ فعال‌شدنِ stream بی‌صدا خالی ماندند.
+    sbody["stream_options"] = {"include_usage": True}
     skip4 = (400, 405, 415, 422)          # خطای درخواست ⇒ تکرارِ جریانی فایده ندارد
     skip = tuple(sorted(set(skip4) | ({404} if fallback else set())))
     r = await _post_retry(url, skip_status=skip, headers=headers, json=sbody)
     if r.status_code == 404 and fallback:
         r = await _post_retry(base + "/v1/chat/completions", skip_status=skip, headers=headers, json=sbody)
+    if r.status_code in skip4:
+        if _mentions_stream_options(r):
+            # پروایدر فقط پارامترِ مصرف را رد کرد ⇒ جریان را نگه می‌داریم
+            # (جریان تنها وقتی رها می‌شود که خودِ stream هم رد شده باشد).
+            sbody2 = dict(body); sbody2["stream"] = True
+            log.warning("ai provider rejected stream_options — retrying without it")
+            r = await _post_retry(url, skip_status=skip, headers=headers, json=sbody2)
+            if r.status_code == 404 and fallback:
+                r = await _post_retry(base + "/v1/chat/completions", skip_status=skip, headers=headers, json=sbody2)
     if r.status_code in skip4:
         log.warning("ai provider rejected streaming — retrying without stream")
         r = await _post_retry(url, skip_status=skip, headers=headers, json=body)
@@ -363,6 +509,7 @@ async def _mark_ok(m):
 AI_ERR = {"ai_busy": ("سرویس هوش مصنوعی موقتاً شلوغ است", "AI service is busy right now"), "ai_auth": ("دسترسی سرویس هوش مصنوعی برقرار نشد", "AI service access failed"),
           "ai_timeout": ("سرویس هوش مصنوعی پاسخ نداد", "AI service did not respond"), "ai_empty": ("پاسخ خالی از سرویس هوش مصنوعی", "Empty response from AI service"),
           "ai_none": ("سرویس هوش مصنوعی در دسترس نیست", "AI service unavailable"), "ai_error": ("خطای موقت سرویس هوش مصنوعی", "Temporary AI service error"),
+          "ai_exception": ("خطای داخلیِ غیرمنتظره در مسیرِ تولید با AI", "Unexpected internal error in the AI generation path"),
           "ai_budget": ("سقف هزینهٔ هوش مصنوعی برای این مقاله پر شد", "AI cost budget reached for this article"),
           "ai_tokens": ("بودجهٔ توکنِ مدل تمام شد و خروجی تولید نشد (مدل یا سقف توکن را عوض کنید)", "The model exhausted its token budget without producing output (change the model or its token budget)"),
           "ai_limit": ("سقف روزانهٔ مصرف هوش مصنوعی تمام شد", "Daily AI usage limit reached"),
@@ -450,13 +597,15 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
         fc = m["fail_count"] or 0; okc = m["ok_count"] or 0
         ratio = (okc + 1.0) / (okc + fc + 2.0)
         return (ratio, -fc, -(okc), m["priority"] or 99, m["id"])
-    tried = set(); last = "ai_none"; attempts = 0; content_fails = 0; stop = False
+    tried = set(); last = "ai_none"; attempts = 0; content_fails = 0; stop = False; quarantined = 0; q_codes = []
     for stage, models in groups:
         if stage == "test" and not models: await _ai_event("no_test")
         rest = sorted(models, key=_sort_key)
         while rest:
             if attempts >= config.AI_MAX_MODEL_ATTEMPTS:
-                log.warning("model attempt cap reached (%d) — not calling more providers", config.AI_MAX_MODEL_ATTEMPTS); last = "ai_none"; stop = True; break
+                log.warning("model attempt cap reached (%d) — not calling more providers", config.AI_MAX_MODEL_ATTEMPTS)
+                if not tried: last = "ai_none"      # کدِ واقعیِ خطا (اگر وجود دارد) پاک نمی‌شود
+                stop = True; break
             free = [m for m in rest if not model_busy(m["id"])]
             if explicit_id is not None and any(m["id"] == explicit_id for m in rest):
                 m = next(m for m in rest if m["id"] == explicit_id)
@@ -464,6 +613,13 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                 m = (free or rest)[0]
             rest.remove(m)
             if m["id"] in tried: continue
+            # P0-D: مدلی که در همین چرخه خروجیِ غیرقابل‌استفاده داد دوباره صدا زده نمی‌شود.
+            if cycle_quarantine_has(m["id"]):
+                quarantined += 1
+                _qc = cycle_quarantine_code(m["id"]) or "unusable"
+                q_codes.append(_qc)
+                log.info("model %s skipped (quarantined for this cycle: %s)", m["name"], _qc)
+                continue
             tried.add(m["id"]); attempts += 1
             label = _model_label(m, owner_id); content_fail = False
             if model_busy(m["id"]) or AI_SEM.locked():
@@ -496,12 +652,18 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                     content_fails += 1
                     # کدِ دقیق: «بودجهٔ توکنِ مدل تمام شد» در برابرِ «خروجی نامعتبر»
                     last = "ai_tokens" if (isinstance(e, AIOutputTruncated) and getattr(e, "empty", False)) else "ai_invalid"
+                    # P0-D: خروجیِ خالی/نامعتبر ⇒ این مدل در ادامهٔ همین چرخه صدا زده نمی‌شود
+                    # (ولی برای مدتِ طولانی از کار نمی‌افتد و «ردِ عادیِ مقاله» آن را نمی‌بندد).
+                    cycle_quarantine_add(m["id"], last, str(e)[:80])
                     log.info("model %s returned unusable content (%s); provider NOT marked down", m["name"], e)
                     if content_fails > config.AI_CONTENT_RETRY_MODELS:
                         # خروجی نامعتبر ربطی به provider ندارد؛ فرستادن همان پرامپت بزرگ به مدل‌های بعدی فقط هزینه است.
                         log.warning("content rejected by %d model(s) — aborting instead of paying another model", content_fails)
                         last = "ai_invalid"; stop = True; break
                 else:
+                    # خطای سمتِ سرویس (۵xx/timeout/شبکه) ⇒ این پروایدر در همین چرخه کنار گذاشته می‌شود
+                    # تا مقاله‌های بعدی دوباره به همان ارائه‌دهندهٔ ناسالم فرستاده نشوند.
+                    cycle_quarantine_add(m["id"], last, str(e)[:80])
                     bump("model_fail", sub=last)   # شکست provider به تفکیک کد خطا (نمایش در پنل مالک)
                     await _mark_fail(m, e)
                     await _ai_event("failure", label, last)
@@ -509,8 +671,11 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
     # هر مدل فقط یک‌بار امتحان می‌شود (بدون تکرار)؛ این‌جا یعنی همهٔ مدل‌های کاربر و مدیر تمام شدند.
     # با یک مدل، کدِ دقیقِ خطا (مثلاً ai_timeout/ai_busy/ai_auth) نگه داشته می‌شود تا کاربر
     # دلیلِ واقعی را ببیند؛ با چند مدل ⇒ «هیچ‌یک پاسخ نداد».
+    if not tried and q_codes:
+        # همهٔ مدل‌ها در همین چرخه قرنطینه شده بودند ⇒ دلیلِ واقعی همان است
+        last = q_codes[0]
     code = last if (last == "ai_none" or len(tried) <= 1) else "ai_all_failed"
-    log.warning("all models exhausted (tried=%d, last=%s) — stopping", len(tried), last)
+    log.warning("all models exhausted (tried=%d, quarantined=%d, last=%s) — stopping", len(tried), quarantined, last)
     await _ai_event("failed", code=code)
     return None, None, code
 
@@ -531,6 +696,8 @@ def _budget():
 
 async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, validate=None):
     b = _budget()
+    # P0/OBS: شمارشِ «فراخوانیِ منطقی» (جدا از POSTهای واقعیِ شبکه)
+    _st = ai_stats(); _st["logical"] = int(_st.get("logical") or 0) + 1
     # PH-08/PIPE-001: ریستِ زمانی فقط برای فراخوانیِ خارج از مسیرِ مقاله مجاز است.
     if not b.get("hard") and (time.monotonic() - b["t0"]) > config.AI_ARTICLE_TIME_BUDGET * 2:
         budget_reset(); b = _budget()   # تماس بیرون از مسیر مقاله: پنجرهٔ تازه
@@ -574,14 +741,55 @@ async def test_model(mid):
                                         "Say: READY", validate=_validate_ready, explicit_id=mid)
     return out is not None, out[:100] if out else err, round(time.monotonic() - t, 1)
 
-async def probe_down_models():
-    """چند مدل خراب در هر تیک آزمایش می‌شود تا بازیابی به چند ده دقیقه کشیده نشود."""
-    rows = await arun(q, "SELECT * FROM ai_models WHERE active=1 AND status='down' ORDER BY COALESCE(last_fail,'') LIMIT ?", (config.MODEL_PROBE_BATCH,))
+async def probe_down_models(max_models=1):
+    """سقفِ probe: حداکثر یک مدل در هر اجرا، حداقل ~۱۰ دقیقه فاصله، timeout کوتاه.
+
+    پیش‌تر هر تیک (۱۲۰ ثانیه) تا ۳ مدلِ down با timeoutِ کاملِ پروایدر (۲۴۰ ثانیه!)
+    امتحان می‌شدند ⇒ یک probe می‌توانست scheduler را چند دقیقه بلوکه کند و هزینه‌اش
+    را هر بار پرداخت کند. حالا: یک مدل، با فاصلهٔ زمانی، فقط وقتی backoffش تمام
+    شده (توجیهِ عملیاتی)، با timeout اختصاصیِ کوتاه، و بدونِ retry loop."""
+    limit = max(1, int(max_models or 1))
+    # فاصلهٔ زمانیِ سراسری بین probeهای *واقعی*
+    try:
+        last = await arun(gget, "last_probe_at")
+    except Exception:
+        last = None
+    if last:
+        try:
+            since = (now_utc() - parse_dt(last)).total_seconds()
+            if since < config.MODEL_PROBE_MIN * 60:
+                log.debug("probe skipped — only %.0fs since the last probe (min %ds)", since, config.MODEL_PROBE_MIN * 60)
+                return 0
+        except Exception:
+            pass
+    rows = await arun(q, "SELECT * FROM ai_models WHERE active=1 AND status='down' ORDER BY COALESCE(last_fail,'') LIMIT ?", (max(limit * 4, 8),))
+    target = None
     for m in rows:
         lf = parse_dt(m["last_fail"])
         if lf and (now_utc() - lf) < timedelta(minutes=config.MODEL_PROBE_MIN): continue
-        try: await test_model(m["id"])
-        except Exception: log.exception("model probe failed id=%s", m["id"])
+        nta = parse_dt(m["next_try_after"]) if "next_try_after" in m.keys() else None
+        if nta and now_utc() < nta: continue      # backoff هنوز تمام نشده ⇒ توجیهِ عملیاتی ندارد
+        target = m; break
+    if target is None:
+        log.debug("probe skipped — no down model has an expired backoff")
+        return 0
+    # زمان‌نگار پیش از probe ثبت می‌شود تا crash هم فاصله را نشکند
+    await arun(gset, "last_probe_at", now_iso())
+    budget = float(config.AI_PROBE_TIMEOUT_SEC)
+    _tok = _PROBE_DEADLINE.set(time.monotonic() + budget)
+    try:
+        await asyncio.wait_for(test_model(target["id"]), timeout=budget)
+        log.info("probe done: model_id=%s result=ok", target["id"])
+    except asyncio.TimeoutError:
+        log.warning("probe timed out after %.0fs: model_id=%s", budget, target["id"])
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log.warning("probe failed: model_id=%s error=%s", target["id"], type(e).__name__)
+    finally:
+        try: _PROBE_DEADLINE.reset(_tok)
+        except Exception: pass
+    return 1
 
 def any_model_available(owner_id=None): return any(_model_ready(m) for m in list_models(active_only=True, owner_id=owner_id)) or (bool(owner_id) and any(_model_ready(m) for m in list_models(active_only=True)))
 

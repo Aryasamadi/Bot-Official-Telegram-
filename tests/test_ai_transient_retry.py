@@ -220,6 +220,33 @@ def test_provider_request_uses_streaming_and_falls_back_when_refused(monkeypatch
     assert "stream" not in bodies[-1], "درخواستِ دوم باید بدونِ stream باشد"
 
 
+def test_stream_usage_is_requested_and_dropping_it_keeps_the_stream(monkeypatch, model):
+    """مصرفِ توکن در پاسخِ جریانی فقط با «include_usage» می‌آید.
+
+    ریشهٔ خرابیِ حسابداریِ توکن: بعد از فعال‌شدنِ stream، هیچ provider پارامترِ
+    include_usage را نگرفت ⇒ مصرفِ هر فراخوانی ثبت نمی‌شد و «توکنِ ۲۴ساعته» خالی ماند.
+    اگر provider پارامتر را رد کند ⇒ باید *همچنان جریانی* بمانیم (جریان فقط وقتی رها
+    می‌شود که خودِ stream هم رد شود).
+    """
+    bodies = []
+
+    async def _fake(url, **kw):
+        bodies.append(dict(kw.get("json") or {}))
+        if len(bodies) == 1:
+            return FakeResp(400, _err_payload(400, "unsupported parameter: stream_options"))
+        if len(bodies) == 2:
+            return FakeResp(200, _ok_payload("READY"))
+        return FakeResp(200, _ok_payload("READY"))
+    monkeypatch.setattr(amod, "_post", _fake)
+    out, label, err = asyncio.run(amod.ai_chat("sys", "user"))
+    assert err is None and out == "READY", f"مسیرِ fallback باید کار کند: {err}"
+    assert bodies[0].get("stream") is True
+    assert bodies[0].get("stream_options") == {"include_usage": True}, "مصرفِ توکن باید درخواست شود"
+    assert len(bodies) >= 2
+    assert bodies[1].get("stream") is True, "جریان نباید فقط به‌خاطرِ پارامترِ مصرف رها شود"
+    assert "stream_options" not in bodies[1], "پارامترِ ردشده نباید دوباره فرستاده شود"
+
+
 def test_http_client_is_rebuilt_for_a_new_event_loop():
     """کلاینتِ مشترکِ HTTP به حلقهٔ رویداد گره خورده است؛ با حلقهٔ تازه باید بازسازی شود
     (وگرنه httpx خطای «attached to a different loop» می‌دهد و درخواستِ AI می‌میرد)."""
@@ -354,7 +381,11 @@ def test_personal_model_in_backoff_is_also_temporary(monkeypatch, model):
 # ۵) سقفِ زمانیِ درخواستِ AI از بودجهٔ fetchِ منبع جداست
 # ══════════════════════════════════════════════════════════════════════════════════════
 def test_ai_request_uses_the_provider_timeout_not_the_fetch_budget(monkeypatch, model):
-    """پیش‌تر ‎FETCH_TOTAL_SEC=60‎ روی درخواستِ AI هم اعمال می‌شد ⇒ ۵۰۴ِ کاذب."""
+    """پیش‌تر ‎FETCH_TOTAL_SEC=60‎ روی درخواستِ AI هم اعمال می‌شد ⇒ ۵۰۴ِ کاذب.
+
+    P0-C: سقفِ AI حالا ۴۵ ثانیه است (کوتاه‌تر از بودجهٔ fetch) — پس «مستقل بودن» با
+    مقایسهٔ عددی ثابت نمی‌شود: باید ثابت شود که تغییرِ بودجهٔ fetch هیچ اثری روی
+    سقفِ درخواستِ AI ندارد و سقف از ‎AI_PROVIDER_TIMEOUT_SEC‎ می‌آید."""
     import newsbot.net_http as nh
     seen = {}
 
@@ -363,12 +394,22 @@ def test_ai_request_uses_the_provider_timeout_not_the_fetch_budget(monkeypatch, 
     monkeypatch.setattr(nh, "fetch_post", _fake_fetch)
     asyncio.run(amod.ai_chat("sys", "user"))
     assert "total_timeout" in seen, "درخواستِ AI باید سقفِ زمانیِ خودش را داشته باشد"
-    assert seen["total_timeout"] > config.FETCH_TOTAL_SEC, \
-        f"سقفِ AI نباید بودجهٔ fetchِ منبع باشد: {seen['total_timeout']} <= {config.FETCH_TOTAL_SEC}"
-    assert seen["total_timeout"] <= config.AI_PROVIDER_TIMEOUT_SEC
+    assert seen["total_timeout"] == config.AI_PROVIDER_TIMEOUT_SEC, \
+        f"سقفِ AI باید از AI_PROVIDER_TIMEOUT_SEC بیاید: {seen['total_timeout']}"
     # سقفِ خواندن هم نباید زودتر از سقفِ کل بپرد (پیش‌تر ۱۲۰ ثانیهٔ ثابت بود)
     assert seen["timeout"].read >= seen["total_timeout"] - 1, \
         f"سقفِ خواندن ({seen['timeout'].read}) باید با سقفِ کل ({seen['total_timeout']}) هماهنگ باشد"
+
+    # بودجهٔ fetchِ منابع هیچ نقشی در سقفِ AI ندارد
+    seen2 = {}
+
+    async def _fake_fetch2(url, **kw):
+        seen2.update(kw); return FakeResp(200, _ok_payload("READY"))
+    monkeypatch.setattr(nh, "fetch_post", _fake_fetch2)
+    monkeypatch.setattr(config, "FETCH_TOTAL_SEC", 5)
+    asyncio.run(amod.ai_chat("sys", "user"))
+    assert seen2["total_timeout"] == config.AI_PROVIDER_TIMEOUT_SEC, \
+        f"سقفِ AI نباید از بودجهٔ fetch گرفته شود: {seen2['total_timeout']}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════

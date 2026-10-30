@@ -267,7 +267,7 @@ def test_readme_reflects_phase12_claims():
     for needle in ("runtime.py", "secret_store.py", "SECRETS_KEY", "net_http.py",
                    "PAY_QUOTE_TOLERANCE_PCT", "CF_ACCOUNT_ID"):
         assert needle in readme, f"README فاقد: {needle}"
-    assert re.search(r"AI_MAX_MODEL_ATTEMPTS` \| `6`", readme), "ردیف AI_MAX_MODEL_ATTEMPTS باید ۶ باشد (D1)"
+    assert re.search(r"AI_MAX_MODEL_ATTEMPTS` \| `2`", readme), "ردیف AI_MAX_MODEL_ATTEMPTS باید ۲ باشد (P0-C)"
 
 
 def test_schema_version_bumped_to_v9():

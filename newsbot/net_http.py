@@ -6,6 +6,7 @@ FIX v4:
   • fetch و _GuardedStream (در publish.py) از public_url_strict استفاده می‌کنند
 """
 import asyncio, ipaddress, json, re, secrets, socket, time
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlparse
@@ -20,6 +21,51 @@ _http = None
 _http_loop = None
 UA_BROWSER = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 UA_FEED = "Mozilla/5.0 (compatible; NewsBot/3.0; +https://t.me) FeedFetcher"
+
+# ── P0/OBS: شمارندهٔ «POSTهای واقعیِ انجام‌شده» ─────────────────────────────────
+# شمارنده در *همان‌جایی* که درخواست واقعاً ارسال می‌شود افزایش می‌یابد (نه در ورودیِ
+# ai_chat و نه در یک wrapper) ⇒ retryها و fallbackهای واقعاً اجراشده هم شمرده می‌شوند.
+# ContextVar است تا شمارشِ چرخه‌های هم‌زمان قاطی نشود (هر چرخه تسکِ خودش را دارد).
+_POST_STATE = ContextVar("http_post_state", default=None)
+_POST_MODEL = ContextVar("http_post_model", default=None)
+
+
+def post_state_reset():
+    """شمارندهٔ POSTها را برای تسکِ جاری صفر می‌کند (شروعِ یک چرخه)."""
+    d = {"posts": 0, "by_model": {}}
+    _POST_STATE.set(d)
+    return d
+
+
+def post_state():
+    """وضعیتِ شمارندهٔ POSTِ همین تسک (اگر نبود، ساخته می‌شود)."""
+    d = _POST_STATE.get()
+    if d is None:
+        d = post_state_reset()
+    return d
+
+
+def post_model_set(mid):
+    """شناسهٔ مدلِ در حال فراخوانی را ثبت می‌کند (برای تفکیک POSTها به‌ازای مدل)."""
+    return _POST_MODEL.set(mid)
+
+
+def post_model_reset(token):
+    try:
+        _POST_MODEL.reset(token)
+    except Exception:
+        pass
+
+
+def count_post():
+    """یک POSTِ واقعی ثبت می‌کند و تعدادِ کل را برمی‌گرداند."""
+    st = post_state()
+    st["posts"] = int(st.get("posts") or 0) + 1
+    mid = _POST_MODEL.get()
+    if mid is not None:
+        k = str(mid)
+        st["by_model"][k] = int(st["by_model"].get(k) or 0) + 1
+    return st["posts"]
 
 def http():
     global _http, _http_loop
@@ -292,6 +338,8 @@ async def fetch_post(url, *, headers=None, timeout=None, max_redirects=5, total_
         previous_host = (urlparse(current).hostname or "").lower().rstrip(".")
         try:
             async with asyncio.timeout(total):
+                # شمارش در لحظهٔ ارسالِ واقعیِ درخواست (retry/redirect هم شمرده می‌شود)
+                count_post()
                 async with http().stream("POST", current, headers=headers, timeout=timeout, follow_redirects=False, **req_kw) as resp:
                     raw = bytearray()
                     async for chunk in resp.aiter_bytes(65536):

@@ -124,6 +124,8 @@ TXT = {
     "mand_join": ("🔐 عضویت در کانال", "🔐 Join mandatory channel"),
     "mand_check": ("✅ عضو شدم", "🔄 Check membership"),
     "mand_missing": ("🔐 عضویت در کانال الزامی تأیید نشد؛ اجرا متوقف شد", "🔐 Mandatory channel membership not confirmed; cycle stopped"),
+    "deadline": ("⏱ سقفِ زمانیِ چرخه ({sec} ثانیه) تمام شد؛ چرخه متوقف شد", "⏱ Cycle deadline ({sec}s) reached; the cycle was stopped"),
+    "ai_stop": ("🤖 خطای نهاییِ هوش مصنوعی ⇒ چرخه متوقف شد و نامزدِ دیگری به AI فرستاده نشد ({err})", "🤖 Final AI failure ⇒ cycle stopped; no further candidate was sent to the AI ({err})"),
     "mand_ok": ("✅ عضویت تأیید شد", "✅ Membership confirmed"),
     "mand_still": ("⚠️ هنوز عضو کانال نشده‌اید", "⚠️ Membership not confirmed yet"),
     # ---- پنل مدیر

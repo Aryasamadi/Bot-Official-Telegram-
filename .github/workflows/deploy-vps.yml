@@ -17,11 +17,6 @@ on:
 permissions:
   contents: read
 
-# دو deploy هم‌زمان روی یک VPS ممنوع — صف‌بندی به‌جای لغوِ وسطِ کار
-concurrency:
-  group: production-vps-deploy
-  cancel-in-progress: false
-
 jobs:
   deploy:
     if: >-
@@ -30,6 +25,13 @@ jobs:
        github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # دو deploy هم‌زمان روی یک VPS ممنوع — صف‌بندی به‌جای لغوِ وسطِ کار.
+    # این قفل در سطحِ *job* است نه در سطحِ workflow: اجرایی که منتظرِ تأییدِ دستیِ
+    # محیطِ production مانده، jobِ خودش را شروع نکرده ⇒ دیگر صفِ استقرارهای بعدی را
+    # قفل نمی‌کند (پیش‌تر یک اجرای معلقِ قدیمی، همهٔ استقرارهای بعدی را متوقف کرد).
+    concurrency:
+      group: production-vps-deploy
+      cancel-in-progress: false
     # دروازهٔ تأیید دستی: job روی محیط «production» اجرا می‌شود. تا وقتی در تنظیمات
     # مخزن برای این محیط قاعدهٔ «Required reviewers» تعریف نشده باشد، GitHub محیط را
     # خودکار می‌سازد و استقرار بدون دروازه ادامه می‌یابد. با تعریف قاعده، هر استقرار
@@ -38,6 +40,9 @@ jobs:
     env:
       # SHA کامیتِ محرک CI (برای اجرای دستی: نوکِ ref انتخاب‌شده)
       TARGET_SHA: ${{ github.event.workflow_run.head_sha || inputs.sha }}
+      # پورتِ SSH (پیش‌فرض ۲۲؛ اگر sshd روی پورتِ دیگری گوش می‌دهد، همین secret
+      # را به‌روز کنید — نیازی به ویرایشِ این فایل نیست)
+      VPS_PORT: ${{ secrets.VPS_SSH_PORT || '22' }}
     steps:
       # بدون secrets کافی، خطا روشن و سریع است (به‌جای شکست مبهم وسط SSH)
       - name: Preflight — required secrets must exist
@@ -51,6 +56,25 @@ jobs:
           if [ -z "$VPS_KEY" ]; then echo "::error::secret VPS_SSH_PRIVATE_KEY is not set"; fail=1; fi
           if [ -z "$VPS_FPR" ]; then echo "::error::secret VPS_HOST_FINGERPRINT is not set (ssh-keyscan output)"; fail=1; fi
           exit $fail
+
+      # پیش از هر چیز: آیا اصلاً می‌شود به VPS وصل شد؟
+      # تا ۱۹ اکتبر ۲۰۲۶ دیوارِ آتشِ سرویس‌دهنده همهٔ ترافیکِ ورودیِ TCP را دور
+      # می‌ریخت؛ نتیجه یک timeoutِ مبهم در مرحلهٔ scp بود و هیچ‌کس نمی‌دانست مشکل
+      # از کجاست. این مرحله همان را به یک خطای صریح تبدیل می‌کند (و ۶۰ ثانیه
+      # معطلی را ۱۰ ثانیه می‌کند). آدرسِ VPS هرگز چاپ نمی‌شود (secret است).
+      - name: Preflight — the VPS must accept TCP on the SSH port
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ env.VPS_PORT }}
+        run: |
+          set -u
+          if [ -z "$VPS_HOST" ]; then echo "::error::VPS_HOST خالی است — پیش‌شرط‌ها متوقف شد."; exit 1; fi
+          if timeout 10 bash -c "exec 3<>/dev/tcp/$VPS_HOST/$VPS_PORT" 2>/dev/null; then
+            echo "VPS on port $VPS_PORT is reachable from the runner."
+          else
+            echo "::error::VPS روی پورت $VPS_PORT از رانرِ Actions در دسترس نیست (timeout). فایروالِ سرویس‌دهنده یا allowlist را بررسی کنید."
+            exit 1
+          fi
 
       # OPS-05: مسیرِ اجرای دستی هم باید یک اجرای موفقِ CI برای همان SHA داشته باشد.
       # (fail-closed: اگر وضعیت قابل تعیین نبود، اجازهٔ استقرار داده نمی‌شود.)
@@ -83,7 +107,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: root
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
-          port: 22
+          port: ${{ env.VPS_PORT }}
           fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
           source: deploy/deploy.sh
           target: /tmp/newsbot-deploy.sh
@@ -94,7 +118,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: root
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
-          port: 22
+          port: ${{ env.VPS_PORT }}
           fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
           command_timeout: 20m
           envs: TARGET_SHA

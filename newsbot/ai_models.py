@@ -391,6 +391,16 @@ def tokens_today():
         return {"calls": int(r["c"] or 0), "prompt": int(r["p"] or 0), "completion": int(r["t"] or 0)}
     except Exception: return {"calls": 0, "prompt": 0, "completion": 0}
 
+def _mentions_stream_options(r):
+    """آیا خطای provider مشخصاً از پارامترِ «stream_options» شکایت کرده است؟
+
+    تفکیک لازم است: اگر provider فقط پارامترِ مصرف را رد کند، جریان (stream) را نگه
+    می‌داریم؛ اگر خودِ جریان رد شده، به حالتِ غیرجریانی می‌رویم."""
+    try: t = (getattr(r, "text", "") or "").lower()
+    except Exception: t = ""
+    return "stream_options" in t or "stream options" in t
+
+
 async def _call_model(m, system, user):
     """فراخوانیِ واقعیِ پروایدر.
 
@@ -436,11 +446,24 @@ async def _call_model_impl(m, system, user):
     # (اندازه‌گیری: vyceai.com بدون stream ⇒ ۵۲۴ بعد از ۱۲۵ ثانیه؛ با stream ⇒ پاسخِ کامل
     # در ۱۱۰ ثانیه با JSONِ درست). اگر پروایدر جریان را نپذیرفت ⇒ یک‌بار بدون stream.
     sbody = dict(body); sbody["stream"] = True
+    # مصرفِ توکن در پاسخِ جریانی فقط وقتی برمی‌گردد که provider این پارامتر را بپذیرد.
+    # بدونِ آن، هر فراخوانیِ جریانی مصرفش *ثبت نمی‌شد* ⇒ «توکنِ ۲۴ساعته» و حسابداریِ
+    # هزینه از زمانِ فعال‌شدنِ stream بی‌صدا خالی ماندند.
+    sbody["stream_options"] = {"include_usage": True}
     skip4 = (400, 405, 415, 422)          # خطای درخواست ⇒ تکرارِ جریانی فایده ندارد
     skip = tuple(sorted(set(skip4) | ({404} if fallback else set())))
     r = await _post_retry(url, skip_status=skip, headers=headers, json=sbody)
     if r.status_code == 404 and fallback:
         r = await _post_retry(base + "/v1/chat/completions", skip_status=skip, headers=headers, json=sbody)
+    if r.status_code in skip4:
+        if _mentions_stream_options(r):
+            # پروایدر فقط پارامترِ مصرف را رد کرد ⇒ جریان را نگه می‌داریم
+            # (جریان تنها وقتی رها می‌شود که خودِ stream هم رد شده باشد).
+            sbody2 = dict(body); sbody2["stream"] = True
+            log.warning("ai provider rejected stream_options — retrying without it")
+            r = await _post_retry(url, skip_status=skip, headers=headers, json=sbody2)
+            if r.status_code == 404 and fallback:
+                r = await _post_retry(base + "/v1/chat/completions", skip_status=skip, headers=headers, json=sbody2)
     if r.status_code in skip4:
         log.warning("ai provider rejected streaming — retrying without stream")
         r = await _post_retry(url, skip_status=skip, headers=headers, json=body)

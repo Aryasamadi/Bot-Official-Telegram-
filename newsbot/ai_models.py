@@ -778,8 +778,10 @@ async def probe_down_models(max_models=1):
     budget = float(config.AI_PROBE_TIMEOUT_SEC)
     _tok = _PROBE_DEADLINE.set(time.monotonic() + budget)
     try:
-        await asyncio.wait_for(test_model(target["id"]), timeout=budget)
-        log.info("probe done: model_id=%s result=ok", target["id"])
+        ok, _out, _sec = await asyncio.wait_for(test_model(target["id"]), timeout=budget)
+        # پیش‌تر این خط همیشه «result=ok» می‌نوشت، حتی وقتی خودِ probe شکست خورده بود ⇒
+        # لاگِ تولید دربارهٔ سلامتِ provider گمراه‌کننده بود.
+        log.info("probe done: model_id=%s result=%s", target["id"], "ok" if ok else "failed")
     except asyncio.TimeoutError:
         log.warning("probe timed out after %.0fs: model_id=%s", budget, target["id"])
     except asyncio.CancelledError:

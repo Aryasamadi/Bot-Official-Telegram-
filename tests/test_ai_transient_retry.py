@@ -471,3 +471,20 @@ def test_api_key_never_appears_in_the_logs(monkeypatch, model, caplog):
     with caplog.at_level("DEBUG"):
         asyncio.run(amod.ai_chat("sys", "user"))
     assert secret not in caplog.text
+
+
+def test_the_probe_log_reports_a_failed_probe_as_failed(monkeypatch, model, caplog):
+    """پیش‌تر probe همیشه «result=ok» می‌نوشت، حتی وقتی خودِ probe شکست خورده بود."""
+    q("UPDATE ai_models SET status='down', fail_count=3, next_try_after=? WHERE id=?",
+      ((now_utc() - timedelta(minutes=30)).isoformat(), model), commit=True)
+    q("DELETE FROM settings WHERE key='last_probe_at'", commit=True)
+
+    async def _failed(mid):
+        return False, "ai_error", 0.1
+    monkeypatch.setattr(amod, "test_model", _failed)
+
+    with caplog.at_level("INFO"):
+        asyncio.run(amod.probe_down_models())
+
+    assert "result=failed" in caplog.text, "لاگِ probe نباید شکست را «ok» نشان دهد"
+    assert "result=ok" not in caplog.text

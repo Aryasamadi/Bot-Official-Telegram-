@@ -2,13 +2,14 @@
 """پرامپت، تولید با AI، کش خروجی و ترکیب نهایی.
 FIX v4: بودجه‌ی هر مقاله با ai_models.budget_reset() (ContextVar) شروع می‌شود، نه global.
 """
-import asyncio, hashlib, json, re
+import asyncio, hashlib, json, re, time
 from newsbot import config
 from newsbot.db import q, arun
-from newsbot.logutils import log, redact
+from newsbot.logutils import log, log_event, redact
 from datetime import timedelta
 from newsbot.timeutils import now_iso, now_utc, iso_fixed, url_hash
-from newsbot.ai_models import ai_chat, budget_reset, parse_json, _validate_salvageable
+from newsbot.ai_models import (ai_chat, budget_reset, budget_calls_left, parse_json,
+                               _validate_salvageable, ai_posts_total)
 from newsbot.text_format import sanitize_html, strip_tags, salvage_post, clean_ai_text, finish_ok, strip_injection
 from newsbot.opctx import _current_operation
 
@@ -85,16 +86,36 @@ def chunk_cache_key(s, per_chunk, chunk):
     """PLB-02 (فاز ۷): کلید کشِ خلاصهٔ تکه — نسخه + زبان + سقف کاراکتر + خودِ تکه (محتوامحور و پایدار)."""
     return "sum:" + hashlib.sha1(f"v1|{s.get('language') or ''}|{per_chunk}|{chunk}".encode()).hexdigest()
 
+def _chunk_call_budget():
+    """سقفِ فراخوانی‌های خلاصه‌سازی — یک فراخوانی برای تولیدِ نهایی کنار گذاشته می‌شود.
+
+    P0-C: این سقف *پیش* از ساختنِ قطعات اعمال می‌شود ⇒ متنِ بلند قطع می‌شود و
+    ده‌ها فراخوانیِ ترتیبی ساخته نمی‌شود (تصمیمِ قطعی و قابل‌تست)."""
+    return max(1, int(config.AI_MAX_CALLS_PER_ARTICLE) - 1)
+
 async def _summarize_chunks(s, full, on_queue=None, owner_id=None, _depth=0):
     """خلاصه‌سازی بدون‌حذف: همهٔ قطعات متن خلاصه می‌شوند و اگر خروجی هنوز بزرگ بود لایه‌به‌لایه
     جمع می‌شود تا به اندازهٔ ورودی مدل برسد — هیچ بخشی از منبع دور ریخته نمی‌شود.
     PLB-02 (فاز ۷): خلاصهٔ هر تکه در ai_cache کش می‌شود (TTL مثل کش مقاله) تا اجرای دوبارهٔ همان
-    منبع، هزینهٔ AI تکرار نکند؛ کلید از خودِ محتوا مشتق می‌شود پس تغییر تکه = cache miss تمیز."""
-    chunks = [full[i:i + config.AI_INPUT_TEXT_CHARS] for i in range(0, len(full), config.AI_INPUT_TEXT_CHARS)]
+    منبع، هزینهٔ AI تکرار نکند؛ کلید از خودِ محتوا مشتق می‌شود پس تغییر تکه = cache miss تمیز.
+    P0-C: تعدادِ قطعات با بودجهٔ فراخوانیِ مقاله مهار می‌شود (و هر تلاشِ دومِ یک قطعه
+    فقط وقتی انجام می‌شود که یک فراخوانی برای تولیدِ نهایی باقی مانده باشد)."""
+    per_call = max(1, int(config.AI_INPUT_TEXT_CHARS))
+    max_calls = _chunk_call_budget()
+    limit = per_call * max_calls
+    if len(full) > limit:
+        # تصمیمِ قطعی: متن بیش از بودجه کوتاه می‌شود (نه اینکه بودجه وسط کار بشکند)
+        log.warning("article text cut to %d chars to fit the AI call budget (%d summarize calls)", limit, max_calls)
+        full = full[:limit]
+    chunks = [full[i:i + per_call] for i in range(0, len(full), per_call)]
     # بودجهٔ هر قطعه از کل ظرفیت ورودی مدل تقسیم می‌شود تا مجموعِ خلاصه‌ها همیشه جا شود
     per_chunk = max(300, config.AI_INPUT_TEXT_CHARS // max(1, len(chunks)))
     lines = []
     for idx, chunk in enumerate(chunks):
+        _left = budget_calls_left()
+        if _left is not None and _left <= 0:
+            log.warning("AI call budget reached during summarization — %d chunk(s) left unprocessed", len(chunks) - idx)
+            break
         sysc = ("You summarize a technical/news article chunk in the channel's output LANGUAGE ({}). "
                 "Produce a compact list of key points only, prose style, no markdown headers beyond bullets. "
                 "Never drop facts, numbers, names, quotes or conclusions. "
@@ -115,7 +136,14 @@ async def _summarize_chunks(s, full, on_queue=None, owner_id=None, _depth=0):
             raw, _, err = await ai_chat(sysc, user_msg, on_queue=on_queue, owner_id=owner_id, validate=None)
             if err: return None, err
             if (raw or "").strip(): break
-            if attempt: raw = chunk[:per_chunk]
+            if attempt:
+                raw = chunk[:per_chunk]
+                break
+            # تلاشِ دوم فقط وقتی که بودجه اجازه دهد (یک فراخوانی برای تولیدِ نهایی نگه داشته می‌شود)
+            _left = budget_calls_left()
+            if _left is not None and _left <= 1:
+                raw = chunk[:per_chunk]
+                break
         lines.append(raw or "")
         if config.AI_CACHE_TTL_DAYS > 0 and (raw or "").strip():
             try: await arun(q, "INSERT OR REPLACE INTO ai_cache(key,value,created_at) VALUES(?,?,?)", (ck, json.dumps({"t": raw}, ensure_ascii=False), now_iso()), commit=True)
@@ -137,8 +165,27 @@ def ai_cache_key(s, art):
                          f"{hashlib.sha1(sig.encode()).hexdigest()[:16]}".encode()).hexdigest()
 
 async def generate(s, art, on_queue=None, owner_id=None):
-    """خروجی: (json, model_name, error_code) — error_code کلید امن است (never متن خطای مدل یا base url)."""
+    """خروجی: (json, model_name, error_code) — error_code کلید امن است (never متن خطای مدل یا base url).
+
+    P0/OBS: هر فراخوانی با زمان، تعدادِ فراخوانیِ منطقی و تعدادِ POSTهای *واقعی*
+    (از محلِ ارسالِ درخواست) ثبت می‌شود ⇒ برای هر چرخه قابل‌اندازه‌گیری است."""
     budget_reset(hard=True)   # FIX v4 + PH-08/PIPE-001 (hard = no reset inside one article): بودجه‌ی این مقاله از صفر (ایزوله per-task، نه global)
+    _posts0 = ai_posts_total(); _t0 = time.monotonic()
+    try:
+        j, model, err = await _generate_inner(s, art, on_queue=on_queue, owner_id=owner_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log_event("ERROR", f"ai_generate crashed: {type(e).__name__}", exc_info=True, error_class=type(e).__name__)
+        raise
+    _calls = int((config.AI_BUDGET.get() or {}).get("calls") or 0)
+    _posts = ai_posts_total() - _posts0
+    _ms = int((time.monotonic() - _t0) * 1000)
+    log_event("WARN" if err else "INFO",
+              f"ai_generate ms={_ms} calls={_calls} posts={_posts} model={model or '-'} code={err or 'ok'}")
+    return j, model, err
+
+async def _generate_inner(s, art, on_queue=None, owner_id=None):
     ckey = ai_cache_key(s, art)
     if config.AI_CACHE_TTL_DAYS > 0:
         # PH-08/PIPE-003: TTL must be enforced at READ time, not only by the hourly sweep.

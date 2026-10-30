@@ -200,79 +200,94 @@ async def _deadman_check():
 async def scheduler_tick(bot):
     if _tick_lock.locked(): return
     async with _tick_lock:
-        await arun(gset, "heartbeat", now_iso()); await arun_maint(_do_cleanup)
+        # P0-A: سقفِ زمانیِ *کلِ تیک* (کشف + همهٔ چرخه‌های موازی) ⇒ مجموعِ چند کانال
+        # از تیکِ بعدی جلو نمی‌زند و scheduler هرگز starve نمی‌شود.
+        _t0 = time.monotonic()
         try:
-            # اگر ژورنالی وسط کار گیر کند (تسک لغو شود، پروسه kill شود) تا restart بعدی بازیابی نمی‌شد.
-            # با فاصله‌ی زمانی اجرا می‌شود، نه هر تیک؛ کوئری روی pub_journal با PK است ⇒ ارزان.
-            if (time.time() - float(await arun(gget, "last_recover", 0))) >= config.RECOVER_EVERY_MIN * 60:
-                await arun(_recover_state)
-        except Exception as e:
-            log_event("ERROR", f"publication recovery: {type(e).__name__}: {e}",
-                      exc_info=True, error_class=type(e).__name__)
-        try:
-            await probe_down_models()
-        except Exception as e:
-            log_event("WARN", f"probe_down_models failed: {type(e).__name__}: {e}",
-                      exc_info=True, error_class=type(e).__name__)
-        try:
-            await _renotify_payments(bot)
-        except Exception as e:
-            log_event("ERROR", f"payment re-notify failed: {type(e).__name__}: {e}",
-                      exc_info=True, error_class=type(e).__name__)
-        try:
-            await _retry_alerts()
-        except Exception as e:
-            log_event("ERROR", f"alert re-notify failed: {type(e).__name__}: {e}",
-                      exc_info=True, error_class=type(e).__name__)
-        try:
-            await _deadman_check()
-        except Exception as e:
-            log_event("ERROR", f"dead-man check failed: {type(e).__name__}: {e}",
-                      exc_info=True, error_class=type(e).__name__)
-        try:
-            await _plan_notifications()
-        except Exception as e:
-            log_event("ERROR", f"plan notifications: {type(e).__name__}: {e}",
-                      exc_info=True, error_class=type(e).__name__)
-        if not await arun(gget, "automation_enabled", True): return
-        due = []
-        skipped = []
-        publish_budget = config.MAX_PUBLISHES_PER_TICK
-        for u in await arun(list_admins):
-            uid = u["id"]
-            if not (await arun(admin_limits, uid))["active"]:
-                skipped.append((uid, "plan_expired")); continue
-            for ch in await arun(list_channels, uid):
-                s = await arun(get_settings, ch["id"])
-                if not s["enabled"]:
-                    skipped.append((uid, ch["id"], "disabled")); continue
-                rem = await arun(remaining, uid, "posts", ch["id"])
-                if rem is not None and rem <= 0:
-                    skipped.append((uid, ch["id"], "quota")); continue
-                if in_quiet(s) and s["mode"] == "auto":
-                    skipped.append((uid, ch["id"], "quiet")); continue
-                # PH-07/PERF-007: flush only eligible channels, with a bounded per-tick
-                # publication budget; never start one unbounded drain per channel.
-                if s["mode"] == "auto" and publish_budget > 0:
-                    try:
-                        sent = await flush_ready(bot, uid, ch["id"], max_n=min(2, publish_budget))
-                        publish_budget -= max(0, sent)
-                    except Exception as e: log_event("ERROR", f"flush {ch['title']}: {e}", uid)
-                lr = parse_dt(s["last_run"])
-                if not lr or (now_utc() - lr) >= timedelta(minutes=int(s["interval_minutes"])):
-                    due.append((lr.isoformat() if lr else "", uid, ch, s))
-                else:
-                    skipped.append((uid, ch["id"], f"not_due (next in {int(s['interval_minutes']) - int((now_utc() - lr).total_seconds())//60}′)"))
-        await arun(gset, "load_due", len(due))
-        if skipped:   # خلاصه‌ی هر تیک نویز INFO بود؛ جزئیات فقط در سطح debug
-            log.debug("scheduler skip-summary: %s", "; ".join(f"{u}/{c}/{r}" for u, c, r in skipped[:10]))
-        if not due:
-            log.debug("scheduler: nothing due this tick")
-            return
-        # چرخه هرگز متوقف نمی‌شود: اگر مدلی در دسترس نباشد، خودِ چرخه مدل‌ها را به‌ترتیب امتحان می‌کند و در پایان دلیل واقعی را می‌گوید
-        if not any([await arun(any_model_available, uid) for _, uid, _, _ in due]): log_event("WARN", f"{len(due)} کانال با مدل‌های در حالت backoff اجرا می‌شوند (امتحان ترتیبی)")
-        due.sort(key=lambda x: x[0]); batch = due[:config.MAX_CYCLES_PER_TICK]
-        await arun(gset, "last_cycle_start", now_iso()); await asyncio.gather(*[_scheduled(bot, uid, ch, s) for _, uid, ch, s in batch]); await arun(gset, "last_cycle_end", now_iso())
+            async with asyncio.timeout(config.SCHEDULER_TICK_DEADLINE_SEC):
+                await _tick_body(bot)
+        except TimeoutError:
+            log_event("ERROR", f"scheduler tick exceeded its deadline ({config.SCHEDULER_TICK_DEADLINE_SEC}s) — the rest of the tick was skipped")
+            try: await arun(gset, "last_tick_deadline", now_iso())
+            except Exception: pass
+        except asyncio.CancelledError:
+            raise
+        log_event("INFO", f"scheduler tick done in {int((time.monotonic() - _t0) * 1000)}ms")
+
+async def _tick_body(bot):
+    await arun(gset, "heartbeat", now_iso()); await arun_maint(_do_cleanup)
+    try:
+        # اگر ژورنالی وسط کار گیر کند (تسک لغو شود، پروسه kill شود) تا restart بعدی بازیابی نمی‌شد.
+        # با فاصله‌ی زمانی اجرا می‌شود، نه هر تیک؛ کوئری روی pub_journal با PK است ⇒ ارزان.
+        if (time.time() - float(await arun(gget, "last_recover", 0))) >= config.RECOVER_EVERY_MIN * 60:
+            await arun(_recover_state)
+    except Exception as e:
+        log_event("ERROR", f"publication recovery: {type(e).__name__}: {e}",
+                  exc_info=True, error_class=type(e).__name__)
+    try:
+        await probe_down_models()
+    except Exception as e:
+        log_event("WARN", f"probe_down_models failed: {type(e).__name__}: {e}",
+                  exc_info=True, error_class=type(e).__name__)
+    try:
+        await _renotify_payments(bot)
+    except Exception as e:
+        log_event("ERROR", f"payment re-notify failed: {type(e).__name__}: {e}",
+                  exc_info=True, error_class=type(e).__name__)
+    try:
+        await _retry_alerts()
+    except Exception as e:
+        log_event("ERROR", f"alert re-notify failed: {type(e).__name__}: {e}",
+                  exc_info=True, error_class=type(e).__name__)
+    try:
+        await _deadman_check()
+    except Exception as e:
+        log_event("ERROR", f"dead-man check failed: {type(e).__name__}: {e}",
+                  exc_info=True, error_class=type(e).__name__)
+    try:
+        await _plan_notifications()
+    except Exception as e:
+        log_event("ERROR", f"plan notifications: {type(e).__name__}: {e}",
+                  exc_info=True, error_class=type(e).__name__)
+    if not await arun(gget, "automation_enabled", True): return
+    due = []
+    skipped = []
+    publish_budget = config.MAX_PUBLISHES_PER_TICK
+    for u in await arun(list_admins):
+        uid = u["id"]
+        if not (await arun(admin_limits, uid))["active"]:
+            skipped.append((uid, "plan_expired")); continue
+        for ch in await arun(list_channels, uid):
+            s = await arun(get_settings, ch["id"])
+            if not s["enabled"]:
+                skipped.append((uid, ch["id"], "disabled")); continue
+            rem = await arun(remaining, uid, "posts", ch["id"])
+            if rem is not None and rem <= 0:
+                skipped.append((uid, ch["id"], "quota")); continue
+            if in_quiet(s) and s["mode"] == "auto":
+                skipped.append((uid, ch["id"], "quiet")); continue
+            # PH-07/PERF-007: flush only eligible channels, with a bounded per-tick
+            # publication budget; never start one unbounded drain per channel.
+            if s["mode"] == "auto" and publish_budget > 0:
+                try:
+                    sent = await flush_ready(bot, uid, ch["id"], max_n=min(2, publish_budget))
+                    publish_budget -= max(0, sent)
+                except Exception as e: log_event("ERROR", f"flush {ch['title']}: {e}", uid)
+            lr = parse_dt(s["last_run"])
+            if not lr or (now_utc() - lr) >= timedelta(minutes=int(s["interval_minutes"])):
+                due.append((lr.isoformat() if lr else "", uid, ch, s))
+            else:
+                skipped.append((uid, ch["id"], f"not_due (next in {int(s['interval_minutes']) - int((now_utc() - lr).total_seconds())//60}′)"))
+    await arun(gset, "load_due", len(due))
+    if skipped:   # خلاصه‌ی هر تیک نویز INFO بود؛ جزئیات فقط در سطح debug
+        log.debug("scheduler skip-summary: %s", "; ".join(f"{u}/{c}/{r}" for u, c, r in skipped[:10]))
+    if not due:
+        log.debug("scheduler: nothing due this tick")
+        return
+    # چرخه هرگز متوقف نمی‌شود: اگر مدلی در دسترس نباشد، خودِ چرخه مدل‌ها را به‌ترتیب امتحان می‌کند و در پایان دلیل واقعی را می‌گوید
+    if not any([await arun(any_model_available, uid) for _, uid, _, _ in due]): log_event("WARN", f"{len(due)} کانال با مدل‌های در حالت backoff اجرا می‌شوند (امتحان ترتیبی)")
+    due.sort(key=lambda x: x[0]); batch = due[:config.MAX_CYCLES_PER_TICK]
+    await arun(gset, "last_cycle_start", now_iso()); await asyncio.gather(*[_scheduled(bot, uid, ch, s) for _, uid, ch, s in batch]); await arun(gset, "last_cycle_end", now_iso())
 
 def _do_cleanup():
     from newsbot.core_articles import cleanup

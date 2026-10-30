@@ -9,7 +9,7 @@
 [![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-21.6%2B-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://python-telegram-bot.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-default-003B57?style=flat-square&logo=sqlite&logoColor=white)](#-پیکربندی)
 [![Cloudflare D1](https://img.shields.io/badge/Cloudflare-D1%20optional-F38020?style=flat-square&logo=cloudflare&logoColor=white)](#-پیکربندی)
-[![Tests](https://img.shields.io/badge/tests-454%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
+[![Tests](https://img.shields.io/badge/tests-718%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
 [![i18n](https://img.shields.io/badge/i18n-fa%20%7C%20en-8B5CF6?style=flat-square)](#)
 
 **ربات تک‌پروسه‌ای مدیریت خودکار کانال تلگرام** — منابع خبری را می‌خواند، با چند مدل هوش مصنوعی بازنویسی و امتیازدهی می‌کند، و به‌صورت **crash-safe** منتشر می‌کند.
@@ -226,14 +226,15 @@ INFO | در حال اجرا…
 | `AI_INPUT_TEXT_CHARS` | `8000` | متن ورودی به مدل |
 | `AI_MAX_CALLS_PER_ARTICLE` | `12` | سقف فراخوانی برای هر مقاله |
 | `AI_ARTICLE_TIME_BUDGET` | `300` | بودجهٔ زمانی هر مقاله (ثانیه) |
-| `AI_MAX_MODEL_ATTEMPTS` | `6` | سقف تلاش روی مدل‌ها |
+| `AI_MAX_MODEL_ATTEMPTS` | `2` | سقف تلاش روی مدل‌ها (یک مدلِ شخصی + یک مدلِ عمومی) |
 | `AI_CACHE_TTL_DAYS` | `14` | عمر کش پاسخ |
-| `AI_PROVIDER_TIMEOUT_SEC` | `240` | سقف زمانی یک درخواست پروایدر (مستقل از بودجهٔ fetch منابع) |
-| `AI_TRANSIENT_RETRIES` | `2` | تلاش دوباره برای خطاهای گذرا (۴۲۹/۵xx/timeout) |
+| `AI_PROVIDER_TIMEOUT_SEC` | `45` | سقف زمانی یک درخواست پروایدر (مستقل از بودجهٔ fetch منابع) |
+| `AI_TRANSIENT_RETRIES` | `1` | تلاش دوباره برای خطاهای گذرا (۴۲۹/۵xx/timeout) |
 | `AI_RETRY_BASE_SEC` | `2` | تأخیر پایهٔ تلاش دوباره (ثانیه) |
 | `AI_RETRY_MAX_DELAY_SEC` | `20` | سقف تأخیر هر تلاش دوباره (ثانیه) |
 | `MODEL_TRANSIENT_BACKOFF_MIN` | `2` | خاموشی کوتاه مدل بعد از خطای موقت (دقیقه) |
 | `MODEL_TRANSIENT_BACKOFF_MAX_MIN` | `15` | سقف خاموشی کوتاه مدل (دقیقه) |
+| `AI_PROBE_TIMEOUT_SEC` | `15` | timeout اختصاصیِ probe (کوتاه) |
 
 </details>
 
@@ -246,6 +247,9 @@ INFO | در حال اجرا…
 | `FETCH_CONCURRENCY` | `8` | هم‌زمانی واکشی منابع |
 | `CYCLE_CONCURRENCY` | `2` | هم‌زمانی چرخه‌ها |
 | `MAX_CYCLES_PER_TICK` | `4` | سقف چرخه در هر tick |
+| `CYCLE_TEST_DEADLINE_SEC` | `80` | سقف زمانی چرخهٔ دستی/تست (≤۹۰ ثانیه) |
+| `CYCLE_AUTO_DEADLINE_SEC` | `100` | سقف زمانی چرخهٔ خودکار (کوتاه‌تر از فاصلهٔ tick) |
+| `SCHEDULER_TICK_DEADLINE_SEC` | `110` | سقف زمانی کلِ tick (کشف + همهٔ چرخه‌ها) |
 | `DB_POOL_SIZE` | `8` | اندازهٔ استخر تردهای عملیات DB |
 | `MAINT_POOL_SIZE` | `1` | استخر جدا برای نگهداری/بکاپ (بدون گرسنگی‌دادن مسیر اصلی) |
 | `PUBLISH_CONCURRENCY` | `2` | سقف آپلود هم‌زمان تلگرام |
@@ -361,7 +365,7 @@ stateDiagram-v2
 ## 🧪 تست‌ها
 
 ```bash
-pytest -q                              # ۴۵۴ تست
+pytest -q                              # ۷۱۸ تست
 python -m pyflakes newsbot tools run.py tests   # نگهبان ایستا
 python tools/final_verification.py     # راستی‌آزمایی مستقل (۱۷ بررسی)
 python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08 · docs/PERFORMANCE.md)

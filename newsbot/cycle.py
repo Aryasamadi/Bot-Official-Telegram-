@@ -11,7 +11,7 @@ import asyncio, json, secrets, time
 from datetime import timedelta
 from newsbot import config
 from newsbot.db import q, gset, arun
-from newsbot.logutils import log_ctx, log_event, bump, _metrics
+from newsbot.logutils import log, log_ctx, log_event, bump, _metrics
 from newsbot.timeutils import now_utc, now_iso, parse_dt, url_hash
 from newsbot.concurrency import ch_lock, CYCLE_SEM
 from newsbot.core_users import admin_limits, admin_limits_cached, remaining, usage_today, _LIMITS_TTL
@@ -24,7 +24,8 @@ from newsbot.extract import extract_article
 from newsbot.adfilter import heuristic_ad_check
 from newsbot.generate import generate, compose
 from newsbot.publish import _publish_article_locked, bot_can_post
-from newsbot.ai_models import ai_err_text
+from newsbot.ai_models import (ai_err_text, is_ai_fatal, cycle_quarantine_reset,
+                               ai_stats_reset, ai_posts_total)
 from newsbot.opctx import _current_operation, step_add, operation_checkpoint
 from newsbot.ui_i18n import DIAG, STAGES
 
@@ -46,6 +47,7 @@ class Diag:
             "ai": ("run", "⏳ در حال تولید با AI…"), "queue": ("run", "⏳ در صف انتشار…"),
             "published": ("ok", "✅ منتشر شد"), "queued": ("ok", "📌 در انتظار"),
             "mand_missing": ("fail", "🔐 عضویت کانال اجباری تأیید نشده"),
+            "deadline": ("fail", "⏱ سقفِ زمانیِ چرخه تمام شد"), "ai_stop": ("fail", "🤖 چرخه پس از خطای نهاییِ AI متوقف شد"),
         }
         st = mapping.get(key)
         if st: step_add(op, key, status=st[0], **kw)
@@ -116,18 +118,47 @@ PROG = {"fa": {"start": "شروع…", "src": "بررسی {n} منبع…", "fou
 
 def _res(D): return {"found": 0, "processed": 0, "accepted": 0, "rejected": 0, "queued": 0, "published": 0, "errors": 0, "links": [], "src": "", "pub": [], "diag": D, "msg": ""}
 
+async def _deadline_result(uid, cid, deadline):
+    """P0-A: نتیجهٔ قابل‌تشخیصِ انقضای سقفِ زمانی.
+
+    قفلِ کانال آزاد شده (در همان بلوکِ ``async with lk`` هستیم) و وضعیتِ مقاله‌ها سالم
+    است؛ فقط ثبتِ گزارش با مهلتِ کوتاه انجام می‌شود تا خودِ گزارش چرخه را معطل نکند."""
+    D = Diag(); D.stage = "ai"; D.add("deadline", sec=deadline)
+    res = _res(D); res["errors"] = 1; res["stop_reason"] = "deadline"; res["deadline_sec"] = deadline
+    try: lang = (await arun(get_settings, cid))["ui_lang"]
+    except Exception: lang = "fa"
+    res["msg"] = D.render(lang, False)
+    log_event("ERROR", f"چرخه {cid} از سقفِ زمانی ({deadline}s) عبور کرد و متوقف شد")
+    try:
+        await asyncio.wait_for(arun(update_settings, cid, last_end=now_iso(), last_result=res["msg"][:1500], last_diag=D.to_json()), timeout=10)
+    except Exception: log.warning("could not record the deadline result for channel %s", cid, exc_info=True)
+    return res
+
 async def run_channel_cycle(bot, uid, cid, test_mode=False, progress=None):
     # PH-07/PIPE-016: take the global slot first; never hold a channel lock while
     # waiting for the cycle semaphore (that made idle channels look busy).
+    # P0-A: سقفِ زمانیِ واقعی برای *کل* چرخه (کشف → استخراج → خلاصه‌سازی → AI → انتشار).
+    deadline = config.CYCLE_TEST_DEADLINE_SEC if test_mode else config.CYCLE_AUTO_DEADLINE_SEC
     async with CYCLE_SEM:
         lk = ch_lock(cid)
         if lk.locked():
             D = Diag(); D.add("busy"); r = _res(D); r["msg"] = D.render((await arun(get_settings, cid))["ui_lang"], False); return r
-        async with lk: return await _cycle(bot, uid, cid, test_mode, progress)
+        async with lk:
+            try:
+                async with asyncio.timeout(deadline):
+                    return await _cycle(bot, uid, cid, test_mode, progress)
+            except TimeoutError:
+                # انقضای deadline ⇒ نتیجهٔ قابل‌تشخیص (نه «خطای مبهم» و نه انتشارِ تکراری)
+                return await _deadline_result(uid, cid, deadline)
+            except asyncio.CancelledError:
+                # لغوِ بیرونی (/cancel یا shutdown) نباید به خطای عادی تبدیل شود
+                raise
 
 async def _cycle(bot, uid, cid, test_mode, progress):
     _cy0 = time.monotonic(); cyid = f"cy{cid}-{secrets.token_hex(2)}"   # شناسهٔ همبستگی این چرخه
     log_ctx(op=cyid, channel=cid, article=None, source=None, model=None, stage="start")
+    # P0-D: قرنطینهٔ مدل‌های خراب و P0/OBS: شمارنده‌های این چرخه — ایزوله per-task
+    cycle_quarantine_reset(); ai_stats_reset()
     D = Diag(); res = _res(D); s = await arun(get_settings, cid); ch = await arun(get_channel, cid); lim = await arun(admin_limits, uid); lang = s["ui_lang"]; P = PROG[lang if lang in PROG else "fa"]
     ch_tz = s.get("tz") or s["utc_offset"]   # ARCH-10/11: منطقهٔ کانال برای تاریخ‌های بی‌tz فید/صفحه و مرزهای روز
     ran = False
@@ -140,7 +171,10 @@ async def _cycle(bot, uid, cid, test_mode, progress):
         bump("cycle_ms", _ms); bump("cycle_n")
         _metrics["queue"] = await arun(ready_count, cid)
         await arun(gset, "metrics", _metrics)          # snapshot ماندگار (بعد از restart هم دیده می‌شود)
-        log_event("INFO", f"چرخه تمام شد در {_ms}ms (found={res.get('found', 0)} accepted={res.get('accepted', 0)} published={res.get('published', 0)})")
+        # P0/OBS: شواهدِ قابل‌اندازه‌گیریِ این چرخه — تعدادِ فراخوانیِ منطقی و POSTهای واقعی
+        _posts = ai_posts_total()
+        res["ai_posts"] = _posts
+        log_event("INFO", f"چرخه تمام شد در {_ms}ms (found={res.get('found', 0)} accepted={res.get('accepted', 0)} published={res.get('published', 0)} ai_posts={_posts})")
         res["msg"] = D.render(lang, with_stage=False)
         # PLB-09 (فاز ۷): last_run فقط اگر خط لوله واقعاً آغاز شده باشد به‌روز می‌شود (نه در خروج‌های زودهنگام،
         # نه وقتی چرخه وسط کار کرش/لغو شده) — وگرنه یک شکست، کانال را تا interval بعدی در سکوت نگه می‌داشت.
@@ -228,7 +262,7 @@ async def _cycle(bot, uid, cid, test_mode, progress):
         return await fin()
     D.add("found", n=len(candidates))
     # ══ stage 3/5: extract + stage 4/5: generate ══ استخراج ۳تایی هم‌زمان، تولید ترتیبی تا رسیدن به هدف
-    quiet = in_quiet(s); cnt = {"extract": 0, "undated": 0, "ad": 0, "ai_ad": 0, "low": 0}; best = 0.0; details = []; ai_err = None; i = 0; stop = False
+    quiet = in_quiet(s); cnt = {"extract": 0, "undated": 0, "ad": 0, "ai_ad": 0, "low": 0}; best = 0.0; details = []; ai_err = None; ai_fatal = None; i = 0; stop = False
     # مانده‌ی صف ready از چرخه‌های قبلی اول منتشر می‌شود تا FIFO حفظ شود؛ داخل سقف همان چرخه (posts_per_cycle) و فقط در حالت خودکار خارج از خاموشی
     drained = 0
     if not test_mode and s["mode"] == "auto" and not quiet:
@@ -286,13 +320,19 @@ async def _cycle(bot, uid, cid, test_mode, progress):
             except Exception as e:
                 # P0: یک خطای غیرمنتظره در مسیرِ AI نباید کلِ چرخه را بکشد (پیش‌تر چنین خطایی
                 # تا آخرین حلقه بالا می‌رفت و بقیهٔ نامزدها + انتشارِ همان دور از دست می‌رفت).
+                # این «خطای داخلی» است، نه «خطای نهاییِ ارائه‌دهنده» ⇒ چرخه به نامزدِ بعدی می‌رود.
                 log_event("ERROR", f"تولیدِ مقاله {aid} با خطای غیرمنتظره مواجه شد: {type(e).__name__}", uid, exc_info=True, error_class=type(e).__name__)
-                gen, model, err = None, None, "ai_error"
+                gen, model, err = None, None, "ai_exception"
             log_ctx(model=model, stage="compose" if gen else "ai-fail")
             if not gen:
                 # FIX سیاست v4: شکست AI «rejected» نیست؛ وضعیت failed (قابل تلاش مجدد) ثبت می‌شود
                 await arun(article_update, aid, status="failed", reason=f"ai: {err}"); res["errors"] += 1; ai_err = err
                 step_add(_current_operation.get(), "src_ai_fail", key=src_name, status="fail", model=model)
+                # P0-B: خطای *نهاییِ* AI ⇒ چرخه به نامزدِ بعدی نمی‌رود (همان ارائه‌دهندهٔ ناسالم
+                # دوباره صدا زده نمی‌شود). فیلترهای عادیِ محتوا (امتیاز/تبلیغ) کدِ خطا ندارند و
+                # فقط همان مقاله را رد می‌کنند ⇒ آن‌ها چرخه را متوقف نمی‌کنند.
+                if is_ai_fatal(err):
+                    ai_fatal = err; stop = True; break
                 continue
             D.stage = "score"
             best = max(best, gen["score"])
@@ -328,6 +368,8 @@ async def _cycle(bot, uid, cid, test_mode, progress):
     if cnt["undated"]: D.add("undated", n=cnt["undated"]); D.hint("hint_undated")
     if cnt["ad"]: D.add("ad", n=cnt["ad"])
     if ai_err: D.add("ai_fail", err=ai_err_text(ai_err, lang)); D.hint("hint_ai")
+    # P0-B: دلیلِ توقفِ چرخه باید در نتیجهٔ نهایی دیده شود
+    if ai_fatal: D.add("ai_stop", err=ai_err_text(ai_fatal, lang)); res["stop_reason"] = f"ai:{ai_fatal}"
     if cnt["ai_ad"]: D.add("ai_ad", n=cnt["ai_ad"])
     if cnt["low"]: D.add("low", n=cnt["low"], min=s["min_score"], best=best)
     for t, w in details[:3]: D.add("detail", title=(t or "")[:40], why=w[:50])

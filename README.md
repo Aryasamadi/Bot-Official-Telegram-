@@ -9,7 +9,7 @@
 [![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-21.6%2B-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://python-telegram-bot.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-default-003B57?style=flat-square&logo=sqlite&logoColor=white)](#-پیکربندی)
 [![Cloudflare D1](https://img.shields.io/badge/Cloudflare-D1%20optional-F38020?style=flat-square&logo=cloudflare&logoColor=white)](#-پیکربندی)
-[![Tests](https://img.shields.io/badge/tests-746%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
+[![Tests](https://img.shields.io/badge/tests-754%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
 [![i18n](https://img.shields.io/badge/i18n-fa%20%7C%20en-8B5CF6?style=flat-square)](#)
 
 **ربات تک‌پروسه‌ای مدیریت خودکار کانال تلگرام** — منابع خبری را می‌خواند، با چند مدل هوش مصنوعی بازنویسی و امتیازدهی می‌کند، و به‌صورت **crash-safe** منتشر می‌کند.
@@ -77,8 +77,13 @@
 نه متنِ GFM با `|`.
 - **fallback خودکار**: اگر سرور/کلاینت پشتیبانی نکند، همان متن با پیام کلاسیک و **بدون حذف محتوا** فرستاده می‌شود
 - خطای شبکه/۵xx/۴۲۹ هرگز به ارسالِ دوباره منجر نمی‌شود (خطر پست تکراری)
-- مدار قطع‌کننده بعد از چند ردِ پیاپی، پیام بومی را برای کل فرایند خاموش می‌کند
+- مدار قطع‌کننده فقط وقتی «خودِ قابلیت» موجود نباشد (۴۰۴) خاموش می‌شود، نه با یک خطای محتوایی
+- سقف‌های رسمیِ تلگرام رعایت می‌شود: ۳۲۷۶۸ کاراکتر، ۵۰۰ بلوک، ۲۰ ستونِ جدول
 - قالبِ فعلیِ پروژه (تیتر بولد، «•»، `<blockquote>`) **بیت‌به‌بیت حفظ** می‌شود
+- مسیرهای متصل: پستِ متنیِ کانال · «نسخهٔ کامل» در ربات · کپیِ دیپ‌لینک · همهٔ اعلان‌ها
+
+> آزمونِ زنده (پیام‌های نمونه به چتِ مدیر کلان + بررسیِ ساختارِ رندرشده):
+> `python tools/rich_live_test.py --env-file /opt/bot-official-telegram/.env`
 
 </td>
 <td width="50%" valign="top">
@@ -386,7 +391,7 @@ stateDiagram-v2
 ## 🧪 تست‌ها
 
 ```bash
-pytest -q                              # ۷۴۶ تست
+pytest -q                              # ۷۵۴ تست
 python -m pyflakes newsbot tools run.py tests   # نگهبان ایستا
 python tools/final_verification.py     # راستی‌آزمایی مستقل (۱۷ بررسی)
 python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08 · docs/PERFORMANCE.md)

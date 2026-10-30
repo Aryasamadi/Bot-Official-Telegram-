@@ -485,6 +485,16 @@ health() {
     fi
     sleep 1
   done
+  if [ "$RUNTIME" = "docker" ]; then
+    # کانتینر درست پس از exec «running» می‌شود؛ اگر برنامه در ثانیه‌های اول کرش
+    # کند، وضعیت به exited می‌رود ⇒ یک مکث و بازبینیِ دوباره لازم است.
+    sleep "${DOCKER_SETTLE_SECONDS:-5}"
+    active="$(prop "$(unit_info)" ActiveState)"
+    if [ "$active" != "active" ]; then
+      err "container '$CONTAINER' is not running ${DOCKER_SETTLE_SECONDS}s after the restart (ActiveState=$active)"
+      return 1
+    fi
+  fi
   nrestarts="$(prop "$(unit_info)" NRestarts)"; case "$nrestarts" in ''|*[!0-9]*) nrestarts=0 ;; esac
   if [ "$nrestarts" -ne 0 ]; then
     err "service '$SERVICE' is crash-looping (NRestarts=$nrestarts)"

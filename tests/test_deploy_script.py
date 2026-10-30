@@ -644,7 +644,18 @@ if args and args[0] == "inspect":
     if "{{.Config.WorkingDir}}" in fmt:
         print(MOUNT)
     elif "{{.State.Status}}" in fmt:
-        print("inactive" if os.path.exists(os.path.join(os.environ["STUB_DIR"], "inactive")) else "running")
+        stub_dir = os.environ["STUB_DIR"]
+        if os.path.exists(os.path.join(stub_dir, "flaky")):
+            counter = os.path.join(stub_dir, "flaky.count")
+            seen = 0
+            if os.path.exists(counter):
+                seen = int(open(counter).read().strip() or "0")
+            open(counter, "w").write(str(seen + 1))
+            print("running" if seen == 0 else "inactive")
+        elif os.path.exists(os.path.join(stub_dir, "inactive")):
+            print("inactive")
+        else:
+            print("running")
     elif "{{.RestartCount}}" in fmt:
         print("0")
     elif ".Mounts" in fmt:
@@ -702,6 +713,7 @@ def docker_sandbox(sandbox):
     stub.write_text(DOCKER_STUB, encoding="utf-8")
     os.chmod(str(stub), 0o755)
     sandbox.env["CONTAINER_NAME"] = "bot-official-telegram"
+    sandbox.env["DOCKER_SETTLE_SECONDS"] = "0"
     return sandbox
 
 
@@ -768,3 +780,16 @@ def test_docker_runtime_health_failure_rolls_back_the_container(docker_sandbox):
     assert sum(1 for c in _docker_calls(docker_sandbox) if c.startswith("docker restart ")) == 2, \
         "restart اول + restart کد قبلی بعد از شکست"
     assert not (docker_sandbox.app / ".deployed_sha").exists()
+
+
+def test_docker_runtime_catches_a_crash_right_after_the_restart(docker_sandbox):
+    """کانتینر بعد از restart زودتر از «مکثِ سنجش» می‌میرد ⇒ سلامت شکست می‌خورد."""
+    sha = docker_sandbox.commit_push("feature.txt", "v2\n")
+    Path(docker_sandbox.env["STUB_DIR"], "flaky").write_text("1")
+    r = docker_sandbox.deploy(sha)
+
+    assert r.returncode != 0, "کرشِ بلافاصله پس از restart باید deploy را شکست دهد"
+    head, prev, _ = docker_sandbox.rollback_files()
+    assert head == docker_sandbox.head0, "کد باید به SHA قبلی برگردد"
+    assert sum(1 for c in _docker_calls(docker_sandbox) if c.startswith("docker restart ")) == 2, \
+        "restart اول + restart کد قبلی بعد از شکست"

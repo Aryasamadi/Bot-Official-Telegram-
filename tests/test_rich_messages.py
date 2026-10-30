@@ -773,13 +773,11 @@ def test_the_server_parsed_structure_matches_the_intended_native_blocks():
         srv.close()
 
 
-def test_report_markdown_renders_as_structured_legacy_html():
-    from newsbot.scheduler import report_markdown
-    md = report_markdown(None, None, "fa")
-    assert "# 📊 گزارش سیستم" in md
-    assert "## وضعیت" in md
-    doc = rich_format.parse_content(md, kind=rich_format.KIND_REPORT)
-    legacy = rich_format.render_legacy(doc)
-    assert "<b>وضعیت</b>" in legacy
-    assert "• " in legacy
-    assert "🧮" in legacy, "خطِ توکن باید در گزارش بماند"
+def test_the_panel_report_keeps_the_previous_format_byte_for_byte():
+    """گزارشِ پنل (پیامِ کلاسیک) نباید با قابلیتِ جدید تغییرِ ظاهری کند."""
+    from newsbot.scheduler import report_text
+    txt = report_text(None, None, "fa")
+    assert txt.startswith("📊 <b>گزارش سیستم</b>"), "تیترِ گزارش مثل قبل بماند"
+    assert "👥 کاربران" in txt and " · " in txt, "چیدمانِ «یک سنجه در هر خط» مثل قبل بماند"
+    assert "🧮" in txt, "خطِ توکن باید در گزارش بماند"
+    assert "<h2>" not in txt and "<ul>" not in txt, "پنل کلاسیک است، نه پیامِ بومی"

@@ -169,10 +169,15 @@ class Doc:
 
 
 def detect_rtl(text):
-    """آیا متن عمدتاً راست‌به‌چپ است؟ (برای پرچم ``is_rtl`` پیام بومی)"""
+    """آیا متن عمدتاً راست‌به‌چپ است؟ (برای پرچم ``is_rtl`` پیام بومی)
+
+    تگ‌های HTML نادیده گرفته می‌شوند تا نسبتِ حروفِ لاتینِ «نشانه‌گذاری» با متنِ
+    واقعی قاطی نشود؛ وگرنه یک پیامِ کوتاهِ فارسی ممکن است اشتباهاً چپ‌به‌راست شود.
+    """
     s = str(text or "")
     if not s:
         return False
+    s = re.sub(r"<[^>]+>", "", s)
     rtl = len(_RTL_RE.findall(s))
     latin = len(re.findall(r"[A-Za-z]", s))
     return rtl > 0 and rtl * 2 >= latin
@@ -563,6 +568,26 @@ def _blocks_of(doc):
     return doc.blocks if isinstance(doc, Doc) else list(doc or [])
 
 
+def count_blocks(doc):
+    """تعدادِ بلوک‌ها طبقِ سقفِ رسمیِ تلگرام (بلوک‌ها، مواردِ فهرست، ردیف‌های جدول
+    و بلوک‌های تودرتو)."""
+    total = 0
+    for b in _blocks_of(doc):
+        total += 1
+        if isinstance(b, ListBlock):
+            total += len(b.items)
+        elif isinstance(b, TableBlock):
+            total += len(b.rows) + (1 if b.headers else 0)
+        elif isinstance(b, Details):
+            total += count_blocks(b.body)
+    return total
+
+
+def _table_too_wide(block):
+    """آیا جدول از سقفِ ۲۰ ستونِ تلگرام عبور می‌کند؟"""
+    return len(block.headers) > RICH_COLUMN_LIMIT or any(len(r) > RICH_COLUMN_LIMIT for r in block.rows)
+
+
 def render_rich(doc, kind=None):
     """رندر HTML پیام بومی تلگرام (تیتر/جدول/فهرست/بخشِ بازشوندهٔ واقعی)."""
     out = []
@@ -580,12 +605,16 @@ def render_rich(doc, kind=None):
         elif isinstance(b, Divider):
             out.append("<hr/>")
         elif isinstance(b, TableBlock):
-            head = ""
-            heads = [h for h in b.headers if str(h).strip()]
-            if heads:
-                head = "<tr>%s</tr>" % "".join("<th>%s</th>" % h for h in heads)
-            body = "".join("<tr>%s</tr>" % "".join("<td>%s</td>" % c for c in row) for row in b.rows)
-            out.append("<table>%s%s</table>" % (head, body))
+            if _table_too_wide(b):
+                # بیش از ۲۰ ستون ⇒ تلگرام رد می‌کند؛ همان محتوا به شکلِ سطرهای کلاسیک می‌ماند
+                out.extend(_legacy_table_lines(b))
+            else:
+                head = ""
+                heads = [h for h in b.headers if str(h).strip()]
+                if heads:
+                    head = "<tr>%s</tr>" % "".join("<th>%s</th>" % h for h in heads)
+                body = "".join("<tr>%s</tr>" % "".join("<td>%s</td>" % c for c in row) for row in b.rows)
+                out.append("<table>%s%s</table>" % (head, body))
         elif isinstance(b, Details):
             out.append("<details><summary>%s</summary>%s</details>" % (b.summary, render_rich(b.body)))
         elif isinstance(b, Pre):
@@ -631,16 +660,21 @@ def _split_inline(text, limit):
     return parts or [text or ""]
 
 
-def split_doc(doc, limit=SAFE_RICH_CHARS, render=render_rich):
-    """تقسیمِ سند به چند سندِ کوچک‌تر بدون از دست رفتن محتوا."""
+def split_doc(doc, limit=SAFE_RICH_CHARS, render=render_rich, block_limit=RICH_BLOCK_LIMIT):
+    """تقسیمِ سند به چند سندِ کوچک‌تر بدون از دست رفتن محتوا.
+
+    هم طولِ متن و هم تعدادِ بلوک‌ها سقفِ رسمیِ تلگرام رعایت می‌شود."""
     if limit <= 0:
         limit = SAFE_RICH_CHARS
-    parts, cur, cur_len = [], [], 0
+    if block_limit <= 0:
+        block_limit = RICH_BLOCK_LIMIT
+    parts, cur, cur_len, cur_blocks = [], [], 0, 0
     for b in doc.blocks:
         one = len(render([b]))
-        if cur and cur_len + one > limit:
+        weight = count_blocks([b])
+        if cur and (cur_len + one > limit or cur_blocks + weight > block_limit):
             parts.append(cur)
-            cur, cur_len = [], 0
+            cur, cur_len, cur_blocks = [], 0, 0
         if one > limit and isinstance(b, (Para, Quote, Heading)):
             for piece in _split_inline(b.text, max(64, limit - 32)):
                 if isinstance(b, Heading):
@@ -651,12 +685,14 @@ def split_doc(doc, limit=SAFE_RICH_CHARS, render=render_rich):
                     nb = Para(piece)
                 cur.append(nb)
                 cur_len += len(render([nb]))
-                if cur_len >= limit:
+                cur_blocks += count_blocks([nb])
+                if cur_len >= limit or cur_blocks >= block_limit:
                     parts.append(cur)
-                    cur, cur_len = [], 0
+                    cur, cur_len, cur_blocks = [], 0, 0
             continue
         cur.append(b)
         cur_len += one
+        cur_blocks += weight
     if cur:
         parts.append(cur)
     out = []

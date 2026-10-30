@@ -10,6 +10,7 @@
 import asyncio
 import json
 import threading
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
@@ -20,6 +21,164 @@ from newsbot import config
 from newsbot import rich_format
 from newsbot import rich_send
 from newsbot.text_format import strip_tags
+
+
+def rich_text_of(node):
+    """متنِ ساده از ساختارِ RichText (همانندِ آنچه سرور برمی‌گرداند)."""
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        return "".join(rich_text_of(x) for x in node)
+    if isinstance(node, dict):
+        return rich_text_of(node.get("text"))
+    return str(node)
+
+
+def parse_rich_html(html, is_rtl=False):
+    """تجزیهٔ HTMLِ بومی ⇒ ساختاری همانندِ آنچه سرورِ تلگرام برمی‌گرداند.
+
+    این «شبیه‌سازِ سمتِ سرور» است: اگر payloadِ ما واقعاً به بلوک‌های بومی
+    (تیتر/جدول/فهرست) تبدیل شود، اینجا هم باید همان ساختار دیده شود."""
+    blocks = []
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.buf = []
+            self.heading = None
+            self.quote = None
+            self.list_items = None
+            self.list_item = None
+            self.table = None
+            self.row = None
+            self.cell = None
+            self.cell_header = False
+            self.details = None
+            self.summary = None
+            self.in_summary = False
+            self.link = None
+            self.link_text = []
+
+        def _sink(self):
+            """مخزنِ متنِ جاری (بسته به بلوکِ باز)."""
+            if self.heading is not None:
+                return self.heading[1]
+            if self.quote is not None:
+                return self.quote
+            if self.cell is not None:
+                return self.cell
+            if self.list_item is not None:
+                return self.list_item
+            if self.details is not None:
+                return self.details
+            return self.buf
+
+        def _text(self):
+            out = []
+            for x in self.buf:
+                if isinstance(x, str):
+                    out.append(x)
+                elif isinstance(x, dict) and x.get("type") == "url":
+                    out.append(rich_text_of(x.get("text")))
+            return "".join(out).strip()
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                self.heading = [int(tag[1]), []]
+            elif tag == "p":
+                self.buf = []
+            elif tag in ("ul", "ol"):
+                self.list_items = []
+            elif tag == "li":
+                self.list_item = []
+            elif tag == "table":
+                self.table = []
+            elif tag == "tr":
+                self.row = []
+            elif tag in ("td", "th"):
+                self.cell = []
+                self.cell_header = (tag == "th")
+            elif tag == "blockquote":
+                self.quote = []
+            elif tag == "details":
+                self.details = []
+            elif tag == "summary":
+                self.in_summary = True
+                self.buf = []
+            elif tag == "a":
+                href = dict(attrs).get("href")
+                if href:
+                    self.link = href
+                    self.link_text = []
+
+        def handle_endtag(self, tag):
+            if tag == "a" and self.link:
+                node = {"type": "url", "url": self.link, "text": "".join(self.link_text).strip()}
+                self._sink().append(node)
+                self.link = None
+                self.link_text = []
+            elif tag in ("h1", "h2", "h3", "h4", "h5", "h6") and self.heading:
+                blocks.append({"type": "heading", "size": self.heading[0],
+                               "text": "".join(self.heading[1]).strip()})
+                self.heading = None
+            elif tag == "p":
+                t = self._text()
+                if t:
+                    blocks.append({"type": "paragraph", "text": t})
+                self.buf = []
+            elif tag in ("ul", "ol") and self.list_items is not None:
+                if self.list_items:
+                    blocks.append({"type": "list", "items": self.list_items})
+                self.list_items = None
+            elif tag == "li" and self.list_item is not None:
+                item = "".join(self.list_item).strip()
+                if self.list_items is not None:
+                    self.list_items.append({"label": "", "blocks": [{"type": "paragraph", "text": item}]})
+                self.list_item = None
+            elif tag == "table" and self.table is not None:
+                blocks.append({"type": "table", "cells": self.table})
+                self.table = None
+            elif tag == "tr" and self.row is not None:
+                if self.table is not None:
+                    self.table.append(self.row)
+                self.row = None
+            elif tag in ("td", "th") and self.cell is not None:
+                cell = {"text": "".join(self.cell).strip()}
+                if self.cell_header:
+                    cell["is_header"] = True
+                if self.row is not None:
+                    self.row.append(cell)
+                self.cell = None
+            elif tag == "blockquote" and self.quote is not None:
+                blocks.append({"type": "quotation", "text": "".join(self.quote).strip()})
+                self.quote = None
+            elif tag == "details" and self.details is not None:
+                blocks.append({"type": "details", "summary": self.summary or "",
+                               "blocks": self.details})
+                self.details = None
+                self.summary = None
+            elif tag == "summary":
+                self.summary = self._text()
+                self.in_summary = False
+                self.buf = []
+            elif tag == "hr":
+                blocks.append({"type": "divider"})
+
+        def handle_data(self, data):
+            if self.link is not None:
+                self.link_text.append(data)
+                return
+            if self.in_summary:
+                self.buf.append(data)
+                return
+            self._sink().append(data)
+
+    p = P()
+    p.feed(html or "")
+    return {"blocks": blocks, "is_rtl": bool(is_rtl)}
+
 
 POST_HTML = ("<b>عنوان خبر</b>\n\n"
              "متن اول این پاراگراف دربارهٔ موضوع است.\n\n"
@@ -80,10 +239,16 @@ class FakeTelegram:
 
     def reply_for(self, method, data):
         if method != "sendRichMessage":
-            return 200, {"ok": True, "result": {"message_id": 1}}
+            return 200, {"ok": True, "result": {"message_id": 101, "date": 1700000000,
+                                                "chat": {"id": data.get("chat_id"), "type": "private"},
+                                                "text": data.get("text") or ""}}
         if self.mode == "ok":
+            rich = (data.get("rich_message") or {})
+            # مثلِ سرورِ واقعی: ساختارِ解析‌شده را برمی‌گردانیم (نه فقط «ok»)
+            parsed = parse_rich_html(rich.get("html") or "", bool(rich.get("is_rtl")))
             return 200, {"ok": True, "result": {"message_id": 4242, "date": 1700000000,
-                                                "chat": {"id": data.get("chat_id"), "type": "private"}}}
+                                                "chat": {"id": data.get("chat_id"), "type": "private"},
+                                                "rich_message": parsed}}
         if self.mode == "no_method":
             return 404, {"ok": False, "error_code": 404, "description": "Not Found: method not found"}
         if self.mode == "bad_parse":
@@ -457,6 +622,155 @@ def test_full_post_in_bot_uses_the_native_rich_message(telegram_ok):
     html = srv.calls[0]["body"]["rich_message"]["html"]
     assert "<h2>نسخهٔ کامل</h2>" in html
     assert html.count("<blockquote>") == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# انطباق با مشخصاتِ رسمیِ تلگرام (نه فقط «پاسخِ موفق»)
+# ══════════════════════════════════════════════════════════════════════════
+# فهرستِ تگ‌های مجازِ «Rich HTML style» طبقِ core.telegram.org/bots/api/rich-messages.md
+ALLOWED_TAGS = {
+    "a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "mark",
+    "sub", "sup", "tg-spoiler", "tg-reference", "tg-emoji", "tg-time", "tg-math",
+    "h1", "h2", "h3", "h4", "h5", "h6", "p", "pre", "footer", "hr", "ul", "ol", "li",
+    "input", "blockquote", "aside", "img", "video", "audio", "tg-document", "figure",
+    "figcaption", "cite", "tg-map", "tg-collage", "tg-slideshow", "table", "tr", "th",
+    "td", "details", "summary", "tg-math-block", "tg-button", "tg-button-row", "br",
+}
+ALLOWED_NAMED_ENTITIES = {"lt", "gt", "amp", "quot", "apos", "nbsp", "hellip", "mdash",
+                          "ndash", "lsquo", "rsquo", "ldquo", "rdquo"}
+CORPUS = [POST_HTML, TABLE_MD,
+          "# تیتر\n\nمتن **پررنگ** با *مورب* و __زیرخط__ و `کد`\n\n- یک\n- دو\n\n"
+          "> نقل\n\n---\n\n## بخش\n\n[لینک](https://example.com/a?b=1&c=2) 🎯",
+          "<details><summary>بیشتر</summary><p>متن</p></details>",
+          "متن سادهٔ فارسی با ایموجی 🚯 و عدد ۵ و <code>کد</code>"]
+
+
+def test_the_rich_html_only_uses_tags_and_entities_allowed_by_telegram():
+    import re as _re
+    for src in CORPUS:
+        html = rich_format.render_rich(rich_format.parse_content(src))
+        tags = {t.lower() for t in _re.findall(r"<\s*/?\s*([a-zA-Z][a-zA-Z0-9-]*)", html)}
+        bad = tags - ALLOWED_TAGS
+        assert not bad, "تگِ غیرمجاز در پیام بومی: %s" % sorted(bad)
+        ents = {e.lower() for e in _re.findall(r"&([a-zA-Z][a-zA-Z]{1,10});", html)}
+        bad_ents = ents - ALLOWED_NAMED_ENTITIES
+        assert not bad_ents, "نامِ entityِ غیرمجاز: %s" % sorted(bad_ents)
+
+
+def test_the_rich_html_respects_the_documented_limits():
+    import re as _re
+    wide = "| " + " | ".join("ستون%d" % i for i in range(25)) + " |\n"
+    wide += "|" + "---|" * 25 + "\n"
+    wide += "| " + " | ".join("مقدار%d" % i for i in range(25)) + " |\n"
+    for src in CORPUS + [wide]:
+        doc = rich_format.parse_content(src)
+        html = rich_format.render_rich(doc)
+        assert len(html) <= rich_format.RICH_CHAR_LIMIT
+        assert rich_format.count_blocks(doc) <= rich_format.RICH_BLOCK_LIMIT
+        depth = 0
+        max_depth = 0
+        for tag in _re.findall(r"<\s*/?\s*([a-zA-Z][a-zA-Z0-9-]*)", html):
+            if tag in ("details", "table", "ul", "ol", "blockquote"):
+                max_depth = max(max_depth, depth + 1)
+        assert max_depth <= rich_format.RICH_NEST_LIMIT
+
+
+def test_a_table_wider_than_20_columns_is_degraded_not_rejected():
+    wide = "| " + " | ".join("ستون%d" % i for i in range(21)) + " |\n"
+    wide += "|" + "---|" * 21 + "\n"
+    wide += "| " + " | ".join("مقدار%d" % i for i in range(21)) + " |\n"
+    doc = rich_format.parse_content(wide)
+    html = rich_format.render_rich(doc)
+    assert "<table>" not in html, "جدولِ بیش از ۲۰ ستون باید تنزل کند، نه اینکه رد شود"
+    assert "مقدار20" in html and "ستون20" in html, "محتوای جدول نباید حذف شود"
+
+
+def test_a_document_with_more_than_500_blocks_is_not_sent_as_one_rich_message():
+    srv = FakeTelegram("ok")
+    try:
+        bot = Bot(srv)
+        body = "\n\n".join("پاراگراف %d" % i for i in range(600))
+        asyncio.run(rich_send.send_content(bot, 55, body, split_legacy=True))
+        assert "sendRichMessage" not in srv.methods_called(), \
+            "سندِ بیش از ۵۰۰ بلوک نباید یک‌جا فرستاده شود (تلگرام رد می‌کند)"
+        assert bot.sent, "باید به مسیر کلاسیک رفته باشد"
+    finally:
+        srv.close()
+
+
+def test_rtl_is_decided_by_the_text_not_by_the_html_tags():
+    assert rich_format.detect_rtl("<h2>سلام</h2>") is True
+    assert rich_format.detect_rtl("Hello world") is False
+    assert rich_format.detect_rtl("سلام") is True
+
+
+def test_a_content_error_does_not_disable_the_rich_path():
+    srv = FakeTelegram("bad_parse")
+    try:
+        bot = Bot(srv)
+        for _ in range(5):
+            asyncio.run(rich_send.send_content(bot, 55, POST_HTML))
+            assert rich_send.rich_available() is True, \
+                "خطای محتوایی نباید پیام بومی را برای کل فرایند خاموش کند"
+    finally:
+        srv.close()
+
+
+def test_an_unknown_failure_after_the_send_never_resends_the_message():
+    """اگر بعد از ارسال خطایی رخ دهد، نباید fallback کنیم وگرنه پست تکراری می‌شود."""
+    class HalfBrokenBot:
+        id = 1
+        token = "123456789:AAtest_only_dummy_token_0000000000000"
+
+        def __init__(self, srv):
+            self.srv = srv
+            self.base_url = srv.base_url + self.token
+            self.classic = []
+
+        async def send_message(self, chat_id, text, **kw):
+            self.classic.append(text)
+            return SimpleNamespace(message_id=1)
+
+        async def send_rich_message(self, chat_id, html, **kw):
+            await rich_send.send_rich_raw(self, chat_id, html, **kw)   # واقعاً ارسال می‌شود
+            raise RuntimeError("journal update failed after the message was sent")
+
+    srv = FakeTelegram("ok")
+    try:
+        bot = HalfBrokenBot(srv)
+        with pytest.raises(RuntimeError):
+            asyncio.run(rich_send.send_content(bot, 55, POST_HTML))
+        assert bot.classic == [], "بعد از ارسال نباید پیامِ دوم فرستاده شود"
+        assert srv.methods_called() == ["sendRichMessage"], "فقط یک فراخوانیِ ارسال"
+    finally:
+        srv.close()
+
+
+def test_the_server_parsed_structure_matches_the_intended_native_blocks():
+    """آنچه سرور از HTML می‌سازد باید همان بلوک‌های بومیِ موردنظر باشد."""
+    srv = FakeTelegram("ok")
+    try:
+        bot = Bot(srv)
+        src = ("# تحلیل بازار\n\n## نکات\n- یک\n- دو\n\n"
+               "| معیار | مقدار |\n|---|---|\n| سرعت | ۹۰ |\n\n"
+               "> نتیجهٔ مهم")
+        asyncio.run(rich_send.send_content(bot, 55, src))
+        parsed = srv.calls[0]["body"]  # payload
+        assert parsed["rich_message"]["is_rtl"] is True
+        html = parsed["rich_message"]["html"]
+        struct = parse_rich_html(html, True)
+        kinds = [b["type"] for b in struct["blocks"]]
+        assert "heading" in kinds and "list" in kinds and "table" in kinds and "quotation" in kinds, kinds
+        heading = [b for b in struct["blocks"] if b["type"] == "heading"][0]
+        assert "تحلیل بازار" in heading["text"]
+        table = [b for b in struct["blocks"] if b["type"] == "table"][0]
+        assert len(table["cells"]) == 2 and len(table["cells"][0]) == 2
+        assert table["cells"][0][0].get("is_header") is True
+        assert "معیار" in table["cells"][0][0]["text"] and "۹۰" in table["cells"][1][1]["text"]
+        lst = [b for b in struct["blocks"] if b["type"] == "list"][0]
+        assert len(lst["items"]) == 2
+    finally:
+        srv.close()
 
 
 def test_report_markdown_renders_as_structured_legacy_html():

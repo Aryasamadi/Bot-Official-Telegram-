@@ -214,6 +214,10 @@ async def _send_post_locked(bot, chat_id, text, media=None):
             if media and not sent_media and cap is not None:
                 m = await _send_media(bot, chat_id, cap, pm, media)
                 if m: return m
+            if i == 0 and pm == "HTML" and not media:
+                # همان مسیرِ اول (بومی) دوباره امتحان می‌شود تا قالبِ پیام هم یکسان بماند
+                return await rich_send.send_content(bot, chat_id, t, disable_web_page_preview=True,
+                                                    split_legacy=False, **reply)
             return await bot.send_message(chat_id, t, parse_mode=pm, disable_web_page_preview=True, **({"reply_to_message_id": sent_media.message_id} if sent_media else {}))
         except BadRequest as e:
             if _is_parse_err(e) and i < len(variants) - 1: continue

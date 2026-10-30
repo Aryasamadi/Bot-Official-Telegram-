@@ -31,6 +31,10 @@ from newsbot import text_format
 
 _state = {"ok": 0, "fail": 0, "disabled": False}
 
+# نشانه‌هایی که یعنی «این سرور اصلاً پیامِ بومی را نمی‌شناسد» (نه «این پیام مشکل دارد»)
+_UNSUPPORTED_MARKERS = ("method not found", "unknown method", "method_not_found",
+                        "not supported", "unsupported", "not implemented", "unrecognized")
+
 
 def rich_status():
     """وضعیتِ مدار پیام بومی (برای پایش و تست)."""
@@ -57,11 +61,25 @@ def _note_success():
     _state["fail"] = 0
 
 
-def _note_failure(err):
+def _note_failure(err, unsupported=False):
+    """شمارشِ خطا؛ فقط «نبودِ قابلیت» مدار را خاموش می‌کند.
+
+    یک خطای محتوایی (مثلاً پیامِ خیلی بلند) نباید پیامِ بومی را برای کلِ فرایند
+    خاموش کند؛ ولی ۴۰۴ (متد وجود ندارد) یعنی این سرور پشتیبانی نمی‌کند."""
+    if not unsupported:
+        return
     _state["fail"] += 1
     if _state["fail"] >= max(1, config.RICH_FAIL_LIMIT):
         _state["disabled"] = True
         log.warning("rich messages disabled after %d failures: %s", _state["fail"], err)
+
+
+def _is_unsupported(err):
+    """آیا خطا یعنی «سرور پیامِ بومی را پشتیبانی نمی‌کند»؟"""
+    if getattr(err, "status_code", None) == 404:
+        return True
+    text = ("%s %s" % (type(err).__name__, err)).lower()
+    return any(m in text for m in _UNSUPPORTED_MARKERS)
 
 
 def _real_bot(bot):
@@ -98,7 +116,14 @@ def _raise_for_payload(status, data):
     if status == 403:
         raise Forbidden(desc or "Forbidden")
     if status in (400, 404, 409, 422):
-        raise BadRequest(desc or "HTTP %s" % status)
+        err = BadRequest(desc or "HTTP %s" % status)
+        # کدِ وضعیت نگه داشته می‌شود تا «متد وجود ندارد» (۴۰۴) از «محتوا مشکل دارد» (۴۰۰)
+        # قابلِ تشخیص باشد؛ مدار فقط در حالتِ اول خاموش می‌شود.
+        try:
+            err.status_code = status
+        except Exception:
+            pass
+        raise err
     if status >= 500:
         raise NetworkError(desc or "HTTP %s" % status)
     raise TelegramError(desc or "HTTP %s" % status)
@@ -143,10 +168,12 @@ def _markup_payload(markup):
 
 
 async def send_rich_raw(bot, chat_id, rich_html, *, reply_to_message_id=None, reply_markup=None,
-                        protect_content=False, disable_notification=False):
+                        protect_content=False, disable_notification=False, is_rtl=None):
     """یک پیام بومی (Rich Message) می‌فرستد؛ هیچ fallbackی در این تابع نیست."""
     rich = {"html": rich_html}
-    if rich_format.detect_rtl(rich_html):
+    if is_rtl is None:
+        is_rtl = rich_format.detect_rtl(rich_html)
+    if is_rtl:
         rich["is_rtl"] = True
     payload = {"chat_id": chat_id, "rich_message": rich}
     if reply_to_message_id:
@@ -204,6 +231,8 @@ async def send_content(bot, chat_id, text, *, kind=None, doc=None, reply_to_mess
         rich_html = rich_format.render_rich(document)
         parts = rich_format.split_doc(document, config.RICH_MAX_CHARS, rich_format.render_rich)
         if len(parts) == 1 and len(rich_html) <= rich_format.RICH_CHAR_LIMIT:
+            # جهتِ نوشتن از روی متنِ اصلی سنجیده می‌شود (نه از روی تگ‌های HTML)
+            is_rtl = rich_format.detect_rtl(raw) if raw else rich_format.detect_rtl(rich_html)
             try:
                 sender = getattr(bot, "send_rich_message", None)
                 if sender is not None:
@@ -215,17 +244,20 @@ async def send_content(bot, chat_id, text, *, kind=None, doc=None, reply_to_mess
                                               reply_to_message_id=reply_to_message_id,
                                               reply_markup=reply_markup,
                                               protect_content=protect_content,
-                                              disable_notification=disable_notification)
+                                              disable_notification=disable_notification,
+                                              is_rtl=is_rtl)
                 _note_success()
                 return msg
             except BadRequest as e:
-                _note_failure(e)
+                # ۴xx یعنی «چیزی ارسال نشد» ⇒ fallback بی‌خطر است.
+                _note_failure(e, unsupported=_is_unsupported(e))
                 log.info("rich message rejected; falling back to classic send: %s", e)
             except (RetryAfter, Forbidden, NetworkError):
                 raise
             except Exception as e:
-                _note_failure(e)
-                log.warning("rich message failed; falling back to classic send: %s", type(e).__name__)
+                # خطای ناشناخته ⇒ ممکن است پیام رفته باشد؛ fallback نکن تا پست تکراری نشود.
+                _note_failure(e, unsupported=_is_unsupported(e))
+                raise
         elif len(parts) > 1:
             log.info("rich message skipped: content needs %d parts", len(parts))
     return await send_legacy(bot, chat_id, raw, reply_to_message_id=reply_to_message_id,

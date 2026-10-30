@@ -9,7 +9,7 @@
 [![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-21.6%2B-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://python-telegram-bot.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-default-003B57?style=flat-square&logo=sqlite&logoColor=white)](#-پیکربندی)
 [![Cloudflare D1](https://img.shields.io/badge/Cloudflare-D1%20optional-F38020?style=flat-square&logo=cloudflare&logoColor=white)](#-پیکربندی)
-[![Tests](https://img.shields.io/badge/tests-754%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
+[![Tests](https://img.shields.io/badge/tests-768%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
 [![i18n](https://img.shields.io/badge/i18n-fa%20%7C%20en-8B5CF6?style=flat-square)](#)
 
 **ربات تک‌پروسه‌ای مدیریت خودکار کانال تلگرام** — منابع خبری را می‌خواند، با چند مدل هوش مصنوعی بازنویسی و امتیازدهی می‌کند، و به‌صورت **crash-safe** منتشر می‌کند.

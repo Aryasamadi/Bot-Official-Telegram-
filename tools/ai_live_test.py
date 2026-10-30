@@ -89,7 +89,7 @@ async def run_once(owner_id=None, tag="live"):
     before_posts = amod.ai_posts_total()
     before_usage = amod.tokens_today()
     t0 = time.monotonic()
-    gen, model, err = await gen_mod.generate(s, art)
+    gen, model, err = await gen_mod.generate(s, art, owner_id=owner_id)
     ms = int((time.monotonic() - t0) * 1000)
     after_usage = amod.tokens_today()
 

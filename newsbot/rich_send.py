@@ -34,6 +34,9 @@ _state = {"ok": 0, "fail": 0, "disabled": False}
 # نشانه‌هایی که یعنی «این سرور اصلاً پیامِ بومی را نمی‌شناسد» (نه «این پیام مشکل دارد»)
 _UNSUPPORTED_MARKERS = ("method not found", "unknown method", "method_not_found",
                         "not supported", "unsupported", "not implemented", "unrecognized")
+# نشانه‌های «خودِ قابلیت» در متنِ خطا: بدونِ آن‌ها، کلمهٔ «unsupported» فقط دربارهٔ
+# *محتوا* است (مثلاً «unsupported element») و نباید مدارِ پیام بومی را خاموش کند.
+_CAPABILITY_HINTS = ("method", "endpoint", "sendrichmessage")
 
 
 def rich_status():
@@ -75,10 +78,16 @@ def _note_failure(err, unsupported=False):
 
 
 def _is_unsupported(err):
-    """آیا خطا یعنی «سرور پیامِ بومی را پشتیبانی نمی‌کند»؟"""
+    """آیا این خطا یعنی «سرور پیامِ بومی را پشتیبانی نمی‌کند»؟
+
+    ۴۰۴ ⇒ متد وجود ندارد ⇒ قطعاً ناتوانیِ سرور. ولی خطای ۴۰۰ با واژهٔ «unsupported»
+    دربارهٔ *محتوا* (مثلاً «unsupported element») ناتوانیِ سرور نیست ⇒ مدار نباید
+    خاموش شود (وگرنه یک پیامِ بد، پیامِ بومی را برای کلِ فرایند می‌کُشد)."""
     if getattr(err, "status_code", None) == 404:
         return True
     text = ("%s %s" % (type(err).__name__, err)).lower()
+    if not any(h in text for h in _CAPABILITY_HINTS):
+        return False
     return any(m in text for m in _UNSUPPORTED_MARKERS)
 
 

@@ -84,6 +84,9 @@
 
 > آزمونِ زنده (پیام‌های نمونه به چتِ مدیر کلان + بررسیِ ساختارِ رندرشده):
 > `python tools/rich_live_test.py --env-file /opt/bot-official-telegram/.env`
+>
+> آزمونِ زندهٔ **تولیدِ محتوا با AI** (یک تولیدِ واقعی با کلیدِ واقعی + مصرفِ توکن):
+> `python tools/ai_live_test.py --env-file /opt/bot-official-telegram/.env`
 
 </td>
 <td width="50%" valign="top">

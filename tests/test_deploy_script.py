@@ -608,3 +608,163 @@ def test_archive_pruning_keeps_the_newest_snapshots_and_other_files(sandbox):
     assert kept == ["newsbot-archive-c.db", "newsbot-archive-d.db"], "فقط تازه‌ترین آرشیوها می‌مانند"
     assert (mirror / "notes.txt").exists(), "فایل نامرتبط نباید حذف شود"
     assert (mirror / "manual.db").exists(), "فایل با نامِ متفاوت نباید حذف شود"
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# حالتِ docker — سرویسِ واقعی یک کانتینر است (نه یونیتِ systemd)
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+DOCKER_STUB = '''#!/usr/bin/env python3
+"""استابِ docker: کانتینری که /app آن bind-mountِ پوشهٔ برنامه روی میزبان است."""
+import os
+import subprocess
+import sys
+
+args = sys.argv[1:]
+with open(os.environ["STUB_LOG"], "a", encoding="utf-8") as fh:
+    fh.write("docker " + " ".join(args) + "\\n")
+
+CONTAINER = os.environ.get("CONTAINER_NAME", "bot-official-telegram")
+APP = os.environ["APP_DIR"]
+MOUNT = "/app"
+
+
+def host_path(value):
+    if value == MOUNT:
+        return APP
+    if value.startswith(MOUNT + "/"):
+        return APP + value[len(MOUNT):]
+    return value
+
+
+if args and args[0] == "inspect":
+    if len(args) >= 2 and args[1] != CONTAINER:
+        sys.exit(1)
+    fmt = args[3] if len(args) >= 4 and args[2] == "--format" else ""
+    if "{{.Config.WorkingDir}}" in fmt:
+        print(MOUNT)
+    elif "{{.State.Status}}" in fmt:
+        print("inactive" if os.path.exists(os.path.join(os.environ["STUB_DIR"], "inactive")) else "running")
+    elif "{{.RestartCount}}" in fmt:
+        print("0")
+    elif ".Mounts" in fmt:
+        print(APP + "\\t" + MOUNT)
+    elif ".Config.Env" in fmt:
+        print("BOT_TOKEN=stub")
+    sys.exit(0)
+
+if args and args[0] == "exec":
+    rest = args[1:]
+    while rest and rest[0] in ("-i", "-t", "-it", "-ti"):
+        rest = rest[1:]
+    if rest and rest[0] == "-w":
+        rest = rest[2:]
+    if not rest or rest[0] != CONTAINER:
+        sys.exit(1)
+    cmd = list(rest[1:])
+    if not cmd:
+        sys.exit(0)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = APP
+    if cmd[:2] == ["python", "-"]:
+        cmd[0] = sys.executable
+        # اسکریپتِ داخلِ کانتینر اجرا می‌شود: مسیرِ برنامه به میزبان نگاشت می‌شود،
+        # ولی مسیرِ دیتابیس باید همان مسیرِ داخلِ کانتینر بماند (و بعداً نگاشت شود).
+        cmd[2] = host_path(cmd[2])
+        code = sys.stdin.read()
+        helper = ("import os\\n\\n"
+                  "def _host_path(p):\\n"
+                  "    return p.replace('%s', '%s', 1) if p.startswith('%s') else p\\n" % (MOUNT, APP, MOUNT))
+        code = code.replace("import os\\n", helper, 1)
+        code = code.replace("os.path.isfile(path)", "os.path.isfile(_host_path(path))")
+        sys.exit(subprocess.run(cmd, cwd=APP, env=env, input=code, text=True).returncode)
+    if cmd[0] == "pip":
+        sys.exit(0)
+    if cmd[0] == "python":
+        cmd[0] = sys.executable
+    sys.exit(subprocess.run([host_path(a) if a.startswith(MOUNT) else a for a in cmd], cwd=APP, env=env).returncode)
+
+if args and args[0] == "restart":
+    sys.exit(0)
+
+if args and args[0] == "logs":
+    sys.exit(0)
+
+sys.exit(0)
+'''
+
+
+@pytest.fixture()
+def docker_sandbox(sandbox):
+    """همان sandbox بالا، ولی سرویس یک کانتینر است (پیش‌فرضِ RUNTIME=auto)."""
+    sbin = Path(sandbox.env["STUB_DIR"])
+    stub = sbin / "docker"
+    stub.write_text(DOCKER_STUB, encoding="utf-8")
+    os.chmod(str(stub), 0o755)
+    sandbox.env["CONTAINER_NAME"] = "bot-official-telegram"
+    return sandbox
+
+
+def _docker_calls(sandbox):
+    log = Path(sandbox.env["STUB_LOG"])
+    if not log.exists():
+        return []
+    return [line for line in log.read_text(encoding="utf-8").splitlines() if line.startswith("docker ")]
+
+
+def test_docker_runtime_deploys_through_the_container(docker_sandbox):
+    """سرویسِ کانتینری: بکاپ + gate + restart همه از راهِ docker."""
+    sha = docker_sandbox.commit_push("feature.txt", "hello docker\n")
+    r = docker_sandbox.deploy(sha, check=True)
+
+    head, prev, dep = docker_sandbox.rollback_files()
+    assert head == sha
+    assert prev == docker_sandbox.head0
+    assert dep == sha
+    assert "deploy complete" in r.stdout
+
+    calls = _docker_calls(docker_sandbox)
+    assert any("pip install" in c for c in calls), "نیازمندی‌ها باید داخل کانتینر نصب شوند"
+    assert any("run.py --check" in c for c in calls), "دروازه باید داخل کانتینر اجرا شود"
+    assert sum(1 for c in calls if c.startswith("docker restart ")) == 1, "سرویس باید یک‌بار restart شود"
+    assert not any(line.startswith("systemctl restart") for line in
+                   Path(docker_sandbox.env["STUB_LOG"]).read_text(encoding="utf-8").splitlines()), \
+        "در حالت docker نباید systemctl صدا زده شود"
+
+
+def test_docker_runtime_maps_the_container_db_path_to_the_host_mount(docker_sandbox):
+    """مسیرِ دیتابیس داخل کانتینر باید به همان فایل روی میزبان نگاشت شود."""
+    _write_env(docker_sandbox, "DB_FILE=newsbot.db\n")
+    _make_db(docker_sandbox.app / "newsbot.db", "docker-mode-row")
+    sha = docker_sandbox.commit_push("feature.txt", "v2\n")
+    docker_sandbox.deploy(sha, check=True)
+
+    backups = list(docker_sandbox.backups.glob("newsbot-*.db"))
+    assert len(backups) == 1, "بکاپ باید از مسیرِ نگاشت‌شدهٔ میزبان ساخته شود"
+    with sqlite3.connect(str(backups[0])) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert tables, "بکاپِ دیتابیسِ واقعی باید جدول داشته باشد"
+
+
+def test_docker_runtime_refuses_to_deploy_without_the_container(docker_sandbox):
+    """کانتینرِ غایب ⇒ پیش‌شرط fail-fast، بدون restart."""
+    sha = docker_sandbox.commit_push("feature.txt", "v2\n")
+    r = docker_sandbox.deploy(sha, extra={"RUNTIME": "docker", "CONTAINER": "other-container"})
+    assert r.returncode != 0
+    assert "not found" in r.stderr
+    assert not any(c.startswith("docker restart ") for c in _docker_calls(docker_sandbox))
+
+
+def test_docker_runtime_health_failure_rolls_back_the_container(docker_sandbox):
+    """کانتینر پس از restart سالم بالا نیامد ⇒ rollback + restart دوم."""
+    sha = docker_sandbox.commit_push("feature.txt", "v2\n")
+    Path(docker_sandbox.env["STUB_DIR"], "inactive").write_text("1")
+    r = docker_sandbox.deploy(sha)
+
+    assert r.returncode != 0, "سلامتِ ناموفق باید deploy را شکست دهد"
+    head, prev, _ = docker_sandbox.rollback_files()
+    assert head == docker_sandbox.head0, "کد باید به SHA قبلی برگردد"
+    assert prev == docker_sandbox.head0
+    assert sum(1 for c in _docker_calls(docker_sandbox) if c.startswith("docker restart ")) == 2, \
+        "restart اول + restart کد قبلی بعد از شکست"
+    assert not (docker_sandbox.app / ".deployed_sha").exists()

@@ -44,10 +44,18 @@
 #   ALLOW_MISSING_DB=1   allow a first deploy with no database (skips the backup, loudly)
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/bot-official-telegram}"
+APP_DIR="${APP_DIR:-/opt/Bot-Official-Telegram}"   # مسیرِ واقعیِ Production (نامِ پوشه با حروفِ بزرگ)
 BACKUP_DIR="${BACKUP_DIR:-/opt/backups}"
 SERVICE="${SERVICE:-newsbot.service}"
 KEEP_BACKUPS="${KEEP_BACKUPS:-7}"
+# ── Runtime: systemd یا docker ───────────────────────────────────────────────────
+# Production واقعی یک *کانتینر* است (نه یونیتِ systemd): سرویس با `python run.py` بالا
+# می‌آید، کدِ میزبان در APP_DIR است و به /app داخلِ کانتینر bind-mount می‌شود.
+# حالتِ systemd دست‌نخورده می‌ماند و «auto» خودش را تشخیص می‌دهد.
+RUNTIME="${RUNTIME:-auto}"          # auto | systemd | docker
+CONTAINER="${CONTAINER:-bot-official-telegram}"
+CONTAINER_WORKDIR=""
+
 # بودجهٔ سلامت: برابرِ TimeoutStartSec یونیت (پیش‌فرض ۱۸۰ ثانیه). با Type=notify
 # سرویس تا دریافتِ READY=1 در حالتِ activating می‌ماند، پس ۱۰ ثانیه کافی نبود.
 HEALTH_TRIES="${HEALTH_TRIES:-180}"
@@ -64,8 +72,46 @@ log() { printf '[deploy] %s\n' "$*"; }
 err() { printf '[deploy][error] %s\n' "$*" >&2; }
 die() { err "$*"; exit 1; }
 
+# ── Runtime ─────────────────────────────────────────────────────────────────────
+detect_runtime() {
+  if [ "$RUNTIME" != "auto" ]; then return 0; fi
+  if command -v docker >/dev/null 2>&1 && docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    RUNTIME=docker
+  else
+    RUNTIME=systemd
+  fi
+}
+
+container_workdir() { docker inspect "$CONTAINER" --format '{{.Config.WorkingDir}}' 2>/dev/null | head -n 1; }
+
+# مسیرِ داخلِ کانتینر ⇒ همان مسیر روی میزبان (بر اساسِ bind-mountها)
+host_path_for() {
+  local inside="$1" src dest
+  while IFS="$(printf '\t')" read -r src dest; do
+    [ -n "$dest" ] || continue
+    if [ "$inside" = "$dest" ]; then printf '%s\n' "$src"; return 0; fi
+    case "$inside" in
+      "$dest"/*) printf '%s\n' "${src}${inside#$dest}"; return 0 ;;
+    esac
+  done < <(docker inspect "$CONTAINER" --format '{{range .Mounts}}{{.Source}}{{"\t"}}{{.Destination}}{{"\n"}}{{end}}' 2>/dev/null)
+  return 1
+}
+
 # ── خواندنِ خصوصیاتِ یونیت (یک فراخوانی، بدونِ فرضِ خروجیِ خاص) ──
-unit_info() { systemctl show "$SERVICE" 2>/dev/null || true; }
+unit_info() {
+  if [ "$RUNTIME" = "docker" ]; then
+    local status restarts workdir
+    status="$(docker inspect "$CONTAINER" --format '{{.State.Status}}' 2>/dev/null || true)"
+    restarts="$(docker inspect "$CONTAINER" --format '{{.RestartCount}}' 2>/dev/null || true)"
+    workdir="$(container_workdir)"
+    local active=inactive sub=dead
+    if [ "$status" = "running" ]; then active=active; sub=running; fi
+    printf 'ActiveState=%s\nSubState=%s\nType=simple\nNRestarts=%s\nWorkingDir=%s\nFragmentPath=docker:%s\n' \
+      "$active" "$sub" "${restarts:-0}" "$workdir" "$CONTAINER"
+    return 0
+  fi
+  systemctl show "$SERVICE" 2>/dev/null || true
+}
 
 prop() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -n 1; }
 
@@ -76,16 +122,42 @@ prop() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -n 1; }
 # process-environment values keep their precedence, exactly like config.py.
 # The .env is never sourced or eval'd, and no value other than the resolved
 # database path/backend ever leaves this function.
+# مفسرِ برنامه در همان محیطی که سرویس اجرا می‌شود (systemd: venv · docker: داخل کانتینر)
+service_python() {
+  if [ "$RUNTIME" = "docker" ]; then
+    docker exec -i -w "$CONTAINER_WORKDIR" "$CONTAINER" python "$@"
+  else
+    "$VENV_DIR/bin/python" "$@"
+  fi
+}
+
+# مسیرِ کدِ برنامه از دیدِ همان محیط (داخلِ کانتینر: /app)
+service_app_dir() {
+  if [ "$RUNTIME" = "docker" ]; then printf '%s\n' "$CONTAINER_WORKDIR"; else printf '%s\n' "$APP_DIR"; fi
+}
+
 resolve_db_config() {
   local workdir="${DEPLOY_WORKING_DIR:-}"
   if [ -z "$workdir" ]; then
-    workdir="$(systemctl show -p WorkingDirectory "$SERVICE" 2>/dev/null | sed -n 's/^WorkingDirectory=//p' | head -n 1 || true)"
-    workdir="${workdir#-}"
+    if [ "$RUNTIME" = "docker" ]; then
+      workdir="$CONTAINER_WORKDIR"
+    else
+      workdir="$(systemctl show -p WorkingDirectory "$SERVICE" 2>/dev/null | sed -n 's/^WorkingDirectory=//p' | head -n 1 || true)"
+      workdir="${workdir#-}"
+    fi
   fi
   # The unit's own environment is not visible to this shell; if it injects DB_*
   # or reads another EnvironmentFile, the deploy cannot know the precedence —
   # say so instead of guessing, and let DEPLOY_DB_FILE/DEPLOY_DB_BACKEND win.
   local unit_env unit_env_files
+  if [ "$RUNTIME" = "docker" ]; then
+    # کانتینر: محیط از همان .envِ برنامه خوانده می‌شود ⇒ همان parser (python-dotenv)
+    unit_env="$(docker inspect "$CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -E '(^|[[:space:]])DB_(FILE|BACKEND)=' || true)"
+    if [ -n "$unit_env" ]; then
+      err "WARNING: the container sets DB_FILE/DB_BACKEND in its environment — set DEPLOY_DB_FILE / DEPLOY_DB_BACKEND"
+      err "         so the deploy and the service use exactly the same value."
+    fi
+  else
   unit_env="$(systemctl show -p Environment "$SERVICE" 2>/dev/null || true)"
   if printf '%s\n' "$unit_env" | grep -qE '(^|[[:space:]])DB_(FILE|BACKEND)='; then
     err "WARNING: the systemd unit sets DB_FILE/DB_BACKEND in Environment= — the deploy reads the app config only;"
@@ -96,13 +168,14 @@ resolve_db_config() {
     err "WARNING: the unit's EnvironmentFiles do not include $APP_DIR/.env — the service may read different DB settings;"
     err "         set DEPLOY_DB_FILE / DEPLOY_DB_BACKEND explicitly."
   fi
+  fi
   local status="" backend="" path="" message=""
   {
     IFS= read -r -d '' status || true
     IFS= read -r -d '' backend || true
     IFS= read -r -d '' path || true
     IFS= read -r -d '' message || true
-  } < <(cd "$APP_DIR" && "$VENV_DIR/bin/python" - "$APP_DIR" "$workdir" "${DEPLOY_DB_FILE:-}" "${DEPLOY_DB_BACKEND:-}" <<'PY'
+  } < <(cd "$APP_DIR" && service_python - "$(service_app_dir)" "$workdir" "${DEPLOY_DB_FILE:-}" "${DEPLOY_DB_BACKEND:-}" <<'PY'
 import os
 import sys
 
@@ -168,6 +241,19 @@ PY
     ok)
       DB_BACKEND_EFFECTIVE="$backend"
       DB_PATH_EFFECTIVE="$path"
+      if [ "$RUNTIME" = "docker" ]; then
+        local host_path
+        case "$path" in
+          "$APP_DIR"/*) DB_PATH_EFFECTIVE="$path" ;;   # از قبل مسیرِ میزبان است
+          *)
+            if host_path="$(host_path_for "$path")" && [ -n "$host_path" ]; then
+              DB_PATH_EFFECTIVE="$host_path"
+            else
+              die "cannot map the container path $path to a host path (no matching bind mount) — refusing to guess"
+            fi
+            ;;
+        esac
+      fi
       log "database: $DB_PATH_EFFECTIVE (backend=$backend)"
       ;;
     missing)
@@ -187,11 +273,20 @@ PY
 }
 
 preflight() {
+  detect_runtime
   command -v git >/dev/null 2>&1 || die "git not found in PATH"
   command -v python3 >/dev/null 2>&1 || die "python3 not found in PATH (needed for online backup)"
-  command -v systemctl >/dev/null 2>&1 || die "systemctl not found in PATH"
   [ -d "$APP_DIR/.git" ] || die "not a git checkout: $APP_DIR"
   [ -f "$APP_DIR/.env" ] || die ".env missing in $APP_DIR"
+  if [ "$RUNTIME" = "docker" ]; then
+    command -v docker >/dev/null 2>&1 || die "docker not found in PATH"
+    docker inspect "$CONTAINER" >/dev/null 2>&1 || die "container '$CONTAINER' not found (RUNTIME=docker)"
+    CONTAINER_WORKDIR="$(container_workdir)"
+    [ -n "$CONTAINER_WORKDIR" ] || CONTAINER_WORKDIR="/app"
+    log "runtime: docker ($CONTAINER, workdir=$CONTAINER_WORKDIR)"
+    return 0
+  fi
+  command -v systemctl >/dev/null 2>&1 || die "systemctl not found in PATH"
   [ -x "$VENV_DIR/bin/python" ] || die "venv/bin/python missing in $VENV_DIR"
   [ -x "$VENV_DIR/bin/pip" ] || die "venv/bin/pip missing in $VENV_DIR"
   # OPS-08: یونیت باید وجود داشته باشد و EnvironmentFile آن *اختیاری* نباشد.
@@ -322,6 +417,10 @@ sync_to() {
 install_deps() {
   cd "$APP_DIR" || return 1
   log "installing pinned requirements"
+  if [ "$RUNTIME" = "docker" ]; then
+    docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER" pip install --quiet -r requirements.txt || return 1
+    return 0
+  fi
   "$VENV_DIR/bin/pip" install --quiet -r requirements.txt || return 1
   return 0
 }
@@ -329,6 +428,11 @@ install_deps() {
 # دروازهٔ پیش از restart — شکست یعنی سرویس قدیمی دست‌نخورده می‌ماند
 gate() {
   cd "$APP_DIR" || return 1
+  if [ "$RUNTIME" = "docker" ]; then
+    docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER" python -m compileall -q newsbot run.py || return 1
+    docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER" python run.py --check || return 1
+    return 0
+  fi
   "$VENV_DIR/bin/python" -m compileall -q newsbot run.py || return 1
   "$VENV_DIR/bin/python" run.py --check || return 1
   return 0
@@ -336,6 +440,14 @@ gate() {
 
 start_service() {
   RESTART_EPOCH="$(date +%s)"
+  if [ "$RUNTIME" = "docker" ]; then
+    if ! docker restart "$CONTAINER" >/dev/null; then
+      err "docker restart failed for '$CONTAINER'"
+      return 1
+    fi
+    RESTARTED=1
+    return 0
+  fi
   if ! systemctl restart "$SERVICE"; then
     err "systemctl restart failed for '$SERVICE'"
     return 1
@@ -348,6 +460,11 @@ start_service() {
 # چون برنامه برای استثناهایِ مدیریت‌شده log.exception می‌نویسد (و آن خطا نیست).
 journal_failed_since() {
   local since="$1"
+  if [ "$RUNTIME" = "docker" ]; then
+    docker logs --since "$since" "$CONTAINER" 2>&1 \
+      | grep -Eiq 'failed with result|main process exited|core dumped|segmentation fault|watchdog timeout'
+    return $?
+  fi
   journalctl -u "$SERVICE" --since "@$since" -p err --no-pager 2>/dev/null \
     | grep -Eiq 'failed with result|main process exited|core dumped|segmentation fault|watchdog timeout'
 }
@@ -391,7 +508,11 @@ rollback_and_die() {
   # وگرنه کدِ قدیمی روی وابستگی‌هایِ جدید اجرا می‌شود.
   install_deps || err "WARNING: could not restore the previous dependency set"
   if [ "$RESTARTED" -eq 1 ]; then
-    systemctl restart "$SERVICE" || true
+    if [ "$RUNTIME" = "docker" ]; then
+      docker restart "$CONTAINER" >/dev/null || true
+    else
+      systemctl restart "$SERVICE" || true
+    fi
     log "service restarted on previous code $prev"
   fi
   exit 1

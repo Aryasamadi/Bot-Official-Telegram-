@@ -240,7 +240,52 @@ workflow نیست**:
    نمی‌خواهد و با این حادثه سازگار است؛ ولی برای نصبِ اولیهٔ عامل، یک‌بار دسترسیِ
    SSH یا کنسول لازم است.
 
+## ۸.۲ حالتِ کانتینر (Docker) — چیدمانِ واقعیِ Production
+
+**وضعیتِ واقعیِ سرور (کشف‌شده در ۳۰ اکتبر ۲۰۲۶):** سرویس یک *کانتینر* است، نه یونیتِ
+systemd. یعنی `deploy.sh` با پیش‌فرض‌های قبلی (`/opt/bot-official-telegram`، venv،
+`newsbot.service`) با سرورِ واقعی نمی‌خواند و پیش از هر کاری می‌شکست.
+
+| چیز | مقدارِ واقعی |
+|---|---|
+| پوشهٔ کد | `/opt/Bot-Official-Telegram` (حروفِ بزرگ) |
+| سرویس | کانتینرِ `bot-official-telegram` (image: `bot-official-telegram:deps`) |
+| فرمان | `python run.py` با `WorkingDirectory=/app` و `restart=unless-stopped` |
+| mountها | `/opt/Bot-Official-Telegram` → `/app` و `.../data` → `/app/data` |
+| دیتابیس | `/opt/Bot-Official-Telegram/newsbot.db` (داخلِ کانتینر: `/app/newsbot.db`) |
+| روی میزبان | **نه** venv هست، **نه** یونیتِ systemd برای ربات |
+
+**حالتِ جدیدِ `deploy.sh`:** `RUNTIME=auto` (پیش‌فرض) خودش را تشخیص می‌دهد: اگر کانتینر
+ exist کند ⇒ حالتِ `docker`، وگرنه حالتِ `systemd` (مسیرِ قدیمی دست‌نخورده و آزمون‌شده
+می‌ماند). در حالتِ docker:
+
+- پیش‌شرط‌ها: وجودِ `docker`، وجودِ کانتینر، وجودِ `.env` در `APP_DIR` (venv لازم نیست).
+- دروازه (`compileall` + `run.py --check`) و نصبِ نیازمندی‌ها **داخلِ کانتینر** اجرا می‌شود
+  (`docker exec -w /app`).
+- restart = `docker restart`؛ بررسیِ سلامت از `docker inspect`؛ نشانه‌های مرگبار از
+  `docker logs --since <epoch>` خوانده می‌شود (همان نشانه‌های ژورنال).
+- مسیرِ دیتابیس داخلِ کانتینر با bind-mountها به مسیرِ میزبان نگاشت می‌شود
+  (`/app/newsbot.db` → `/opt/Bot-Official-Telegram/newsbot.db`) تا بکاپِ آنلاین از همان
+  فایلِ واقعی روی میزبان گرفته شود. اگر مسیر قابل نگاشت نباشد، اسکریپت **نمونه‌گیری
+  نمی‌کند** و deploy را متوقف می‌کند.
+- بکاپِ دیتابیس همچنان روی میزبان و با `sqlite3` (ماژولِ استانداردِ پایتون) و به‌صورتِ
+  آنلاین (`.backup()`) گرفته می‌شود ⇒ سرویس حین بکاپ قطع نمی‌شود.
+
+متغیرهای اختیاری: `RUNTIME=docker|systemd|auto` و `CONTAINER=bot-official-telegram`.
+
+نمونهٔ استقرارِ دستی (از ماشینی که به سرور دسترسی دارد):
+
+```bash
+APP_DIR=/opt/Bot-Official-Telegram CONTAINER=bot-official-telegram \
+  bash deploy/deploy.sh deploy <SHA>
+```
+
 ## ۹. سخت‌کردن واحد systemd (کمترین دسترسی + تضمین روشن‌ماندن)
+
+> **توجه:** نمونه‌های این بخش برای *حالتِ systemd* است و مسیرِ `/opt/bot-official-telegram`
+> (چیدمانِ قدیمی) را نشان می‌دهند. پیش‌فرضِ `APP_DIR` در `deploy.sh` اکنون مسیرِ واقعیِ
+> Production یعنی `/opt/Bot-Official-Telegram` است؛ برای یونیتِ systemd این پیش‌فرض را
+> با `APP_DIR=...` بازنویسی کنید.
 
 > **OPS-22/OPS-23 (فاز ۱۵):** دو لایهٔ مستقل اضافه شد. لایهٔ یک (`Restart=always` و حذف
 > سقف start-limit) با کد فعلی هم سازگار است و باید **همین حالا** اعمال شود؛ لایهٔ دو

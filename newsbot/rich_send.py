@@ -126,8 +126,30 @@ def _is_unsupported(err):
 
 
 def _real_bot(bot):
-    """بطریِ واقعیِ PTB (پوشش‌هایی مثل PublicationTransport خودش را نگه می‌دارند)."""
-    return getattr(bot, "bot", bot)
+    """بطریِ واقعی (پوشش‌هایی مثل ``PublicationTransport`` خودش را نگه می‌دارند).
+
+    نکتهٔ حیاتی (ریشهٔ «پیامِ بومی در Production دیده نمی‌شد»): در PTB 20+ صفتِ
+    ``Bot.bot`` **پروفایلِ ``User``ِ ربات** است، نه «بطریِ زیرین». کدِ قدیمی
+    ``getattr(bot, "bot", bot)`` در Production یک ``User`` برمی‌گرداند که نه
+    ``base_url`` دارد و نه ``token`` ⇒ ``can_raw_send`` همیشه False می‌شد و پیامِ
+    بومی هرگز امتحان نمی‌شد (و همه‌چیز بی‌صدا به قالبِ کلاسیک می‌افتاد).
+
+    اینجا اول خودِ شیء را (که ``base_url``/``token`` دارد) برمی‌داریم و فقط در
+    صورتِ نبود، یک لایه پوشش (مثل ``PublicationTransport.bot``) را باز می‌کنیم."""
+    obj = bot
+    for _ in range(4):
+        if obj is None: break
+        try:
+            if getattr(obj, "base_url", None) and getattr(obj, "token", None):
+                return obj
+            nxt = getattr(obj, "bot", None)
+        except Exception:
+            break
+        if nxt is None or nxt is obj: break
+        # در PTB 20+ ``bot`` یک User است؛ User بطری نیست ⇒ ادامه نمی‌دهیم
+        if not (getattr(nxt, "base_url", None) or getattr(nxt, "token", None)): break
+        obj = nxt
+    return obj
 
 
 def _endpoint(bot, method):
@@ -143,7 +165,10 @@ def _endpoint(bot, method):
 
 def can_raw_send(bot):
     """آیا این بطری اجازهٔ فراخوانیِ مستقیمِ Bot API را می‌دهد؟"""
-    real = _real_bot(bot)
+    try:
+        real = _real_bot(bot)
+    except Exception:
+        return False
     return bool(getattr(real, "base_url", None)) and bool(getattr(real, "token", None))
 
 

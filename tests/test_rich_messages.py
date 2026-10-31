@@ -500,6 +500,28 @@ def test_circuit_breaker_disables_rich_after_repeated_rejections():
         srv.close()
 
 
+def test_the_ptb22_bot_attribute_does_not_disable_the_rich_path(telegram_ok):
+    """در PTB 20+ صفتِ ``Bot.bot`` پروفایلِ ``User`` است، نه «بطریِ زیرین».
+
+    کدِ قدیم (``getattr(bot, "bot", bot)``) یک ``User`` برمی‌گرداند که نه
+    ``base_url`` دارد و نه ``token`` ⇒ ``can_raw_send`` همیشه False می‌شد ⇒ در
+    Production پیامِ بومی **هرگز** فرستاده نمی‌شد و همه‌چیز بی‌صدا به قالبِ
+    کلاسیک می‌افتاد (ریشهٔ اصلیِ «پیامِ بومی دیده نمی‌شود»)."""
+    from newsbot import rich_send as rs
+    srv, bot = telegram_ok
+
+    class PTB22Bot(Bot):
+        @property
+        def bot(self):          # مثلِ PTB 20+: پروفایلِ User، نه بطری
+            return SimpleNamespace(id=999, username="testbot", first_name="T")
+
+    b = PTB22Bot(srv)
+    assert rs.can_raw_send(b) is True, "صفتِ bot در PTB 20+ نباید مسیرِ بومی را خاموش کند"
+    asyncio.run(rs.send_content(b, 55, POST_HTML))
+    assert srv.methods_called() == ["sendRichMessage"], "باید پیامِ بومی فرستاده شود"
+    assert bot.sent == []
+
+
 def test_a_media_404_does_not_open_the_capability_circuit():
     """۴۰۴ِ مربوط به رسانه «نبودِ قابلیت» نیست ⇒ مدار نباید خاموش شود.
 

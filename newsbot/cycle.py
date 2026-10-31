@@ -8,6 +8,7 @@ FIX v4:
   • دروازه‌ی کانال اجباری (فقط ادمین): اگر عضو نباشد، چرخه با تشخیص واضح متوقف می‌شود
 """
 import asyncio, json, secrets, time
+from contextvars import ContextVar
 from datetime import timedelta
 from newsbot import config
 from newsbot.db import q, gset, arun
@@ -18,16 +19,23 @@ from newsbot.core_users import admin_limits, admin_limits_cached, remaining, usa
 from newsbot.core_channels import get_channel, get_settings, update_settings, in_quiet, mandatory_configured, mandatory_membership
 from newsbot.core_sources import list_sources, source_of_article
 from newsbot.core_articles import (article_insert, article_update, get_article, articles_by_status,
-                                   ready_count, dedup_mark, title_fp, soft_window_candidate)
+                                   ready_count, dedup_mark, title_fp, soft_window_candidate,
+                                   mark_ai_failure, mark_ai_rejected)
 from newsbot.discover import discover_source, hostname
 from newsbot.extract import extract_article
 from newsbot.adfilter import heuristic_ad_check
 from newsbot.generate import generate, compose
 from newsbot.publish import _publish_article_locked, bot_can_post
 from newsbot.ai_models import (ai_err_text, is_ai_fatal, cycle_quarantine_reset,
-                               ai_stats_reset, ai_posts_total)
+                               ai_stats_reset, ai_posts_total, cycle_deadline_set,
+                               cycle_deadline_clear)
 from newsbot.opctx import _current_operation, step_add, operation_checkpoint
 from newsbot.ui_i18n import DIAG, STAGES
+
+# مقاله‌ای که همین حالا زیرِ فراخوانیِ AI است. اگر سقفِ زمانیِ چرخه تمام شود،
+# همین مقاله باید «موقت» ثبت شود (نه اینکه بی‌دلیل در حالتِ discovered بماند و
+# بی‌نهایت دوباره برداشته شود).
+_current_article = ContextVar("cycle_article", default=None)
 
 
 class Diag:
@@ -122,9 +130,19 @@ async def _deadline_result(uid, cid, deadline):
     """P0-A: نتیجهٔ قابل‌تشخیصِ انقضای سقفِ زمانی.
 
     قفلِ کانال آزاد شده (در همان بلوکِ ``async with lk`` هستیم) و وضعیتِ مقاله‌ها سالم
-    است؛ فقط ثبتِ گزارش با مهلتِ کوتاه انجام می‌شود تا خودِ گزارش چرخه را معطل نکند."""
+    است؛ فقط ثبتِ گزارش با مهلتِ کوتاه انجام می‌شود تا خودِ گزارش چرخه را معطل نکند.
+
+    مقاله‌ای که زیرِ فراخوانیِ AI بوده «موقت» ثبت می‌شود (با شمارنده و backoff) تا
+    نه به‌عنوان «ردِ قطعی» بماند و نه بی‌دلیل در صف بماند و بی‌نهایت تکرار شود."""
     D = Diag(); D.stage = "ai"; D.add("deadline", sec=deadline)
     res = _res(D); res["errors"] = 1; res["stop_reason"] = "deadline"; res["deadline_sec"] = deadline
+    aid = _current_article.get()
+    if aid:
+        try:
+            await asyncio.wait_for(arun(mark_ai_failure, aid, "deadline"), timeout=10)
+            res["deadline_article"] = aid
+        except Exception: log.warning("could not mark the deadline article %s", aid, exc_info=True)
+    _current_article.set(None)
     try: lang = (await arun(get_settings, cid))["ui_lang"]
     except Exception: lang = "fa"
     res["msg"] = D.render(lang, False)
@@ -144,6 +162,10 @@ async def run_channel_cycle(bot, uid, cid, test_mode=False, progress=None):
         if lk.locked():
             D = Diag(); D.add("busy"); r = _res(D); r["msg"] = D.render((await arun(get_settings, cid))["ui_lang"], False); return r
         async with lk:
+            # سقفِ زمانیِ چرخه به لایهٔ AI هم داده می‌شود تا فراخوانیِ پروایدر
+            # (۴۵ ثانیه × ۲ تلاش) چرخه را از درون نکشد.
+            cycle_deadline_set(time.monotonic() + deadline)
+            _current_article.set(None)
             try:
                 async with asyncio.timeout(deadline):
                     return await _cycle(bot, uid, cid, test_mode, progress)
@@ -153,6 +175,9 @@ async def run_channel_cycle(bot, uid, cid, test_mode=False, progress=None):
             except asyncio.CancelledError:
                 # لغوِ بیرونی (/cancel یا shutdown) نباید به خطای عادی تبدیل شود
                 raise
+            finally:
+                cycle_deadline_clear()
+                _current_article.set(None)
 
 async def _cycle(bot, uid, cid, test_mode, progress):
     _cy0 = time.monotonic(); cyid = f"cy{cid}-{secrets.token_hex(2)}"   # شناسهٔ همبستگی این چرخه
@@ -293,25 +318,34 @@ async def _cycle(bot, uid, cid, test_mode, progress):
         for c, art in zip(chunk, arts):
             if res["accepted"] >= target: stop = True; break
             aid = c["aid"]; res["processed"] += 1
+            # از همین لحظه این مقاله «در جریان» است: اگر سقفِ زمانیِ چرخه تمام شود،
+            # همین مقاله «موقت» ثبت می‌شود (نه اینکه بی‌دلیل در حالتِ discovered بماند).
+            _current_article.set(aid)
             src_name = await arun(article_src_name, aid) or hostname(c["url"])
             if not art or isinstance(art, Exception):
                 # PLB-06 (فاز ۷): شکست استخراج موقتی است (شبکه/فیلتر موقت سایت) و نباید «ردشدهٔ» قطعی شود؛
                 # failed از پنجرهٔ نرم دوباره برگردانده می‌شود (soft_window_candidate وضعیت‌های failed را می‌پذیرد).
-                await arun(article_update, aid, status="failed", reason="extract_failed"); res["errors"] += 1; cnt["extract"] += 1; step_add(_current_operation.get(), "src_extract_fail", key=src_name, status="fail"); continue
+                await arun(mark_ai_failure, aid, "extract_failed", reason="extract_failed", backoff_sec=0); res["errors"] += 1; cnt["extract"] += 1; step_add(_current_operation.get(), "src_extract_fail", key=src_name, status="fail"); continue
             if not art["title"]: art["title"] = c["title"] or hostname(c["url"])
             if not art["media"] and c["media"]: art["media"] = c["media"]
             D.stage = "filter"
-            # هر نامزد (کشف‌شده، مانده‌ی صف یا تلاش مجدد) بلافاصله پیش از تولید دوباره با پنجره‌ی زمانی سنجیده می‌شود
+            # هر نامزد (کشف‌شده، ماندهٔ صف یا تلاش مجدد) بلافاصله پیش از تولید دوباره با پنجرهٔ زمانی سنجیده می‌شود.
+            # پنجرهٔ نرم (بازچرخانی) **پنجرهٔ کانال را شل نمی‌کند**: مقالهٔ قدیمی هرگز دوباره وارد
+            # صفِ AI نمی‌شود (پیش‌تر تا ۱۶۸ ساعت شل می‌شد و خبرِ چندروزه دوباره تولید می‌شد).
             pub_when = art.get("published") or c.get("published")
             window_ok = _within_lookback(pub_when, s)
-            if not window_ok and c.get("soft"): window_ok = _within_lookback(pub_when, s, hours=config.MAX_LOOKBACK)
             if not window_ok:
-                await arun(article_update, aid, status="skipped", reason="old" if pub_when else "undated", **({"published_at": pub_when} if pub_when else {}))
+                # تصمیمِ «تازگی» است، نه شکستِ موقت و نه ردِ محتوا ⇒ حالتِ «stale»
+                # (هرگز دوباره وارد صف نمی‌شود، ولی «ردِ قطعیِ محتوا» هم نیست).
+                stale = bool(c.get("soft"))
+                await arun(article_update, aid, status="skipped", reason=("stale" if stale else ("old" if pub_when else "undated")),
+                           ai_state="stale", ai_next_retry="",
+                           **({"published_at": pub_when} if pub_when else {}))
                 if not pub_when: cnt["undated"] += 1
                 step_add(_current_operation.get(), "src_skip_old", key=src_name, status="fail")
                 continue
             bad, why, _ = await asyncio.to_thread(heuristic_ad_check, art, s["strict_ads"])
-            if bad: await arun(article_update, aid, status="rejected", reason=f"ad_filter: {why}"); res["rejected"] += 1; cnt["ad"] += 1; details.append((art["title"], "ad: " + why)); step_add(_current_operation.get(), "src_ad", key=src_name, status="fail"); continue
+            if bad: await arun(mark_ai_rejected, aid, f"ad_filter: {why}"); res["rejected"] += 1; cnt["ad"] += 1; details.append((art["title"], "ad: " + why)); step_add(_current_operation.get(), "src_ad", key=src_name, status="fail"); continue
             D.stage = "ai"; pct = min(94, 40 + int(50 * i / len(candidates))); await p(pct, P["ai"].format(t=art["title"][:40]))
             async def _on_queue(_pct=pct): await p(_pct, P["queue"])
             log_ctx(article=aid, stage="ai")
@@ -323,10 +357,13 @@ async def _cycle(bot, uid, cid, test_mode, progress):
                 # این «خطای داخلی» است، نه «خطای نهاییِ ارائه‌دهنده» ⇒ چرخه به نامزدِ بعدی می‌رود.
                 log_event("ERROR", f"تولیدِ مقاله {aid} با خطای غیرمنتظره مواجه شد: {type(e).__name__}", uid, exc_info=True, error_class=type(e).__name__)
                 gen, model, err = None, None, "ai_exception"
+            # توجه: اینجا عمداً پاک نمی‌شود؛ اگر همین‌جا سقفِ چرخه تمام شود، «_deadline_result»
+            # باید همین مقاله را «موقت» ثبت کند (پاک‌کردنِ زودهنگام، مقاله را بی‌ردّ می‌گذاشت).
             log_ctx(model=model, stage="compose" if gen else "ai-fail")
             if not gen:
-                # FIX سیاست v4: شکست AI «rejected» نیست؛ وضعیت failed (قابل تلاش مجدد) ثبت می‌شود
-                await arun(article_update, aid, status="failed", reason=f"ai: {err}"); res["errors"] += 1; ai_err = err
+                # شکستِ AI «rejected» نیست: مقاله با شمارنده، backoff و زمانِ تلاشِ بعدی
+                # «موقت» ثبت می‌شود ⇒ بعداً دوباره تلاش می‌شود (و بعد از سقفِ تلاش پارک می‌ماند).
+                await arun(mark_ai_failure, aid, err, provider=model or ""); res["errors"] += 1; ai_err = err
                 step_add(_current_operation.get(), "src_ai_fail", key=src_name, status="fail", model=model)
                 # P0-B: خطای *نهاییِ* AI ⇒ چرخه به نامزدِ بعدی نمی‌رود (همان ارائه‌دهندهٔ ناسالم
                 # دوباره صدا زده نمی‌شود). فیلترهای عادیِ محتوا (امتیاز/تبلیغ) کدِ خطا ندارند و
@@ -334,17 +371,23 @@ async def _cycle(bot, uid, cid, test_mode, progress):
                 if is_ai_fatal(err):
                     ai_fatal = err; stop = True; break
                 continue
+            if gen.get("salvaged"):
+                # خروجیِ ناقصِ مدل (پاسخِ خالی/JSONِ ناقص/بدونِ امتیاز) «خطای موقت» است،
+                # نه «ردِ محتوا با امتیازِ پایین» ⇒ مقاله با backoff دوباره تلاش می‌شود.
+                await arun(mark_ai_failure, aid, "ai_invalid", provider=model or ""); res["errors"] += 1; ai_err = ai_err or "ai_invalid"
+                step_add(_current_operation.get(), "src_ai_fail", key=src_name, status="fail", model=model)
+                continue
             D.stage = "score"
             best = max(best, gen["score"])
-            if gen["score"] < float(s["min_score"]): await arun(article_update, aid, status="rejected", reason=f"score {gen['score']} < {s['min_score']}", score=gen["score"]); res["rejected"] += 1; cnt["low"] += 1; details.append((art["title"], f"score {gen['score']}")); step_add(_current_operation.get(), "src_low_score", key=src_name, status="fail", score=gen["score"]); continue
+            if gen["score"] < float(s["min_score"]): await arun(mark_ai_rejected, aid, f"score {gen['score']} < {s['min_score']}", score=gen["score"], provider=model or ""); res["rejected"] += 1; cnt["low"] += 1; details.append((art["title"], f"score {gen['score']}")); step_add(_current_operation.get(), "src_low_score", key=src_name, status="fail", score=gen["score"]); continue
             try:
                 post, full = await asyncio.to_thread(compose, s, ch, art, gen)
             except Exception:
                 log_event("ERROR", f"ترکیبِ خروجیِ مدل برای مقاله {aid} شکست خورد", uid, exc_info=True, error_class="compose")
-                await arun(article_update, aid, status="failed", reason="compose_failed"); res["errors"] += 1; ai_err = ai_err or "ai_invalid"
+                await arun(mark_ai_failure, aid, "ai_invalid", provider=model or "", reason="compose_failed"); res["errors"] += 1; ai_err = ai_err or "ai_invalid"
                 step_add(_current_operation.get(), "src_ai_fail", key=src_name, status="fail", model=model)
                 continue
-            await arun(article_update, aid, title=gen.get("title") or art["title"], post_html=post, full_html=full, score=gen["score"], category=gen.get("category"), model=model, media=json.dumps(art["media"]) if art["media"] else None, published_at=art["published"], status="ready", reason=""); res["accepted"] += 1
+            await arun(article_update, aid, title=gen.get("title") or art["title"], post_html=post, full_html=full, score=gen["score"], category=gen.get("category"), model=model, media=json.dumps(art["media"]) if art["media"] else None, published_at=art["published"], status="ready", reason="", ai_state="", ai_next_retry="", ai_last_error=""); res["accepted"] += 1
             sname = await arun(article_src_name, aid)
             if sname: res["src"] = sname; D.add("from_src", name=sname)
             if test_mode or (s["mode"] == "auto" and not quiet):

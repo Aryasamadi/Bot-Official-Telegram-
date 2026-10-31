@@ -9,7 +9,7 @@ from telegram.error import BadRequest, RetryAfter, NetworkError, Forbidden
 from newsbot import config
 from newsbot.db import q, db, _lock, _safe_fields, _trx, gget, gset, arun
 from newsbot.logutils import log
-from newsbot.timeutils import now_utc, now_iso, today_str
+from newsbot.timeutils import now_utc, now_iso, today_str, parse_dt
 from newsbot.ratelimit import rate_mark, rate_cleanup
 from newsbot.core_users import admin_limits, admin_offset
 from newsbot.concurrency import ch_lock
@@ -42,6 +42,71 @@ def article_update(aid, **f):
     q("UPDATE articles SET " + ", ".join(f"{k}=?" for k in f) + " WHERE id=?", (*f.values(), aid), commit=True)
 
 def get_article(aid): return q("SELECT * FROM articles WHERE id=?", (aid,), one=True)
+
+
+# ── ماشینِ حالتِ خطای AI: «موقت» در برابرِ «ردِ قطعیِ محتوا» ─────────────────────
+# پیش از این، هر خطای AI (timeout/deadline/429/5xx/پاسخِ خالی) دقیقاً مثلِ «ردِ
+# محتوا» ثبت می‌شد و مقاله‌های قدیمی هم دوباره وارد صفِ AI می‌شدند. حالا وضعیتِ
+# موقت/قطعی در ستونِ ``ai_state`` جدا از ``status`` نگه‌داری می‌شود.
+AI_STATE_RETRYABLE = "retryable"   # شکستِ موقت ⇒ با backoff دوباره تلاش می‌شود
+AI_STATE_REJECTED = "rejected"     # تصمیمِ محتوایی (امتیاز/تبلیغ) ⇒ دیگر تلاش نمی‌شود
+AI_STATE_EXHAUSTED = "exhausted"   # سقفِ تلاشِ موقت پر شد ⇒ پارک (نه حذف، نه «ردِ محتوا»)
+
+
+def ai_backoff_sec(attempts):
+    """backoffِ نماییِ تلاشِ دوباره (با سقفِ config)."""
+    a = max(1, int(attempts or 1))
+    base = max(30, int(config.AI_RETRY_BACKOFF_BASE_SEC))
+    cap = max(base, int(config.AI_RETRY_BACKOFF_MAX_SEC))
+    return int(min(cap, base * (2 ** (a - 1))))
+
+
+def mark_ai_failure(aid, code, provider="", detail="", reason=None, status="failed", backoff_sec=None):
+    """ثبتِ شکستِ **موقت** ⇒ مقاله «ردِ قطعیِ محتوا» نیست.
+
+    ستونِ ``status`` همان ``failed`` می‌ماند (سازگار با قالب‌ها و گزارش‌های موجود)،
+    ولی ``ai_state`` صریحاً ``retryable`` (یا ``exhausted`` پس از سقفِ تلاش) می‌شود
+    و شمارنده، آخرین خطا و زمانِ تلاشِ بعدی ثبت می‌گردد.
+
+    ``backoff_sec=0`` یعنی «بی‌درنگ دوباره امتحان شود» (خطای استخراجِ شبکه‌ای)."""
+    row = get_article(aid)
+    if not row: return None
+    if (row["status"] or "") in ("ready", "published"):
+        return None                      # مقاله آماده/منتشرشده است ⇒ دستِ زدن به آن خطاست
+    if (row["status"] or "") == "rejected" and (row["ai_state"] or "") == AI_STATE_REJECTED:
+        return None                      # تصمیمِ محتوایی گرفته شده ⇒ خطای بعدی نباید آن را «موقت» کند
+    attempts = int(row["ai_attempts"] or 0) + 1
+    cap = max(1, int(config.AI_MAX_ARTICLE_ATTEMPTS))
+    state = AI_STATE_EXHAUSTED if attempts >= cap else AI_STATE_RETRYABLE
+    wait = ai_backoff_sec(attempts) if backoff_sec is None else max(0, int(backoff_sec))
+    nxt = now_utc() + timedelta(seconds=wait)
+    err = str(code or "ai_error")[:80]
+    stored = reason if reason is not None else ("ai: %s" % err)
+    article_update(aid, status=status, reason=stored, ai_state=state, ai_attempts=attempts,
+                   ai_last_error=(str(detail)[:200] if detail else err), ai_last_attempt=now_iso(),
+                   ai_next_retry=nxt.isoformat(), ai_provider=str(provider or "")[:80])
+    log.warning("ai failure article=%s code=%s attempt=%d/%d state=%s next_retry=%s",
+                aid, err, attempts, cap, state, nxt.isoformat())
+    return {"id": aid, "attempts": attempts, "state": state, "next_retry": nxt.isoformat(), "error": err}
+
+
+def mark_ai_rejected(aid, reason, score=None, provider=""):
+    """ردِ **قطعیِ محتوا** (امتیازِ پایین/تبلیغ) ⇒ دیگر وارد صفِ AI نمی‌شود."""
+    row = get_article(aid)
+    if not row: return None
+    f = {"status": "rejected", "reason": str(reason)[:120], "ai_state": AI_STATE_REJECTED,
+         "ai_last_attempt": now_iso(), "ai_next_retry": ""}
+    if score is not None: f["score"] = score
+    if provider: f["ai_provider"] = str(provider)[:80]
+    article_update(aid, **f)
+    return {"id": aid, "state": AI_STATE_REJECTED}
+
+
+def retryable_candidates(cid, limit=20):
+    """مقاله‌هایی که شکستِ موقت داشته‌اند و زمانِ تلاشِ بعدی‌شان رسیده است."""
+    return q("SELECT id,title,score,reason,status,ai_state,ai_attempts,ai_next_retry,ai_last_error,created_at "
+             "FROM articles WHERE channel_id=? AND ai_state=? AND COALESCE(ai_next_retry,'')<=? "
+             "ORDER BY id DESC LIMIT ?", (cid, AI_STATE_RETRYABLE, now_iso(), limit))
 
 class PublicationQuotaExceeded(Exception): pass
 
@@ -192,7 +257,7 @@ def articles_by_status(cid, status, limit=50, automatic=False):
     st = ("rejected", "failed", "skipped") if status == "rejected" else (status,)
     order = "ASC" if status == "ready" else "DESC"
     eligible = " AND COALESCE(reason,'')!='cancelled'" if automatic else ""
-    return q(f"SELECT id,title,score,category,created_at,url,reason,status FROM articles WHERE channel_id=? AND status IN ({','.join('?' * len(st))}){eligible} ORDER BY id {order} LIMIT ?", (cid, *st, limit))
+    return q(f"SELECT id,title,score,category,created_at,url,reason,status,ai_state,ai_attempts,ai_next_retry,ai_last_error FROM articles WHERE channel_id=? AND status IN ({','.join('?' * len(st))}){eligible} ORDER BY id {order} LIMIT ?", (cid, *st, limit))
 
 def ready_count(cid): return q("SELECT COUNT(*) c FROM articles WHERE channel_id=? AND status='ready'", (cid,), one=True)["c"]
 
@@ -206,12 +271,33 @@ def posted_before(chat_id, h): return bool(q("SELECT 1 FROM posted WHERE channel
 
 def soft_window_candidate(cid, chat_id, h):
     """PUB-01: واجد شرایطِ بازچرخانیِ پنجرهٔ نرم. مقالهٔ «تحویل نامعلوم» هرگز دوباره ارسال نمی‌شود
-    (شاید پست واقعاً رفته باشد؛ ری‌کیو آن پست تکراری می‌سازد). خروجی: article id یا None."""
-    row = q("SELECT id,status,reason FROM articles WHERE channel_id=? AND hash=?", (cid, h), one=True)
-    if not row or row["status"] not in ("skipped", "rejected", "failed"): return None
+    (شاید پست واقعاً رفته باشد؛ ری‌کیو آن پست تکراری می‌سازد). خروجی: article id یا None.
+
+    فقط **شکستِ موقت** دوباره وارد صف می‌شود:
+      • ردِ قطعیِ محتوا (``ai_state='rejected'`` یا ``status='rejected'``) ⇒ هرگز؛
+      • مقالهٔ قدیمی (``status='skipped'`` با دلیلِ ``old``/``undated``) ⇒ هرگز؛
+      • ردیف‌های قدیمی (پیش از ماشینِ حالت) با دلیلِ گذرا (``ai: …``/``extract_failed``) ⇒ بله."""
+    row = q("SELECT id,status,reason,ai_state,ai_next_retry FROM articles WHERE channel_id=? AND hash=?", (cid, h), one=True)
+    if not row: return None
     if (row["reason"] or "") == "delivery_unknown": return None
     if posted_before(chat_id, h): return None
-    return row["id"]
+    state = (row["ai_state"] or "").strip()
+    if state in (AI_STATE_REJECTED, AI_STATE_EXHAUSTED): return None
+    if state == AI_STATE_RETRYABLE:
+        nxt = parse_dt(row["ai_next_retry"] or "")
+        if nxt and now_utc() < nxt: return None      # هنوز وقتِ تلاشِ دوباره نرسیده
+        return row["id"]
+    if row["status"] == "failed" and _legacy_transient_reason(row["reason"]): return row["id"]
+    return None
+
+
+def _legacy_transient_reason(reason):
+    """آیا دلیلِ یک ردیفِ قدیمی (پیش از ستونِ ai_state) خطای گذرا بوده است؟"""
+    r = str(reason or "").strip()
+    if not r: return False
+    if r.startswith("ai:") or r.startswith("ai_"): return True
+    if r == "send_fails" or r.startswith("send:"): return True   # خطای تحویل (نه تصمیمِ محتوا)
+    return r in ("extract_failed", "deadline")
 
 def count_articles(uid=None, hours=24, status=None, cid=None):
     since = (now_utc() - timedelta(hours=hours)).isoformat(); sql, p = "SELECT COUNT(*) c FROM articles WHERE created_at >=?", [since]

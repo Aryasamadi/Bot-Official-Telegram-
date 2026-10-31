@@ -89,7 +89,8 @@ def log_ctx(**kw):
     """فیلدهای زمینه را برای لاگ‌های همین تسک می‌چسباند (ContextVar ⇒ بین کانال‌ها قاطی نمی‌شود)."""
     d = dict(_logctx.get() or {}); d.update({k: v for k, v in kw.items() if v is not None}); _logctx.set(d)
 
-_metrics = {"posts_ok": 0, "posts_fail": 0, "source_fail": 0, "model_fail": {}, "cycle_ms": 0, "cycle_n": 0, "queue": 0}
+_metrics = {"posts_ok": 0, "posts_fail": 0, "source_fail": 0, "model_fail": {}, "rich_fallback": {},
+            "cycle_ms": 0, "cycle_n": 0, "queue": 0}
 
 def bump(key, n=1, sub=None):
     """شمارندهٔ ارزان در حافظه؛ snapshot در پایان هر چرخه در settings ذخیره می‌شود."""

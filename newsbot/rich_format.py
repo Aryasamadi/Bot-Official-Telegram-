@@ -710,6 +710,34 @@ def rich_html_for(text, kind=None):
     return render_rich(doc)
 
 
+# ── رسانه درونِ پیامِ بومی ──────────────────────────────────────────────────────
+# طبق مستنداتِ رسمیِ تلگرام، «رسانه فقط به‌صورت یک بلوکِ جداگانه» می‌آید و
+# «بلوک‌های رسانه فقط URLهای HTTP و HTTPS را می‌پذیرند». یعنی می‌شود *همان یک
+# پیام* هم عکس داشته باشد و هم تیتر/جدول/فهرستِ واقعی — بدونِ شکستنِ پست به دو
+# پیام و بدونِ رفتن به کپشنِ کلاسیک.
+MEDIA_TAGS = {"photo": "img", "video": "video", "animation": "video",
+              "audio": "audio", "voice": "audio", "document": "tg-document"}
+
+
+def media_block(url, kind="photo"):
+    """بلوکِ رسانه برای پیامِ بومی؛ رشتهٔ خالی اگر رسانه قابلِ نمایش نباشد.
+
+    فقط URLهای HTTP/HTTPS پذیرفته می‌شوند (همان محدودیتِ رسمیِ تلگرام) و URL
+    برایِ صفتِ ``src`` درست escape می‌شود."""
+    u = str(url or "").strip()
+    if not u.lower().startswith(("http://", "https://")):
+        return ""
+    tag = MEDIA_TAGS.get(str(kind or "photo").lower(), "img")
+    src = html.escape(u, quote=True)
+    if tag == "img":
+        return '<img src="%s"/>' % src
+    if tag == "video":
+        return '<video src="%s"></video>' % src
+    if tag == "audio":
+        return '<audio src="%s"></audio>' % src
+    return '<tg-document src="%s"></tg-document>' % src
+
+
 def legacy_html_for(text, kind=None):
     """میان‌بر: متن → HTML کلاسیک."""
     return render_legacy(parse_content(text, kind=kind))

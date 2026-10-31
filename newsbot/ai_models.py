@@ -47,6 +47,26 @@ def is_ai_fatal(code):
     return str(code or "") in AI_FATAL_CODES
 
 
+# ── طبقه‌بندیِ خطای AI: «موقت» در برابرِ «ردِ قطعیِ محتوا» ───────────────────────
+# هر خطای سمتِ سرویس (timeout/429/5xx/پاسخِ خالی/خروجیِ ناقص/سقفِ بودجه/انقضای
+# سقفِ چرخه) **تصمیمِ محتوا نیست** ⇒ مقاله باید با backoff دوباره تلاش شود.
+# تصمیمِ محتوا (امتیازِ پایین، تبلیغ) اصلاً کدِ خطای AI ندارد ⇒ این فهرست
+# هیچ‌وقت به «ردِ قطعی» اشتباه نمی‌رسد.
+AI_TRANSIENT_CODES = frozenset({
+    "ai_timeout", "ai_busy", "ai_none", "ai_all_failed", "ai_invalid", "ai_tokens",
+    "ai_empty", "ai_error", "ai_budget", "ai_limit", "ai_exception", "deadline",
+    "extract_failed",
+})
+
+
+def is_ai_transient(code):
+    """آیا این کد خطا یعنی «موقت» (نه ردِ قطعیِ محتوا)؟"""
+    c = str(code or "").strip()
+    if c.startswith("ai:"): c = c[3:].strip()
+    if not c: return False
+    return c in AI_TRANSIENT_CODES
+
+
 # ── P0-D: قرنطینهٔ مدلِ خراب در همان چرخه ────────────────────────────────────────
 # یک مدل که پاسخِ خالی/نامعتبر می‌دهد یا خطای سمتِ سرویس می‌گیرد نباید برای
 # مقاله‌های بعدیِ *همان چرخه* دوباره صدا زده شود. این قرنطینه فقط درونِ چرخه است
@@ -304,6 +324,21 @@ def budget_calls_left():
 
 # ── P0-E: deadline اختصاصیِ probe (کوتاه) ───────────────────────────────────────
 _PROBE_DEADLINE = ContextVar("ai_probe_deadline", default=None)
+# ── deadline اختصاصیِ چرخه ──────────────────────────────────────────────────────
+# پیش‌تر سقفِ هر درخواستِ پروایدر (۴۵ ثانیه) × ۲ تلاش از سقفِ چرخه (۸۰ ثانیه) بیشتر
+# بود ⇒ یک پروایدرِ کند، چرخه را از درون می‌کشت و مقاله بی‌دلیل «deadline» می‌شد.
+# حالا فراخوانیِ پروایدر با باقیماندهٔ وقتِ چرخه ( منهای حاشیه) کوتاه می‌شود.
+_CYCLE_DEADLINE = ContextVar("ai_cycle_deadline", default=None)
+
+
+def cycle_deadline_set(ts=None):
+    """زمانِ پایانِ چرخه (.monotonic) را ثبت می‌کند؛ None یعنی «سقفی نیست»."""
+    _CYCLE_DEADLINE.set(ts)
+
+
+def cycle_deadline_clear():
+    _CYCLE_DEADLINE.set(None)
+
 
 def _provider_timeout():
     """سقفِ زمانیِ یک درخواستِ پروایدر — هرگز بیشتر از بودجهٔ باقیماندهٔ مقاله."""
@@ -313,6 +348,10 @@ def _provider_timeout():
     d = _PROBE_DEADLINE.get()
     if d is not None:
         rem = d - time.monotonic()
+        if rem > 0: t = min(t, max(2.0, rem))
+    c = _CYCLE_DEADLINE.get()
+    if c is not None:
+        rem = c - time.monotonic() - float(config.AI_CYCLE_MARGIN_SEC)
         if rem > 0: t = min(t, max(2.0, rem))
     return t
 
@@ -514,7 +553,9 @@ AI_ERR = {"ai_busy": ("سرویس هوش مصنوعی موقتاً شلوغ اس
           "ai_tokens": ("بودجهٔ توکنِ مدل تمام شد و خروجی تولید نشد (مدل یا سقف توکن را عوض کنید)", "The model exhausted its token budget without producing output (change the model or its token budget)"),
           "ai_limit": ("سقف روزانهٔ مصرف هوش مصنوعی تمام شد", "Daily AI usage limit reached"),
           "ai_invalid": ("خروجی مدل‌ها نامعتبر بود", "The model output was rejected as invalid"),
-          "ai_all_failed": ("هیچ‌یک از مدل‌ها پاسخ نداد", "None of the models responded")}
+          "ai_all_failed": ("هیچ‌یک از مدل‌ها پاسخ نداد", "None of the models responded"),
+          "deadline": ("سقفِ زمانیِ چرخه تمام شد (خطای موقت)", "The cycle deadline was reached (temporary)"),
+          "extract_failed": ("استخراجِ متن ممکن نبود (خطای موقت)", "Text extraction failed (temporary)")}
 
 def err_code(e):
     t = str(e or "").lower()

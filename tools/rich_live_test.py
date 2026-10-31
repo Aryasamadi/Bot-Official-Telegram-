@@ -77,6 +77,25 @@ SAMPLES = {
 - Release v2.4.0 🚀 shipped
 - لینکِ دوم: https://example.com/docs?a=1&b=2
 """,
+    "warning_report": """# ⚠️ هشدارِ عملیاتی: سرویسِ پرداخت ناپایدار است
+
+> **نکتهٔ کلیدی:** از ساعت ۰۳:۱۵ تا ۰۴:۰۰ UTC پرداخت‌ها با خطای ۵۰۳ رد شدند.
+
+- ۴۷ تراکنش ناموفق
+- ۰ تراکنش تکراری (هیچ پولی گم نشد)
+- ✅ پس از ۰۴:۰۰ سرویس به حالت عادی برگشت
+""",
+}
+
+# بلوک‌هایی که سرور باید برای هر نمونه برگرداند. «پاسخِ موفق» کافی نیست؛
+# ساختارِ برگشتیِ سرور بررسی می‌شود (تیتر واقعی، جدول واقعی، فهرست واقعی).
+EXPECTED_BLOCKS = {
+    "analysis_fa": ["heading", "paragraph", "list", "blockquote"],
+    "comparison_table": ["heading", "table"],
+    "stats_report": ["heading", "list", "table"],
+    "final_summary": ["heading", "blockquote", "list"],
+    "warning_report": ["heading", "blockquote", "list"],
+    "mixed_fa_en": ["heading", "paragraph", "list"],
 }
 
 
@@ -204,7 +223,26 @@ class RecordingBot:
         return getattr(self._bot, name)
 
 
-async def main_async(env_file, chat_id, do_probe=True):
+def pick_media_url(explicit=""):
+    """نشانیِ یک رسانه برای نمونهٔ «پیامِ بومی با رسانه».
+
+    اولویت: نشانیِ داده‌شده ← رسانهٔ آخرین مقالهٔ منتشرشده در دیتابیس ← عکسِ
+    نمونهِ رسمیِ تلگرام."""
+    if explicit: return explicit
+    try:
+        from newsbot.db import q
+        row = q("SELECT media FROM articles WHERE media IS NOT NULL AND media!='' AND status='published' ORDER BY id DESC LIMIT 1", one=True)
+        raw = (row["media"] if row else "") or ""
+        if raw:
+            m = json.loads(raw)
+            u = (m or {}).get("url") or ""
+            if u.lower().startswith(("http://", "https://")): return u
+    except Exception:
+        pass
+    return "https://telegram.org/example/photo.jpg"
+
+
+async def main_async(env_file, chat_id, do_probe=True, media_url=""):
     from newsbot import config
     from newsbot import rich_format, rich_send
 
@@ -259,6 +297,13 @@ async def main_async(env_file, chat_id, do_probe=True):
                 if isinstance(rm, dict):
                     entry["is_rtl"] = rm.get("is_rtl")
                     entry["blocks"] = summarize_blocks(rm.get("blocks"))
+                    kinds = [b.get("type") for b in (rm.get("blocks") or []) if isinstance(b, dict)]
+                    entry["block_types"] = kinds
+                    expected = EXPECTED_BLOCKS.get(name) or []
+                    missing = [k for k in expected if k not in kinds]
+                    entry["expected_blocks"] = expected
+                    entry["missing_blocks"] = missing
+                    entry["ok"] = (not missing) and entry.get("is_rtl") is True
                     urls = []
                     collect_urls(rm, urls)
                     entry["urls"] = sorted(set(urls))
@@ -266,9 +311,11 @@ async def main_async(env_file, chat_id, do_probe=True):
                 entry["message_has_text"] = bool(res.get("text"))
             else:
                 entry["native_rich"] = False
+                entry["ok"] = False
                 entry["error"] = captured["calls"][-1].get("error") if captured["calls"] else None
         except Exception as e:
             entry["exception"] = "%s: %s" % (type(e).__name__, e)
+            entry["ok"] = False
         report["samples"][name] = entry
 
     # ── ۲) مسیرِ کلاسیک (RICH_MESSAGES=off) ────────────────────────────────────
@@ -351,7 +398,50 @@ async def main_async(env_file, chat_id, do_probe=True):
     fallback["not_found"] = not_found
     report["fallback_on_rejection"] = fallback
 
-    # ── ۵) کاوشِ سقفِ طول: کاراکتر یا بایت؟ ───────────────────────────────────
+    # ── ۵) پیامِ بومی همراهِ رسانه (همان مسیرِ پست‌های کانال) ─────────────────────
+    captured["calls"] = []
+    bot.classic.clear()
+    rich_send.reset_rich_state()
+    media_entry = {}
+    try:
+        url = pick_media_url(media_url)
+        media_entry["url"] = url
+        block = rich_format.media_block(url, "photo")
+        media_entry["media_block"] = block
+        if not block:
+            media_entry["ok"] = False
+            media_entry["error"] = "the media URL is not an HTTP(S) URL"
+        else:
+            body = ("# 🧪 پیامِ بومی با رسانه\n\n"
+                    "> عکس و متنِ ساختاریافته در *یک* پیام.\n\n"
+                    "- بلوکِ رسانه\n- بلوکِ متن\n")
+            msg = await rich_send.send_content(bot, chat_id, body, media_html=block,
+                                               split_legacy=False, fallback_legacy=False)
+            media_entry["message_id"] = getattr(msg, "message_id", None)
+            rich_calls = [c for c in captured["calls"] if c["method"] == "sendRichMessage"]
+            media_entry["rich_call_count"] = len(rich_calls)
+            media_entry["classic_fallback_used"] = bool(bot.classic)
+            if rich_calls:
+                res = rich_calls[0].get("result") or {}
+                rm = res.get("rich_message")
+                media_entry["native_rich"] = isinstance(rm, dict)
+                if isinstance(rm, dict):
+                    kinds = [b.get("type") for b in (rm.get("blocks") or []) if isinstance(b, dict)]
+                    media_entry["block_types"] = kinds
+                    media_entry["has_photo_block"] = "photo" in kinds
+                    media_entry["has_text_block"] = any(k in kinds for k in ("heading", "paragraph"))
+                    media_entry["is_rtl"] = rm.get("is_rtl")
+                    media_entry["ok"] = bool(media_entry["has_photo_block"] and media_entry["has_text_block"])
+            else:
+                media_entry["native_rich"] = False
+                media_entry["ok"] = False
+                media_entry["error"] = captured["calls"][-1].get("error") if captured["calls"] else "no rich call"
+    except Exception as e:
+        media_entry["exception"] = "%s: %s" % (type(e).__name__, e)
+        media_entry["ok"] = False
+    report["media_sample"] = media_entry
+
+    # ── ۶) کاوشِ سقفِ طول: کاراکتر یا بایت؟ ───────────────────────────────────
     if do_probe:
         probe = {}
         for label, size in (("fa_16k", 16000), ("fa_32k", 32000)):
@@ -367,6 +457,12 @@ async def main_async(env_file, chat_id, do_probe=True):
         report["length_probe"] = probe
 
     report["rich_status"] = rich_send.rich_status()
+    report["summary"] = {
+        "samples_total": len(report["samples"]),
+        "samples_ok": sum(1 for e in report["samples"].values() if e.get("ok")),
+        "samples_failed": [n for n, e in report["samples"].items() if not e.get("ok")],
+        "media_ok": bool(report.get("media_sample", {}).get("ok")),
+    }
     return report
 
 
@@ -376,6 +472,8 @@ def main():
                     help="مسیرِ فایل .env (توکن هرگز چاپ نمی‌شود)")
     ap.add_argument("--chat-id", default="", help="شناسهٔ چتِ مقصد (پیش‌فرض: اولین مدیر کلان)")
     ap.add_argument("--no-probe", action="store_true", help="حذفِ کاوشِ سقفِ طول")
+    ap.add_argument("--media-url", default=os.environ.get("RICH_TEST_MEDIA_URL", ""),
+                    help="نشانیِ عکس برای نمونهٔ «پیامِ بومی با رسانه» (پیش‌فرض: رسانهٔ آخرین پستِ دیتابیس)")
     args = ap.parse_args()
 
     load_env_file(args.env_file)
@@ -385,7 +483,8 @@ def main():
     if not chat_id:
         raise SystemExit("SUPER_ADMIN_IDS تنظیم نشده است و --chat-id داده نشده است")
 
-    report = asyncio.run(main_async(args.env_file, chat_id, do_probe=not args.no_probe))
+    report = asyncio.run(main_async(args.env_file, chat_id, do_probe=not args.no_probe,
+                                    media_url=args.media_url))
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

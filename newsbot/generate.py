@@ -225,14 +225,20 @@ async def _generate_inner(s, art, on_queue=None, owner_id=None):
         salvaged = True
     # تبلیغِ صریحِ مدل (حتی بدون post) هرگز با محتوای ساختگی بازنویسی نمی‌شود
     if j.get("is_ad") is True:
-        j["score"] = 0.0; return j, model, None
+        j["score"] = 0.0; j["salvaged"] = False; j["scores_missing"] = False; return j, model, None
     scores = j.get("scores")
+    scores_missing = False
     if not isinstance(scores, dict) or not scores:
         # PLB-01: امتیاز نبود ⇒ امتیاز خنثی (۵/۱۰ برای هر معیار) تا متنِ سالمِ واقعی هدر نرود؛
         # دروازهٔ min_score همانجای همیشگی (cycle) تصمیم میگیرد و خروجیِ بدونِ قرارداد کش نمیشود.
         scores = {c["name"]: 5.0 for c in s["criteria"]}
         salvaged = True
+        scores_missing = True
     j["scores"] = scores; j["score"] = weighted_score(s, scores)
+    # نشانهٔ «خروجیِ ناقص» صریح می‌شود: چرخه این را **خطای موقتِ مدل** می‌داند
+    # (نه «ردِ محتوا با امتیازِ پایین») ⇒ مقاله با backoff دوباره تلاش می‌شود.
+    j["salvaged"] = bool(salvaged)
+    j["scores_missing"] = bool(scores_missing)
     if config.AI_CACHE_TTL_DAYS > 0 and not salvaged:   # فقط خروجیِ کاملاً معتبر کش میشود (مسیر salvage و is_ad کش نمیشوند)
         try: await arun(q, "INSERT OR REPLACE INTO ai_cache(key,value,created_at) VALUES(?,?,?)", (ckey, json.dumps({"j": j, "model": model}, ensure_ascii=False), now_iso()), commit=True)
         except Exception: log.warning("ai_cache write failed", exc_info=True)

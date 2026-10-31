@@ -251,6 +251,9 @@ class FakeTelegram:
                                                 "rich_message": parsed}}
         if self.mode == "no_method":
             return 404, {"ok": False, "error_code": 404, "description": "Not Found: method not found"}
+        if self.mode == "media_404":
+            # خطای رسانه (نه متد): نباید مدارِ پیام بومی را خاموش کند
+            return 404, {"ok": False, "error_code": 404, "description": "Not Found: photo not found"}
         if self.mode == "bad_parse":
             return 400, {"ok": False, "error_code": 400, "description": "Bad Request: can't parse rich message"}
         if self.mode == "unsupported_content":
@@ -497,6 +500,22 @@ def test_circuit_breaker_disables_rich_after_repeated_rejections():
         srv.close()
 
 
+def test_a_media_404_does_not_open_the_capability_circuit():
+    """۴۰۴ِ مربوط به رسانه «نبودِ قابلیت» نیست ⇒ مدار نباید خاموش شود.
+
+    (وگرنه یک عکسِ بی‌دسترس در Production، پیامِ بومی را برای کلِ فرایند می‌کُشد.)"""
+    srv = FakeTelegram("media_404")
+    try:
+        bot = Bot(srv)
+        for _ in range(3):
+            asyncio.run(rich_send.send_content(bot, 55, POST_HTML))
+        assert rich_send.rich_available() is True, "خطای رسانه نباید مدارِ پیام بومی را خاموش کند"
+        assert len(srv.calls) == 3, "هر بار باید دوباره امتحان شود"
+        assert len(bot.sent) == 3, "هر بار باید به پیام کلاسیک تنزل کند"
+    finally:
+        srv.close()
+
+
 def test_mode_off_never_touches_the_rich_endpoint(telegram_ok):
     srv, bot = telegram_ok
     config.RICH_MESSAGES = "off"
@@ -583,7 +602,11 @@ def test_legacy_path_downgrades_when_telegram_rejects_the_html():
     assert "مهم‌ترین جملهٔ خبر" in bot.calls[1], "محتوا باید حتی در تنزل حفظ شود"
 
 
-def test_media_posts_keep_the_caption_path(telegram_ok):
+def test_media_posts_use_one_rich_message_with_the_media_block(telegram_ok):
+    """پستِ دارایِ عکس هم باید *یک* پیامِ بومی باشد: بلوکِ رسانه + متنِ ساختاریافته.
+
+    (پیش از این، پست‌های دارای رسانه همیشه کپشنِ کلاسیک می‌گرفتند ⇒ در Production
+    تقریباً هیچ پیامِ بومی‌ای دیده نمی‌شد، چون بیشترِ خبرها عکس دارند.)"""
     from newsbot import publish
     srv, bot = telegram_ok
     media = {"kind": "photo", "url": "https://example.test/p.jpg", "_file": None}
@@ -595,8 +618,42 @@ def test_media_posts_keep_the_caption_path(telegram_ok):
 
     mb = MediaBot(srv)
     asyncio.run(publish.send_post(mb, -100123, POST_HTML, media))
-    assert srv.methods_called() == [], "رسانهٔ همراه، کپشنِ کلاسیک می‌ماند"
-    assert len(mb.sent) == 1 and "<blockquote>" in mb.sent[0]["text"]
+    assert srv.methods_called() == ["sendRichMessage"], "پستِ دارایِ عکس باید پیامِ بومی باشد"
+    html = srv.calls[0]["body"]["rich_message"]["html"]
+    assert '<img src="https://example.test/p.jpg"/>' in html, "بلوکِ رسانه باید در همان پیام باشد"
+    assert "<h2>" in html, "متنِ ساختاریافته هم باید در همان پیام باشد"
+    assert mb.sent == [], "نباید دو پیام (رسانه + متن) فرستاده شود"
+
+
+def test_media_posts_fall_back_to_the_caption_when_the_server_rejects_the_rich_media(telegram_ok):
+    """اگر سرور پیامِ بومی با رسانه را رد کند ⇒ همان مسیرِ قدیمیِ «رسانه + کپشن»."""
+    from newsbot import publish
+    srv, bot = telegram_ok
+    media = {"kind": "photo", "url": "https://example.test/p.jpg", "_file": None}
+
+    class MediaBot(Bot):
+        async def send_photo(self, chat_id, url, caption=None, **kw):
+            self.sent.append({"chat_id": chat_id, "text": caption, "kw": kw})
+            return SimpleNamespace(message_id=77)
+
+    mb = MediaBot(srv)
+    asyncio.run(publish.send_post(mb, -100123, POST_HTML, media))
+    assert srv.methods_called() == ["sendRichMessage"], "پیامِ بومی باید اول امتحان شود"
+
+    # حالا سرور پیامِ بومی را رد می‌کند ⇒ باید به مسیرِ «رسانه + کپشن» برگردد
+    class RejectingBot(MediaBot):
+        async def send_rich_message(self, chat_id, html, **kw):
+            from telegram.error import BadRequest
+            raise BadRequest("Bad Request: can't parse entities")
+
+    srv2 = FakeTelegram("ok")
+    try:
+        mb2 = RejectingBot(srv2)
+        asyncio.run(publish.send_post(mb2, -100123, POST_HTML, media))
+        assert len(mb2.sent) == 1, "باید یک پیامِ رسانه با کپشن فرستاده شود"
+        assert "<blockquote>" in mb2.sent[0]["text"], "محتوای کپشن نباید از قلم بیفتد"
+    finally:
+        srv2.close()
 
 
 def test_notifications_go_through_the_shared_engine(telegram_ok):

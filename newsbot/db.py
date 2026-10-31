@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS discounts(code TEXT PRIMARY KEY, percent INTEGER, exp
 CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, chat_id INTEGER, title TEXT, username TEXT, verified_by INTEGER, created_at TEXT, settings TEXT, original_admin_id INTEGER);
 CREATE TABLE IF NOT EXISTS sources(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, channel_id INTEGER, url TEXT, feed_url TEXT, title TEXT DEFAULT '', active INTEGER DEFAULT 1, bot_active INTEGER DEFAULT 1, api_url TEXT, api_key TEXT, api_note TEXT DEFAULT '', etag TEXT, last_modified TEXT, last_fetch TEXT, fail_count INTEGER DEFAULT 0, found_total INTEGER DEFAULT 0, last_error TEXT, next_try_after TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS usage(admin_id INTEGER, day TEXT, posts INTEGER DEFAULT 0, tests INTEGER DEFAULT 0, ai INTEGER DEFAULT 0, PRIMARY KEY(admin_id, day));
-CREATE TABLE IF NOT EXISTS articles(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, channel_id INTEGER, hash TEXT, url TEXT, title TEXT, source_id INTEGER, published_at TEXT, created_at TEXT, status TEXT, reason TEXT, send_fails INTEGER DEFAULT 0, score REAL, category TEXT, post_html TEXT, full_html TEXT, media TEXT, links TEXT, model TEXT, UNIQUE(channel_id, hash));
+CREATE TABLE IF NOT EXISTS articles(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, channel_id INTEGER, hash TEXT, url TEXT, title TEXT, source_id INTEGER, published_at TEXT, created_at TEXT, status TEXT, reason TEXT, send_fails INTEGER DEFAULT 0, score REAL, category TEXT, post_html TEXT, full_html TEXT, media TEXT, links TEXT, model TEXT, ai_state TEXT DEFAULT '', ai_attempts INTEGER DEFAULT 0, ai_last_error TEXT DEFAULT '', ai_last_attempt TEXT DEFAULT '', ai_next_retry TEXT DEFAULT '', ai_provider TEXT DEFAULT '', UNIQUE(channel_id, hash));
 CREATE TABLE IF NOT EXISTS posted(channel_id INTEGER, hash TEXT, posted_at TEXT, PRIMARY KEY(channel_id, hash));
 CREATE TABLE IF NOT EXISTS ch_tokens(token TEXT PRIMARY KEY, channel_id INTEGER, issued_to INTEGER, issued_at TEXT, expires_at TEXT, used_at TEXT);
 CREATE TABLE IF NOT EXISTS ai_models(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, kind TEXT, base_url TEXT, api_key TEXT, model TEXT, priority INTEGER DEFAULT 10, active INTEGER DEFAULT 1, status TEXT DEFAULT 'ok', fail_count INTEGER DEFAULT 0, last_error TEXT, last_ok TEXT, last_fail TEXT, next_try_after TEXT DEFAULT '', ok_count INTEGER DEFAULT 0, temperature REAL DEFAULT 0.5, max_tokens INTEGER DEFAULT 2500, owner_id INTEGER);
@@ -139,6 +139,21 @@ MIGRATIONS = [("users", "next_plan_id", "INTEGER"), ("users", "next_plan_days", 
 # notify_attempts: چند بار اعلام ناموفق بود (سقفِ تلاش ⇒ دیگر کوشش نمی‌شود)
 MIGRATIONS += [("pay_requests", "super_notified_at", "TEXT"),
                ("pay_requests", "notify_attempts", "INTEGER DEFAULT 0")]
+
+# ── ماشینِ حالتِ مقاله در برابرِ خطای AI (v10) ───────────────────────────────────
+# پیش از این، شکستِ موقتِ AI (timeout/deadline/429/5xx/پاسخِ خالی) دقیقاً مثلِ «ردِ
+# قطعیِ محتوا» ثبت می‌شد و مقاله‌های قدیمی هم دوباره وارد صفِ AI می‌شدند. این
+# ستون‌ها وضعیتِ «موقت/قطعی» را از ستونِ ``status`` جدا می‌کنند؛ ستون‌های قدیمی
+# دست‌نخورده می‌مانند ⇒ مهاجرت backward-compatible است.
+#   ai_state:      '' (نامشخص) | retryable (موقت) | rejected (قطعیِ محتوا) | exhausted (سقفِ تلاش)
+#   ai_attempts:   شمارِ تلاش‌های ناموفقِ AI برای این مقاله
+#   ai_next_retry: زمانِ تلاشِ بعدی (backoffِ نمایی)
+MIGRATIONS += [("articles", "ai_state", "TEXT DEFAULT ''"),
+               ("articles", "ai_attempts", "INTEGER DEFAULT 0"),
+               ("articles", "ai_last_error", "TEXT DEFAULT ''"),
+               ("articles", "ai_last_attempt", "TEXT DEFAULT ''"),
+               ("articles", "ai_next_retry", "TEXT DEFAULT ''"),
+               ("articles", "ai_provider", "TEXT DEFAULT ''")]
 
 # ── خواندنِ اسکیما: باید روی SQLite *و* Cloudflare D1 درست کار کند ────────────────────
 # DB-27 (رخداد تولید ۲۰۲۶-۱۰-۲۱): تشخیصِ ستون‌های موجود روی D1 خالی برمی‌گشت و

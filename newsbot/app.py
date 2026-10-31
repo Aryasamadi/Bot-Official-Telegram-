@@ -42,6 +42,10 @@ def init_core():
     log.info("core v4 ready | backend=%s | CF KV: %s | super_admins=%d | AI×%s FETCH×%s CYCLE×%s",
              config.DB_BACKEND, "on" if config.CF_ENABLED else "local", len(config.SUPER_ADMIN_IDS),
              config.AI_CONCURRENCY, config.FETCH_CONCURRENCY, config.CYCLE_CONCURRENCY)
+    # وضعیتِ پیامِ بومی در لاگِ راه‌اندازی: از این پس معلوم است که آیا قابلیت روشن است
+    # (پیش‌تر هیچ نشانه‌ای نبود و معلوم نمی‌شد چرا پیام‌ها بومی نبودند).
+    log.info("rich messages: mode=%s enabled=%s", config.RICH_MESSAGES,
+             "on" if config.RICH_MESSAGES != "off" else "off")
 
 
 async def job_tick(context: ContextTypes.DEFAULT_TYPE):
@@ -164,6 +168,10 @@ def preflight(check=False):
                             ("AI_RETRY_BASE_SEC", config.AI_RETRY_BASE_SEC, 0.1, 60.0), ("AI_RETRY_MAX_DELAY_SEC", config.AI_RETRY_MAX_DELAY_SEC, 1.0, 300.0),
                             ("MODEL_TRANSIENT_BACKOFF_MIN", config.MODEL_TRANSIENT_BACKOFF_MIN, 1, 60),
                             ("MODEL_TRANSIENT_BACKOFF_MAX_MIN", config.MODEL_TRANSIENT_BACKOFF_MAX_MIN, 1, 120),
+                            ("AI_MAX_ARTICLE_ATTEMPTS", config.AI_MAX_ARTICLE_ATTEMPTS, 1, 10),
+                            ("AI_RETRY_BACKOFF_BASE_SEC", config.AI_RETRY_BACKOFF_BASE_SEC, 30, 86400),
+                            ("AI_RETRY_BACKOFF_MAX_SEC", config.AI_RETRY_BACKOFF_MAX_SEC, 60, 86400),
+                            ("AI_CYCLE_MARGIN_SEC", config.AI_CYCLE_MARGIN_SEC, 1, 60),
                             ("AI_DAILY_FREE", config.AI_DAILY_FREE, 1, 100000), ("AI_DAILY_PAID", config.AI_DAILY_PAID, 1, 1000000),
                             ("RETRY_AFTER_MAX", config.RETRY_AFTER_MAX, 5, 600), ("ABUSE_RATE_SEC", config.ABUSE_RATE_SEC, 0.0, 60.0),
                             ("RECOVER_EVERY_MIN", config.RECOVER_EVERY_MIN, 1, 1440), ("STALE_UPDATE_MAX_MIN", config.STALE_UPDATE_MAX_MIN, 5, 1440),
@@ -180,7 +188,9 @@ def preflight(check=False):
     for w in warn: log.warning("پیکربندی: %s", w)
     if bad:
         raise SystemExit("⛔ راه‌اندازی متوقف شد — ایرادهای پیکربندی:\n" + "\n".join(f"  • {b}" for b in bad))
-    log.info("پیکربندی سالم | backend=%s | دیتابیس=%s | منطقه=UTC+%s | ادمین کلان=%d", config.DB_BACKEND, config.DB_FILE, config.DEFAULT_UTC_OFFSET, len(config.SUPER_ADMIN_IDS))
+    log.info("پیکربندی سالم | backend=%s | دیتابیس=%s | منطقه=UTC+%s | ادمین کلان=%d | پیام بومی=%s",
+             config.DB_BACKEND, config.DB_FILE, config.DEFAULT_UTC_OFFSET, len(config.SUPER_ADMIN_IDS),
+             config.RICH_MESSAGES)
 
 
 def _acquire_single_instance_lock():

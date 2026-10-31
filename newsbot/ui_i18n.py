@@ -257,6 +257,15 @@ TXT = {
     "rj_extract": ("استخراج متن ممکن نبود", "no extractable text"), "rj_ad": ("فیلتر تبلیغ", "ad filter"),     "rj_ai_ad": ("تبلیغ (تشخیص هوش مصنوعی)", "ad (AI)"), "rj_score": ("امتیاز کمتر از حد مجاز", "below minimum score"),
     "rj_ai": ("سرویس هوش مصنوعی پاسخ نداد", "AI service did not respond"), "rj_send": ("ارسال به کانال ناموفق بود", "sending to channel failed"), "rj_dup": ("تکراری", "duplicate"),
     "rj_admin": ("ربات در کانال ادمین نیست", "bot is not channel admin"), "rj_old": ("خارج از بازهٔ زمانی", "older than window"), "rj_undated": ("بدون تاریخ", "undated"), "rj_other": ("نامشخص", "unspecified"),
+    "rj_stale": ("خارج از بازهٔ زمانی (دیگر پردازش نمی‌شود)", "outside the time window (no longer processed)"),
+    "rj_deadline": ("سقفِ زمانیِ چرخه تمام شد (موقت)", "the cycle deadline was reached (temporary)"),
+    "rj_exhausted": ("سقفِ تلاشِ مجدد پر شد", "the retry budget was exhausted"),
+    # ---- وضعیتِ خطای AI (موقت در برابرِ ردِ قطعی)
+    "ai_state_retry": ("🔁 موقت — با backoff دوباره تلاش می‌شود", "🔁 temporary — retried with backoff"),
+    "ai_state_exhausted": ("⏳ سقفِ تلاش پر شد — دیگر تکرار نمی‌شود", "⏳ retry budget exhausted — no longer retried"),
+    "ai_state_stale": ("📅 خارج از بازهٔ زمانی — دیگر پردازش نمی‌شود", "📅 outside the time window — no longer processed"),
+    "ai_state_rejected": ("⛔ ردِ قطعیِ محتوا — دوباره پردازش نمی‌شود", "⛔ permanently rejected — never processed again"),
+    "ai_state_line": ("🤖 {state} · تلاش {n} · تلاشِ بعدی: {t}", "🤖 {state} · attempt {n} · next retry: {t}"),
     # ---- تست
     "await_expired": ("⌛ مهلت این مرحله تمام شد؛ لطفاً دوباره از منو شروع کنید.", "⌛ This form session expired; please start again from the menu."),
     "preparing": ("⏳ در حال آماده‌سازی…", "Preparing…"), "test_wait": ("⏳ تست بعدی تا {n} ثانیهٔ دیگر امکان‌پذیر است", "⏳ Next test in {n}s"), "test_busy": ("⏳ در حال حاضر پردازش دیگری روی این کانال در جریان است", "⏳ A cycle is already running on this channel"),
@@ -345,7 +354,7 @@ def reason_text(reason, lang):
     r = (reason or "").strip().lower()
     if not r: return ""
     if r.startswith("ai:"): return ai_err_text(r.split(":", 1)[1].strip(), lang)
-    for pre, key in (("extract", "rj_extract"), ("ad_filter", "rj_ad"), ("ai_ad", "rj_ai_ad"), ("score", "rj_score"), ("send", "rj_send"), ("duplicate", "rj_dup"), ("bot_not_admin", "rj_admin"), ("old", "rj_old"), ("undated", "rj_undated")):
+    for pre, key in (("extract", "rj_extract"), ("ad_filter", "rj_ad"), ("ai_ad", "rj_ai_ad"), ("score", "rj_score"), ("send", "rj_send"), ("duplicate", "rj_dup"), ("bot_not_admin", "rj_admin"), ("old", "rj_old"), ("undated", "rj_undated"), ("stale", "rj_stale"), ("deadline", "rj_deadline"), ("exhausted", "rj_exhausted")):
         if r.startswith(pre): return tr(lang, key)
     if r.startswith("ai_"): return ai_err_text(r, lang)
     return tr(lang, "rj_other")

@@ -24,12 +24,23 @@ from types import SimpleNamespace
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 
 from newsbot import config
-from newsbot.logutils import log
+from newsbot.logutils import log, bump, redact
 from newsbot.net_http import http
 from newsbot import rich_format
 from newsbot import text_format
 
-_state = {"ok": 0, "fail": 0, "disabled": False}
+_state = {"ok": 0, "fail": 0, "disabled": False, "fallback": {}, "last_error": ""}
+
+# دلیل‌های ثابتِ تنزل به قالب کلاسیک. هر دلیل یک شمارنده و یک لاگِ قابل‌جست‌وجو دارد
+# ⇒ در لاگِ Production می‌شود دید *چرا* پیام بومی فرستاده نشد (قبلاً بی‌صدا بود).
+FALLBACK_MODE_OFF = "mode_off"        # RICH_MESSAGES=off (انتخابِ صریحِ اپراتور)
+FALLBACK_CIRCUIT = "circuit_open"     # مدار خاموش شد (سرور متد را ندارد)
+FALLBACK_NO_API = "no_bot_api"        # بطری اجازهٔ فراخوانیِ مستقیمِ Bot API را نداد
+FALLBACK_NO_BLOCKS = "no_blocks"       # محتوا بلوکِ بومی نداشت (متنِ ساده)
+FALLBACK_UNFAITHFUL = "unfaithful"    # تجزیه وفادار نبود ⇒ حفظِ متنِ اصلی
+FALLBACK_TOO_LONG = "too_long"        # باید به چند پیام شکسته می‌شد
+FALLBACK_REJECTED = "rejected"        # سرور پیامِ بومی را رد کرد (۴xx)
+FALLBACK_NOT_SUPPORTED = "not_supported"   # سرور اصلاً متدِ sendRichMessage را ندارد (۴۰۴)
 
 # نشانه‌هایی که یعنی «این سرور اصلاً پیامِ بومی را نمی‌شناسد» (نه «این پیام مشکل دارد»)
 _UNSUPPORTED_MARKERS = ("method not found", "unknown method", "method_not_found",
@@ -42,6 +53,7 @@ _CAPABILITY_HINTS = ("method", "endpoint", "sendrichmessage")
 def rich_status():
     """وضعیتِ مدار پیام بومی (برای پایش و تست)."""
     st = dict(_state)
+    st["fallback"] = dict(_state.get("fallback") or {})
     st["mode"] = config.RICH_MESSAGES
     st["enabled"] = rich_available()
     return st
@@ -49,7 +61,25 @@ def rich_status():
 
 def reset_rich_state():
     """بازنشانیِ مدار (تست‌ها)."""
-    _state.update(ok=0, fail=0, disabled=False)
+    _state.update(ok=0, fail=0, disabled=False, fallback={}, last_error="")
+
+
+def note_fallback(reason, detail=""):
+    """ثبتِ دلیلِ تنزل به قالب کلاسیک.
+
+    قبلاً این مسیر کاملاً بی‌صدا بود (یا فقط یک لاگِ INFO بدونِ ساختار) ⇒ از روی لاگِ
+    Production معلوم نبود که پیام بومی اصلاً امتحان شده یا نه. حالا هر تنزل یک شمارنده
+    و یک لاگِ قابل‌جست‌وجو (``rich_fallback reason=…``) دارد."""
+    fb = _state.setdefault("fallback", {})
+    fb[reason] = int(fb.get(reason) or 0) + 1
+    if detail:
+        _state["last_error"] = redact(str(detail))[:200]
+    try:
+        bump("rich_fallback", sub=reason)
+    except Exception:
+        pass
+    log.warning("rich_fallback reason=%s%s", reason, (" detail=%s" % str(detail)[:140]) if detail else "")
+    return reason
 
 
 def rich_available():
@@ -82,11 +112,15 @@ def _is_unsupported(err):
 
     ۴۰۴ ⇒ متد وجود ندارد ⇒ قطعاً ناتوانیِ سرور. ولی خطای ۴۰۰ با واژهٔ «unsupported»
     دربارهٔ *محتوا* (مثلاً «unsupported element») ناتوانیِ سرور نیست ⇒ مدار نباید
-    خاموش شود (وگرنه یک پیامِ بد، پیامِ بومی را برای کلِ فرایند می‌کُشد)."""
-    if getattr(err, "status_code", None) == 404:
-        return True
+    خاموش شود (وگرنه یک پیامِ بد، پیامِ بومی را برای کلِ فرایند می‌کُشد).
+
+    ۴۰۴ فقط وقتی «نبودِ متد» است که متنِ خطا هم به متد/endpoint اشاره کند؛ ۴۰۴ِ
+    مربوط به *رسانه* (مثلاً «عکس پیدا نشد») نباید مدارِ پیام بومی را خاموش کند."""
     text = ("%s %s" % (type(err).__name__, err)).lower()
-    if not any(h in text for h in _CAPABILITY_HINTS):
+    has_hint = any(h in text for h in _CAPABILITY_HINTS)
+    if getattr(err, "status_code", None) == 404:
+        return has_hint
+    if not has_hint:
         return False
     return any(m in text for m in _UNSUPPORTED_MARKERS)
 
@@ -228,51 +262,98 @@ async def send_legacy(bot, chat_id, text, *, reply_to_message_id=None, reply_mar
 
 async def send_content(bot, chat_id, text, *, kind=None, doc=None, reply_to_message_id=None,
                        reply_markup=None, disable_web_page_preview=True, protect_content=False,
-                       disable_notification=False, split_legacy=True):
+                       disable_notification=False, split_legacy=True, media_html="",
+                       fallback_legacy=True):
     """ارسالِ محتوا با موتور مشترک.
 
     ابتدا پیام بومی تلگرام (تیتر/جدول/فهرست واقعی) امتحان می‌شود؛ اگر سرور یا
     کلاینت پشتیبانی نکند، همان متنِ اصلی با مسیر کلاسیک فرستاده می‌شود.
+
+    ``media_html``: بلوکِ رسانه (مثلاً ``<img src="https://…"/>``) که **قبل از**
+    متنِ پیامِ بومی می‌نشیند ⇒ عکس و متنِ ساختاریافته در *یک* پیام.
+
+    ``fallback_legacy=False``: وقتی سرور پیامِ بومی را رد کند، به‌جای فرستادنِ
+    متنِ کلاسیک، ``None`` برمی‌گردد تا فراخوان (مثلاً مسیرِ «رسانه + کپشن»)
+    تصمیمِ خودش را بگیرد.
+
+    هر مسیری که به قالب کلاسیک می‌رود **دلیلش ثبت و لاگ می‌شود** (``rich_fallback
+    reason=…``) تا در Production معلوم باشد پیام بومی امتحان شده یا نه.
     """
     raw = "" if text is None else str(text)
     document = doc if doc is not None else rich_format.parse_content(raw, kind=kind)
-    if rich_available() and document.blocks and document.faithful and can_raw_send(bot):
-        rich_html = rich_format.render_rich(document)
-        parts = rich_format.split_doc(document, config.RICH_MAX_CHARS, rich_format.render_rich)
-        if len(parts) == 1 and len(rich_html) <= rich_format.RICH_CHAR_LIMIT:
-            # جهتِ نوشتن از روی متنِ اصلی سنجیده می‌شود (نه از روی تگ‌های HTML)
-            is_rtl = rich_format.detect_rtl(raw) if raw else rich_format.detect_rtl(rich_html)
-            try:
-                sender = getattr(bot, "send_rich_message", None)
-                if sender is not None:
-                    msg = await sender(chat_id, rich_html, reply_to_message_id=reply_to_message_id,
-                                       reply_markup=reply_markup, protect_content=protect_content,
-                                       disable_notification=disable_notification)
-                else:
-                    msg = await send_rich_raw(bot, chat_id, rich_html,
-                                              reply_to_message_id=reply_to_message_id,
-                                              reply_markup=reply_markup,
-                                              protect_content=protect_content,
-                                              disable_notification=disable_notification,
-                                              is_rtl=is_rtl)
-                _note_success()
-                # لاگِ موفقیت: تا وقتی این نبود، از روی لاگ معلوم نبود که پیام بومی
-                # واقعاً فرستاده شده یا به مسیر کلاسیک افتاده است.
-                log.info("rich message sent natively: chat=%s blocks=%s chars=%s",
-                         chat_id, len(document.blocks), len(rich_html))
-                return msg
-            except BadRequest as e:
-                # ۴xx یعنی «چیزی ارسال نشد» ⇒ fallback بی‌خطر است.
-                _note_failure(e, unsupported=_is_unsupported(e))
-                log.info("rich message rejected; falling back to classic send: %s", e)
-            except (RetryAfter, Forbidden, NetworkError):
-                raise
-            except Exception as e:
-                # خطای ناشناخته ⇒ ممکن است پیام رفته باشد؛ fallback نکن تا پست تکراری نشود.
-                _note_failure(e, unsupported=_is_unsupported(e))
-                raise
-        elif len(parts) > 1:
-            log.info("rich message skipped: content needs %d parts", len(parts))
+    media_html = str(media_html or "").strip()
+    if config.RICH_MESSAGES == "off":
+        note_fallback(FALLBACK_MODE_OFF, "RICH_MESSAGES=off")
+        return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
+                                     split_legacy, disable_web_page_preview, fallback_legacy)
+    if _state["disabled"]:
+        note_fallback(FALLBACK_CIRCUIT, _state.get("last_error") or "rich circuit open")
+        return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
+                                     split_legacy, disable_web_page_preview, fallback_legacy)
+    if not document.blocks:
+        note_fallback(FALLBACK_NO_BLOCKS, "no native blocks in the content")
+        return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
+                                     split_legacy, disable_web_page_preview, fallback_legacy)
+    if not document.faithful:
+        note_fallback(FALLBACK_UNFAITHFUL, "the parsed document lost content")
+        return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
+                                     split_legacy, disable_web_page_preview, fallback_legacy)
+    if not can_raw_send(bot):
+        note_fallback(FALLBACK_NO_API, "the bot cannot call the Bot API directly")
+        return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
+                                     split_legacy, disable_web_page_preview, fallback_legacy)
+    rich_html = rich_format.render_rich(document)
+    parts = rich_format.split_doc(document, config.RICH_MAX_CHARS, rich_format.render_rich)
+    if len(parts) > 1 or len(rich_html) + len(media_html) > rich_format.RICH_CHAR_LIMIT:
+        # محتوا باید به چند پیام شکسته می‌شد ⇒ پیامِ بومیِ تک‌پیام ممکن نیست
+        note_fallback(FALLBACK_TOO_LONG, "content needs %d part(s)" % len(parts))
+        return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
+                                     split_legacy, disable_web_page_preview, fallback_legacy)
+    payload_html = ("%s\n%s" % (media_html, rich_html)) if media_html else rich_html
+    # جهتِ نوشتن از روی متنِ اصلی سنجیده می‌شود (نه از روی تگ‌های HTML)
+    is_rtl = rich_format.detect_rtl(raw) if raw else rich_format.detect_rtl(rich_html)
+    try:
+        sender = getattr(bot, "send_rich_message", None)
+        if sender is not None:
+            msg = await sender(chat_id, payload_html, reply_to_message_id=reply_to_message_id,
+                               reply_markup=reply_markup, protect_content=protect_content,
+                               disable_notification=disable_notification)
+        else:
+            msg = await send_rich_raw(bot, chat_id, payload_html,
+                                      reply_to_message_id=reply_to_message_id,
+                                      reply_markup=reply_markup,
+                                      protect_content=protect_content,
+                                      disable_notification=disable_notification,
+                                      is_rtl=is_rtl)
+        _note_success()
+        _state["last_error"] = ""
+        # لاگِ موفقیت: تا وقتی این نبود، از روی لاگ معلوم نبود که پیام بومی
+        # واقعاً فرستاده شده یا به مسیر کلاسیک افتاده است.
+        log.info("rich message sent natively: chat=%s blocks=%s chars=%s rtl=%s media=%s",
+                 chat_id, len(document.blocks), len(payload_html), bool(is_rtl),
+                 "yes" if media_html else "no")
+        return msg
+    except BadRequest as e:
+        # ۴xx یعنی «چیزی ارسال نشد» ⇒ fallback بی‌خطر است.
+        unsupported = _is_unsupported(e)
+        _note_failure(e, unsupported=unsupported)
+        note_fallback(FALLBACK_NOT_SUPPORTED if unsupported else FALLBACK_REJECTED, str(e))
+        return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
+                                     split_legacy, disable_web_page_preview, fallback_legacy)
+    except (RetryAfter, Forbidden, NetworkError):
+        raise
+    except Exception as e:
+        # خطای ناشناخته ⇒ ممکن است پیام رفته باشد؛ fallback نکن تا پست تکراری نشود.
+        _note_failure(e, unsupported=_is_unsupported(e))
+        _state["last_error"] = redact(str(e))[:200]
+        raise
+
+
+async def _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
+                          split_legacy, disable_web_page_preview, fallback_legacy):
+    """مسیر کلاسیک؛ اگر فراخوان اجازه نداده، فقط ``None`` برمی‌گردد."""
+    if not fallback_legacy:
+        return None
     return await send_legacy(bot, chat_id, raw, reply_to_message_id=reply_to_message_id,
                              reply_markup=reply_markup, split=split_legacy,
                              disable_web_page_preview=disable_web_page_preview)

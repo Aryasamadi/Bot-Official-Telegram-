@@ -157,6 +157,16 @@ AI_PROBE_TIMEOUT_SEC = _env_int("AI_PROBE_TIMEOUT_SEC", 15, 5, 120)
 # خاموشیِ کوتاهِ مدل بعد از خطای گذرا (پیش‌تر ۲۰ دقیقه ⇒ کلِ تولیدِ محتوا متوقف می‌شد)
 MODEL_TRANSIENT_BACKOFF_MIN = _env_int("MODEL_TRANSIENT_BACKOFF_MIN", 2, 1, 60)
 MODEL_TRANSIENT_BACKOFF_MAX_MIN = _env_int("MODEL_TRANSIENT_BACKOFF_MAX_MIN", 15, 1, 120)
+# ── ماشینِ حالتِ مقاله در برابرِ خطای AI ────────────────────────────────────────
+# شکستِ موقتِ AI (timeout/deadline/429/5xx/پاسخِ خالی یا ناقص) **ردِ قطعیِ محتوا
+# نیست**: مقاله باید با شمارنده و backoff دوباره تلاش شود. سقفِ تلاش جلوی چرخهٔ
+# بی‌نهایت را می‌گیرد؛ بعد از آن مقاله «متوقف‌شده» می‌ماند (نه ردِ محتوا).
+AI_MAX_ARTICLE_ATTEMPTS = _env_int("AI_MAX_ARTICLE_ATTEMPTS", 3, 1, 10)
+AI_RETRY_BACKOFF_BASE_SEC = _env_int("AI_RETRY_BACKOFF_BASE_SEC", 300, 30, 86400)
+AI_RETRY_BACKOFF_MAX_SEC = _env_int("AI_RETRY_BACKOFF_MAX_SEC", 3600, 60, 86400)
+# حاشیه‌ای که از سقفِ زمانیِ چرخه کنار گذاشته می‌شود تا فراخوانیِ پروایدر، چرخه را
+# از درون نکشد (پیش‌تر ۴۵ ثانیه × ۲ تلاش > سقفِ ۸۰ ثانیهٔ چرخه ⇒ «deadline»).
+AI_CYCLE_MARGIN_SEC = _env_int("AI_CYCLE_MARGIN_SEC", 8, 1, 60)
 
 # ── Cloudflare KV (آینه‌ی اختیاری «بیشتر») ──
 CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID", "")

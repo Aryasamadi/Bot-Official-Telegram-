@@ -124,6 +124,14 @@ async def view_health(update, context):
     s = await asyncio.to_thread(health_snapshot)
     rss = await asyncio.to_thread(rss_mb)
     code_ver = await asyncio.to_thread(_code_version)
+    from newsbot import rich_send
+    rs = rich_send.rich_status()
+    fb = rs.get("fallback") or {}
+    fb_txt = ("، ".join("%s×%d" % (k, v) for k, v in sorted(fb.items())) if fb else "—")
+    rich_line = (f"🧱 پیام بومی: {rs.get('mode')} · فعال: {'✅' if rs.get('enabled') else '❌'} · "
+                 f"ارسال بومی: {rs.get('ok', 0)} · تنزل: {fb_txt}") if fa else (
+                 f"🧱 Rich messages: {rs.get('mode')} · enabled: {'✅' if rs.get('enabled') else '❌'} · "
+                 f"native: {rs.get('ok', 0)} · fallback: {fb_txt}")
     status = s["status"]
     status_txt = {"ok": "OK — سالم" if fa else "OK", "degraded": "DEGRADED — نیازمند بررسی" if fa else "DEGRADED",
                   "unknown": "UNKNOWN — داده کافی نیست" if fa else "UNKNOWN"}[status]
@@ -149,6 +157,7 @@ async def view_health(update, context):
         f"\n📨 رسیدهای اعلام‌نشده به مدیر: {s['super_unnotified'] if s['super_unnotified'] is not None else 'نامعلوم'}"
         f"\n🔔 اعلان‌های نرسیده: {s['alerts_pending'] if s['alerts_pending'] is not None else 'نامعلوم'} (مرده: {s['alerts_dead'] if s['alerts_dead'] is not None else 'نامعلوم'})"
         f"\n\n🤖 وضعیت مدل‌های هوش مصنوعی: {s['models_ok']}/{s['models_total']} سالم"
+        f"\n{rich_line}"
         f"\n\n💾 حجم دیتابیس: {size_txt}"
         f"\n🧠 مصرف حافظهٔ فرایند: {rss:.0f} MB"
         f"\n🧩 صحت یکپارچگی دیتابیس: {integ}"
@@ -168,6 +177,7 @@ async def view_health(update, context):
         f"\n📨 Receipts not seen by an admin: {s['super_unnotified'] if s['super_unnotified'] is not None else 'unknown'}"
         f"\n🔔 Undelivered alerts: {s['alerts_pending'] if s['alerts_pending'] is not None else 'unknown'} (dead: {s['alerts_dead'] if s['alerts_dead'] is not None else 'unknown'})"
         f"\n\n🤖 AI models healthy: {s['models_ok']}/{s['models_total']}"
+        f"\n{rich_line}"
         f"\n\n💾 Database size: {size_txt}"
         f"\n🧠 Process memory: {rss:.0f} MB"
         f"\n🧩 Database integrity: {integ}"

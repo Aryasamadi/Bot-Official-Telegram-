@@ -283,6 +283,26 @@ async def view_tz(update, context, cid):
 # ══════════════════════════════════════════════════════════════════════════
 # صف انتشار و مقاله‌ها
 # ══════════════════════════════════════════════════════════════════════════
+def _ai_state_mark(r, lang):
+    """برچسبِ وضعیتِ خطای AI برای مدیر (موقت / متوقف‌شده / ردِ قطعی / خارج از بازه)."""
+    st = ((r["ai_state"] or "") if "ai_state" in r.keys() else "") or ""
+    if st == "retryable": return tr(lang, "ai_state_retry")
+    if st == "exhausted": return tr(lang, "ai_state_exhausted")
+    if st == "stale": return tr(lang, "ai_state_stale")
+    if st == "rejected": return tr(lang, "ai_state_rejected")
+    return ""
+
+
+def _ai_state_line(a, lang):
+    """خطِ جزئیاتِ وضعیتِ AI (شمارِ تلاش و زمانِ تلاشِ بعدی)."""
+    st = ((a["ai_state"] or "") if "ai_state" in a.keys() else "") or ""
+    if not st: return ""
+    n = (a["ai_attempts"] if "ai_attempts" in a.keys() else 0) or 0
+    nxt = (a["ai_next_retry"] if "ai_next_retry" in a.keys() else "") or ""
+    nxt = nxt[:16].replace("T", " ") if nxt else ("—")
+    return "\n" + tr(lang, "ai_state_line", state=esc(_ai_state_mark(a, lang)), n=n, t=esc(nxt))
+
+
 async def view_queue(update, context, cid, status="ready", sort=""):
     uid = update.effective_user.id; lang = L(update); ch = channel_owned(cid, uid)
     if not ch: return await view_admin_home(update, context)
@@ -293,7 +313,7 @@ async def view_queue(update, context, cid, status="ready", sort=""):
         text = tr(lang, "queue_title", title=esc(ch["title"]), n=len(arts))
         if not arts: text += "\n\n" + tr(lang, "queue_none")
     else:
-        text = tr(lang, "rej_title", title=esc(ch["title"])) + ("\n\n" + tr(lang, "rej_none") if not arts else "\n" + "".join(f"\n• {esc((r['title'] or hostname(r['url']))[:40])} — <i>{esc(reason_text(r['reason'], lang))}</i>" for r in arts))
+        text = tr(lang, "rej_title", title=esc(ch["title"])) + ("\n\n" + tr(lang, "rej_none") if not arts else "\n" + "".join(f"\n• {esc((r['title'] or hostname(r['url']))[:40])} — <i>{esc(reason_text(r['reason'], lang))}</i>{(' — ' + esc(_ai_state_mark(r, lang))) if _ai_state_mark(r, lang) else ''}" for r in arts))
     kb = [[B(f"{'⭐' + str(a['score']) if a['score'] else '•'} {(a['title'] or hostname(a['url']))[:35]}", f"a:art:{a['id']}")] for a in arts]
     if status == "ready" and arts: kb.append([B(tr(lang, "pub_first"), f"a:pub:{arts[0]['id']}")])
     if status == "ready":
@@ -306,7 +326,7 @@ async def view_article(update, context, aid):
     if not a or (a["admin_id"] != uid and not is_super(uid)): await popup(update, context, tr(lang, "notfound")); return await view_admin_home(update, context)
     cid = a["channel_id"]; body, _ = fit_html(a["post_html"] or tr(lang, "art_nobody"), 2600); i = 1 if lang == "en" else 0
     rt = reason_text(a["reason"], lang)
-    text = tr(lang, "art_title", title=esc((a["title"] or "")[:80]), score=a["score"] or "—", cat=esc(a["category"] or "—"), st=STATUS.get(a["status"], (a["status"], a["status"]))[i], reason=f" · {esc(rt)}" if rt else "", host=esc(hostname(a["url"])), body=body)
+    text = tr(lang, "art_title", title=esc((a["title"] or "")[:80]), score=a["score"] or "—", cat=esc(a["category"] or "—"), st=STATUS.get(a["status"], (a["status"], a["status"]))[i], reason=f" · {esc(rt)}" if rt else "", host=esc(hostname(a["url"])), body=body) + _ai_state_line(a, lang)
     kb = []
     if a["status"] == "ready":
         kb.append([B(tr(lang, "art_pub"), f"a:pub:{aid}"), B(tr(lang, "art_edit"), f"a:arte:{aid}")]); row = [B(tr(lang, "delete"), f"a:artd:{aid}")]

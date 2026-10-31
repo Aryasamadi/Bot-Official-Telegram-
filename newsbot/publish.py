@@ -24,6 +24,7 @@ from newsbot.core_articles import (get_article, article_update, get_pub_journal,
                                    release_publication, settle_publication, posted_before, PublicationTransport)
 from newsbot.text_format import clean_ai_text, strip_source_url, split_post_html, hard_html, downgrade_html, strip_tags
 from newsbot import rich_send
+from newsbot import rich_format
 from newsbot.generate import signature_of
 from newsbot.opctx import operation_checkpoint, _current_operation
 from newsbot.ui_widgets import esc
@@ -186,21 +187,37 @@ async def _send_post_locked(bot, chat_id, text, media=None):
     """رسانه + کپشنِ یک‌تکه (کپشن همیشه زیر محدودیت ۱۰۲۴ تلگرام می‌ماند) · خطای پارس → تنزل تدریجی فرمت (معمولی → ساده).
     هیچ‌وقت پست را به دو پیام نمی‌شکند: ادامهٔ محتوا فقط از راه «بیشتر» داخل ربات دیده می‌شود.
     مسیرِ متنی اول با پیامِ بومیِ تلگرام (تیتر/جدول/فهرست واقعی) امتحان می‌شود و در صورت
-    عدم پشتیبانیِ سرور، خودکار به پیامِ کلاسیک تنزل می‌کند — محتوا هیچ‌وقت حذف نمی‌شود."""
+    عدم پشتیبانیِ سرور، خودکار به پیامِ کلاسیک تنزل می‌کند — محتوا هیچ‌وقت حذف نمی‌شود.
+
+    مسیرِ رسانه هم پیامِ بومی را امتحان می‌کند: عکس و متنِ ساختاریافته در *یک* پیام
+    (بلوکِ رسانه در HTMLِ پیامِ بومی). اگر سرور آن را رد کند، همان مسیرِ همیشگیِ
+    «رسانه + کپشن» اجرا می‌شود ⇒ پست هرگز دو تکه یا بی‌رسانه نمی‌شود."""
     variants = [(text, "HTML"), (downgrade_html(text), "HTML"), (strip_tags(text), None)]
     sent_media = SimpleNamespace(message_id=media["_sent_id"]) if media and media.get("_sent_id") else None
     for i, (t, pm) in enumerate(variants):
         cap = None
+        reply = {"reply_to_message_id": sent_media.message_id} if sent_media else {}
+        # بلوکِ رسانه برای پیامِ بومی (فقط اولین تلاش و فقط وقتی رسانه هنوز نرفته)
+        mhtml = ""
+        if i == 0 and pm == "HTML" and media and not sent_media and config.RICH_MESSAGES != "off":
+            mhtml = rich_format.media_block(media.get("url"), media.get("kind") or "photo")
+            if mhtml and len(t) > rich_format.RICH_CHAR_LIMIT:
+                mhtml = ""
         try:
             if media:
-                # کپشن هرگز از محدودیت تلگرام نمی‌گذرد؛ اگر گذشت همان‌جا بریده می‌شود نه با پیام دوم (تک‌پیام می‌ماند)
+                # ── پیامِ بومی با رسانه: یک پیام، عکس + تیتر/جدول/فهرستِ واقعی ──
+                if mhtml:
+                    msg = await rich_send.send_content(bot, chat_id, t, disable_web_page_preview=True,
+                                                        split_legacy=False, media_html=mhtml,
+                                                        fallback_legacy=False, **reply)
+                    if msg: return msg
+                    # سرور پیامِ بومی با رسانه را رد کرد ⇒ مسیرِ کلاسیکِ زیر (رسانه + کپشن)
                 cap_ok = len(t) <= config.CAPTION_LIMIT
-                cap = t if cap_ok else hard_html(t, max(200, config.CAPTION_LIMIT - 60))   # سقف سخت: هرگز از محدودیت کپشن رد نمی‌شود
+                cap = t if cap_ok else hard_html(t, max(200, config.CAPTION_LIMIT - 60))
                 if isinstance(bot, PublicationTransport): bot.caption_complete = True
                 m = sent_media or await _send_media(bot, chat_id, cap, pm, media)
                 if m: return m
-            if len(t) > config.MSG_LIMIT: t = hard_html(t, config.MSG_LIMIT - 100)   # وگرنه پست بالای ۴۰۹۶ با «too long» هرگز منتشر نمی‌شد
-            reply = {"reply_to_message_id": sent_media.message_id} if sent_media else {}
+            if len(t) > config.MSG_LIMIT: t = hard_html(t, config.MSG_LIMIT - 100)
             if i == 0 and pm == "HTML" and not media:
                 return await rich_send.send_content(bot, chat_id, t, disable_web_page_preview=True,
                                                     split_legacy=False, **reply)
@@ -211,6 +228,11 @@ async def _send_post_locked(bot, chat_id, text, media=None):
             if wait > config.RETRY_AFTER_MAX: raise   # بیشتر از سقف ما: تسلیم به مسیر انتشار (delivery_unknown) بهتر از اصرار است
             await asyncio.sleep(wait)
             # PUB-03: همان مسیر دوباره — رسانه با تلاش مجدد همان رسانه حفظ می‌شود، نه اینکه به «متن تنها» تنزل یابد
+            if mhtml:
+                msg = await rich_send.send_content(bot, chat_id, t, disable_web_page_preview=True,
+                                                    split_legacy=False, media_html=mhtml,
+                                                    fallback_legacy=False, **reply)
+                if msg: return msg
             if media and not sent_media and cap is not None:
                 m = await _send_media(bot, chat_id, cap, pm, media)
                 if m: return m

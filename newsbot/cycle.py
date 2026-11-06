@@ -11,6 +11,7 @@ import asyncio, json, secrets, time
 from contextvars import ContextVar
 from datetime import timedelta
 from newsbot import config
+from newsbot import runtime
 from newsbot.db import q, gset, arun
 from newsbot.logutils import log, log_ctx, log_event, bump, _metrics
 from newsbot.timeutils import now_utc, now_iso, parse_dt, url_hash
@@ -156,6 +157,14 @@ async def run_channel_cycle(bot, uid, cid, test_mode=False, progress=None):
     # PH-07/PIPE-016: take the global slot first; never hold a channel lock while
     # waiting for the cycle semaphore (that made idle channels look busy).
     # P0-A: سقفِ زمانیِ واقعی برای *کل* چرخه (کشف → استخراج → خلاصه‌سازی → AI → انتشار).
+    # DEVOPS-08: در حالتِ تخلیه هیچ چرخهٔ تازه‌ای شروع نمی‌شود (چرخهٔ در حالِ اجرا
+    # تا پایان ادامه می‌یابد تا انتشارِ در حالِ پرواز به delivery_unknown نیفتد).
+    if runtime.is_draining():
+        D = Diag(); D.add("draining")
+        _res_d = _res(D)
+        _res_d["msg"] = D.render((await arun(get_settings, cid))["ui_lang"], False)
+        log.info("graceful drain active — channel cycle not started channel=%s", cid)
+        return _res_d
     deadline = config.CYCLE_TEST_DEADLINE_SEC if test_mode else config.CYCLE_AUTO_DEADLINE_SEC
     async with CYCLE_SEM:
         lk = ch_lock(cid)
@@ -315,7 +324,7 @@ async def _cycle(bot, uid, cid, test_mode, progress):
         chunk = candidates[i:i + 3]; i += len(chunk); D.stage = "extract"
         await p(40 + int(50 * i / len(candidates)), P["extract"].format(i=i, n=len(candidates), t=(chunk[0]["title"] or chunk[0]["url"])[:40]))
         arts = await asyncio.gather(*[extract_article(c["url"], c["html"], tz=ch_tz) for c in chunk], return_exceptions=True)
-        for c, art in zip(chunk, arts):
+        for c, art in zip(chunk, arts, strict=True):
             if res["accepted"] >= target: stop = True; break
             aid = c["aid"]; res["processed"] += 1
             # از همین لحظه این مقاله «در جریان» است: اگر سقفِ زمانیِ چرخه تمام شود،
@@ -446,6 +455,10 @@ async def flush_ready(bot, uid, cid, max_n=2):
             ok, out = await _publish_article_locked(bot, a["id"])
             if ok: sent += 1; rem = None if rem is None else rem - 1
             elif out in ("duplicate", "delivery_unknown"): continue
+            elif out == "draining":
+                # DEVOPS-08: در حالتِ تخلیه هیچ انتشارِ تازه‌ای آغاز نمی‌شود؛ بقیهٔ صف
+                # دست‌نخورده می‌ماند تا بعد از استقرارِ نسخهٔ جدید منتشر شود.
+                break
             elif isinstance(out, str) and out.startswith("retry_after:"):
                 # توقف موقت drain با ذخیره‌ی زمان بازگشتی (۵ دقیقه سقف) تا چرخه‌ی بعدی دوباره تلاش کند
                 try: secs = int(out.split(":", 1)[1])

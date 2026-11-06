@@ -5,6 +5,7 @@
 import asyncio, html, os, time
 from datetime import timedelta
 from newsbot import config
+from newsbot import runtime
 from newsbot.db import q, gget, gset, arun, arun_maint
 from newsbot.logutils import log, log_event, metrics_text
 from newsbot.timeutils import now_utc, now_iso, parse_dt, fmt_date, ago_text, off_label
@@ -198,6 +199,11 @@ async def _deadman_check():
 
 
 async def scheduler_tick(bot):
+    # DEVOPS-08 (Graceful Drain): در حالتِ تخلیه هیچ تیکِ تازه‌ای شروع نمی‌شود تا
+    # ری‌استارتِ کانتینر وسطِ یک چرخه/انتشار نیفتد. تیکِ در حالِ اجرا تا پایان می‌ماند.
+    if runtime.is_draining():
+        log.info("graceful drain active — scheduler tick skipped")
+        return
     if _tick_lock.locked(): return
     async with _tick_lock:
         # P0-A: سقفِ زمانیِ *کلِ تیک* (کشف + همهٔ چرخه‌های موازی) ⇒ مجموعِ چند کانال
@@ -287,6 +293,10 @@ async def _tick_body(bot):
     # چرخه هرگز متوقف نمی‌شود: اگر مدلی در دسترس نباشد، خودِ چرخه مدل‌ها را به‌ترتیب امتحان می‌کند و در پایان دلیل واقعی را می‌گوید
     if not any([await arun(any_model_available, uid) for _, uid, _, _ in due]): log_event("WARN", f"{len(due)} کانال با مدل‌های در حالت backoff اجرا می‌شوند (امتحان ترتیبی)")
     due.sort(key=lambda x: x[0]); batch = due[:config.MAX_CYCLES_PER_TICK]
+    # DEVOPS-08: اگر تخلیه در همین تیک فعال شد، چرخهٔ تازه‌ای شروع نمی‌شود.
+    if runtime.is_draining():
+        log.info("graceful drain active — no new channel cycle started")
+        return
     await arun(gset, "last_cycle_start", now_iso()); await asyncio.gather(*[_scheduled(bot, uid, ch, s) for _, uid, ch, s in batch]); await arun(gset, "last_cycle_end", now_iso())
 
 def _do_cleanup():

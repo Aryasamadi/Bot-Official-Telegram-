@@ -346,8 +346,20 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
         journal = await arun(release_publication, aid, journal, a["reason"] or "")
     if ch["admin_id"] != admin_id: return False, "no_channel"
     if await arun(posted_before, ch["chat_id"], a["hash"]): await arun(article_update, aid, status="rejected", reason="duplicate"); return False, "duplicate"
-    journal = await arun(reserve_publication, aid, admin_id, count_usage, test_user, journal)
-    if journal is None: return False, "quota"
+    # ── DEVOPS-08 (Graceful Drain) ────────────────────────────────────────────────
+    # از این لحظه انتشار «در حالِ پرواز» است: ژورنال رزرو می‌شود و تا رسیدن به ack (یا
+    # آزادسازیِ رزرو) باید کامل شود. اگر سرویس همین‌جا قطع شود، مقاله در وضعیت
+    # delivery_unknown می‌ماند ⇒ پس در حالتِ تخلیه هیچ انتشارِ تازه‌ای آغاز نمی‌شود
+    # و انتشارهای از قبل شروع‌شده تا پایان ادامه می‌یابند.
+    if not runtime.begin_publish():
+        log.info("graceful drain active — new publication not started article=%s", aid)
+        return False, "draining"
+    try:
+        journal = await arun(reserve_publication, aid, admin_id, count_usage, test_user, journal)
+    except BaseException:
+        runtime.end_publish(); raise
+    if journal is None:
+        runtime.end_publish(); return False, "quota"
     media = None; published = False
     try:
         s = await arun(get_settings, ch["id"])
@@ -427,9 +439,13 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
         raise
     finally:
         try:
-            if not published and journal.get("phase") != "ack":
-                await asyncio.shield(arun(_release_with_current_reason, aid, journal))
+            try:
+                if not published and journal.get("phase") != "ack":
+                    await asyncio.shield(arun(_release_with_current_reason, aid, journal))
+            finally:
+                if media and media.get("_file"):
+                    try: os.unlink(media["_file"][0])
+                    except OSError: log.debug("media cleanup failed", exc_info=True)
         finally:
-            if media and media.get("_file"):
-                try: os.unlink(media["_file"][0])
-                except OSError: log.debug("media cleanup failed", exc_info=True)
+            # DEVOPS-08: انتشارِ در حالِ پرواز تمام شد (ack / شکست / لغو) ⇒ شمارنده کم می‌شود.
+            runtime.end_publish()

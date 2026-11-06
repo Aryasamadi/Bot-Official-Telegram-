@@ -104,10 +104,10 @@ def _texts(up, ctx):
     parts = []
     qy = up.callback_query
     if qy is not None:
-        for a, kw in qy.answers:
+        for a, _kw in qy.answers:
             if a and isinstance(a[0], str): parts.append(a[0])
         parts += list(qy.message.edits)
-    for a, kw in ctx.bot.sent:
+    for a, _kw in ctx.bot.sent:
         if len(a) > 1 and isinstance(a[1], str): parts.append(a[1])
     return "\n".join(parts)
 

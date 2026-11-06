@@ -753,7 +753,7 @@ async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, 
     # مسیرِ تستِ مدلِ شخصی هم از همین دروازه رد می‌شود (پیش‌تر هزینهٔ آن سقف نداشت).
     if owner_id is not None and not ai_claim(owner_id):
         log.warning("AI daily cap reached user=%s", owner_id); return None, None, "ai_limit"
-    personal_all = [m for m in list_models(active_only=True, owner_id=owner_id)] if owner_id else []
+    personal_all = list(list_models(active_only=True, owner_id=owner_id)) if owner_id else []
     personal = [m for m in personal_all if _model_ready(m)]
     if selected_id is not None:
         selected = get_model(selected_id)

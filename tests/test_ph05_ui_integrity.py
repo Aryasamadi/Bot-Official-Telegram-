@@ -143,7 +143,7 @@ def test_split_html_property_over_many_lengths():
     """Property test: ورودی‌های ۰ تا ۲۰۰۰۰ کاراکتری."""
     from newsbot.text_format import split_html
     limit = 4096
-    for n in list(range(0, 40)) + list(range(0, 20001, 97)):
+    for n in list(range(40)) + list(range(0, 20001, 97)):
         text = ("متنِ نمونه " * (n // 11 + 1))[:n]
         chunks = split_html(text, limit)
         for c in chunks:
@@ -366,7 +366,7 @@ def test_permissions_doc_lists_exactly_the_real_two_phase_routes():
     doc = _src("docs/PERMISSIONS.md")
     sec8 = doc[doc.index("## ۸."):]
     documented = set(re.findall(r"`([as]:[a-z_]+2)`", sec8))
-    documented = set(d.split(":")[-1] for d in documented)      # بدونِ پیشوندِ بخش
+    documented = {d.split(":")[-1] for d in documented}      # بدونِ پیشوندِ بخش
     src = _src("newsbot/ui_dispatch.py")
     real = set(re.findall(r'if b == "([a-z_]+2)"', src))
     real |= set(re.findall(r'"([a-z_]+2)"', src))       # مسیرهایی که در یک تاپل آمده‌اند

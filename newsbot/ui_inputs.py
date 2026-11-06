@@ -68,9 +68,9 @@ def _input_url(text, explicit_scheme=False, allow_private=False):
     try: ipaddress_check(host)
     except ValueError:
         host = host.rstrip(".").encode("idna").decode("ascii")
-        if host.lower() != "localhost" and "." not in host: raise ValueError
-        if len(host) > 253 or re.fullmatch(r"[0-9.]+", host): raise ValueError
-        if any(not re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", label) for label in host.split(".")): raise ValueError
+        if host.lower() != "localhost" and "." not in host: raise ValueError from None
+        if len(host) > 253 or re.fullmatch(r"[0-9.]+", host): raise ValueError from None
+        if any(not re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", label) for label in host.split(".")): raise ValueError from None
     return parsed._replace(scheme=parsed.scheme.lower()).geturl()
 
 def urlparse_safe(text):

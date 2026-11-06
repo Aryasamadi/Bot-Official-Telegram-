@@ -1,0 +1,35 @@
+# .trivyignore — NewsBot (Session 3 / DEVOPS-05)
+#
+# Every entry below carries a justification and a review date. Re-check quarterly:
+#   current date 2026-11-06  =>  next review by 2027-02-06
+#   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+#     aquasec/trivy image --severity CRITICAL,HIGH --ignore-unfixed newsbot:<sha>
+#
+# IMPORTANT: these IDs are false positives from packages vendored INSIDE
+# pip/_vendor/ (pip bundles msgpack and urllib3 for its own cache; the app never
+# imports pip at runtime). The project's real dependencies are pinned in
+# requirements.txt: urllib3==2.8.0 (the fixed version) and msgpack is not a
+# dependency of the app at all. The real certifi/urllib3 in site-packages are the
+# fixed versions; setuptools is not installed in the image.
+
+# msgpack 1.1.2 — only inside pip/_vendor/msgpack (vendored).
+#   CVE-2026-114613 (DoS via memory leak in map deserialization)
+#   GHSA-6v7p-g79w-8964 (out-of-bounds read on Unpacker reuse)
+#   The application never imports msgpack; pip is not used at runtime.
+#   review: 2027-02-06
+CVE-2026-114613
+GHSA-6v7p-g79w-8964
+
+# urllib3 2.7.0 — only inside pip/_vendor/urllib3 (vendored).
+#   CVE-2026-97687 (HTTPS proxy TLS interception), CVE-2026-97689 (unbounded memory DoS)
+#   The project's real urllib3 is pinned to ==2.8.0 (fixed version).
+#   review: 2027-02-06
+CVE-2026-97687
+CVE-2026-97689
+
+# setuptools 70.3.0 — reported by trivy from a python:3.13-slim BASE layer, but
+# setuptools is NOT installed in the final image (verified: `pip list` shows only
+# pip; no setuptools dist-info exists in site-packages). CVE-2025-47273 (path
+# traversal in PackageIndex) only matters when setuptools is actually importable.
+# review: 2027-02-06
+CVE-2025-47273

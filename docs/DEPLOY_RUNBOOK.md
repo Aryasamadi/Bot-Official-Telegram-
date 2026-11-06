@@ -1,5 +1,32 @@
 # راهنمای استقرار، رول‌بک و بکاپ (فاز ۲)
 
+> ## ⚠️ به‌روزرسانیِ فاز C (Session 3 — ۲۰۲۶-۱۱-۰۶)
+>
+> این سند تاریخچهٔ فاز ۲ را حفظ می‌کند، ولی **مرجعِ جاریِ استقرار دیگر این سند
+> نیست**. Production از فاز C روی **Docker + Compose** اجرا می‌شود و مرجعِ حقیقت
+> **`docs/VPS_DEPLOYMENT.md`** است. تاریخچهٔ زیر **حذف نشده**؛ هرجا با وضعیتِ
+> جاری ناسازگار است، جدولِ زیر مقدم است.
+>
+> | موضوع | آنچه این سند (فاز ۲) می‌گوید | وضعیتِ جاری (فاز C) |
+> |---|---|---|
+> | مسیرِ checkout | `/opt/bot-official-telegram` | `/opt/Bot-Official-Telegram` |
+> | فایلِ env | `.env` کنارِ کد | `/etc/newsbot/env` (خارج از ایمیج) |
+> | کدِ اجراشده | bind-mount از میزبان | داخلِ ایمیجِ immutable (بدونِ bind-mount) |
+> | مسیرِ دیتابیس | کنارِ کد (`/app/newsbot.db`) | `/opt/newsbot-data/newsbot.db` (حجمِ ماندگار) |
+> | وابستگی‌ها | `pip install` روی میزبان | داخلِ ایمیج (در بازساخت نصب نمی‌شود) |
+> | نصبِ وابستگی در rollback | دوباره نصب می‌شود | فقط تعویضِ تگِ ایمیج |
+> | سلامت | `run.py --check` | `python -m newsbot.healthcheck` (هر ۶۰ ثانیه) |
+> | ری‌استارت | `docker restart` | `docker compose up -d --force-recreate --no-build` |
+> | تخلیهٔ امن | ندارد | دارد (DEVOPS-08): پرچمِ تخلیه ⇒ انتظار ⇒ `stop --time 30` |
+> | کاربرِ SSH | `root` | کاربرِ `deploy` + فرمانِ اجباری (DEVOPS-01) |
+> | عقب‌گرد | ندارد | دروازهٔ ضدِ عقب‌گرد در کلاینت و سرور (DEVOPS-06) |
+> | عددِ تست‌ها | ۷۵۴ / ۷۷۰ | **۸۴۴** تست (پوششِ ۷۰٪) |
+> | گیتِ کیفیتِ CI | pyflakes + pytest | + ruff · mypy · pip-audit · gitleaks · hadolint · trivy |
+>
+> اسنادِ تازه: `docs/VPS_DEPLOYMENT.md` (مرجعِ استقرار) ·
+> `docs/REPOSITORY_AUDIT_REPORT.md` (گزارشِ ممیزیِ این فاز) ·
+> `docs/audit/MASTER_AUDIT_AND_REMEDIATION_REPORT.md` (گزارشِ مادرِ ممیزی).
+
 این سند **واقعیتِ کد** را توصیف می‌کند: همهٔ مسیرهایش در `deploy/deploy.sh` و
 `.github/workflows/` پیاده شده و با تست تمرین شده‌اند (`tests/test_deploy_script.py`).
 
@@ -180,7 +207,7 @@ freelist از آستانه بگذرد اجرا می‌شود؛ `PRAGMA optimize`
 |---|---|
 | VPS | `3.13.x` |
 | CI | `3.13` |
-| Docker | `python:3.13-slim@sha256:70729b46…` (پین digest) |
+| Docker | `python:3.13-slim@sha256:09a17cad…` (پین digest) |
 
 هر تغییر باید هر سه را با هم جلو ببرد (OPS-16/D8/C2). وابستگی‌ها در
 `requirements.txt` با قفل دقیق (`==`) و فقطِ production؛ ابزارهای تست در

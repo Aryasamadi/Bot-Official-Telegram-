@@ -9,3 +9,12 @@ pluggy==1.6.0
 pyflakes==4.0.3
 Pygments==2.21.0
 pytest==9.1.1
+# ── گیت‌های کیفیتِ فاز C (TEST-01 / DEVOPS-05) ──────────────────────────────────
+# پوششِ تست: خطِ پایهٔ واقعی در CI قفل می‌شود (--cov-fail-under).
+pytest-cov==7.0.0
+# لینتِ سریع: قوانین در pyproject.toml انتخاب شده‌اند.
+ruff==0.14.4
+# بررسیِ نوعِ تدریجی: mypy newsbot (پیکربندی در pyproject.toml).
+mypy==1.18.2
+# اسکنِ آسیب‌پذیریِ وابستگی‌ها: pip-audit -r requirements.txt --no-deps
+pip-audit==2.9.0

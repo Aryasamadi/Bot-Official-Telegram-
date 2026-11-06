@@ -1,0 +1,15 @@
+title = "NewsBot — gitleaks allowlist (deliberate test fixtures only)"
+
+# Two unit tests intentionally embed high-entropy FAKE secrets to prove that the
+# logger / URL masking redacts them at runtime:
+#   tests/test_log_secret_leak.py  — asserts the token is masked in logs
+#   tests/test_secrets_and_text.py — asserts api_key is masked in URLs
+# They are allowlisted here. Everything else — the whole bot package, the deploy
+# scripts, the tools, the workflows and the docs — is scanned in full, including
+# the git history.
+[allowlist]
+  description = "deliberate fake secrets inside the masking tests"
+  paths = [
+    '''tests/test_log_secret_leak\.py''',
+    '''tests/test_secrets_and_text\.py''',
+  ]

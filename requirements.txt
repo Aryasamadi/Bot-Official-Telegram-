@@ -1,12 +1,13 @@
 # وابستگی‌های production — قفل دقیق نسخه (Python 3.13)
 # بازتولید: venv تازه بساز، `pip install` روی نسخهٔ range‌دارِ تاریخچه، سپس `pip split`/diff با `pip freeze`.
 # تغییر نسخه فقط با دانش CVE/سازگاری — نه به‌روزرسانی کور.
+# certifi 2026.10.18 — رفع PYSEC-2026-4320 (گیتِ pip-audit در CI).
 
 anyio==4.15.1
 APScheduler==3.11.3
 babel==2.18.0
 beautifulsoup4==4.15.0
-certifi==2026.7.22
+certifi==2026.10.18
 charset-normalizer==3.5.2
 courlan==1.4.0
 cryptography==50.0.2

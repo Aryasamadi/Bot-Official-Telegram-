@@ -1,0 +1,56 @@
+# NewsBot — پیکربندیِ ابزارهای کیفیت (Session 3 / فاز C)
+#
+# این فایل «منبعِ حقیقت»ِ تنظیماتِ ruff / mypy / pytest است تا گیت‌های CI و اجرای
+# محلی دقیقاً یکسان رفتار کنند. هیچ بخشِ build اینجا نیست: پروژه یک برنامهٔ
+# اسکریپتی است (نصب با requirements.txt انجام می‌شود).
+
+[tool.ruff]
+# نسخهٔ هدف = نسخهٔ production (Python 3.13) — نه نسخهٔ ماشینِ CI.
+target-version = "py313"
+line-length = 120
+extend-exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "_audit_tmp",
+]
+
+[tool.ruff.lint]
+# ── انتخابِ آگاهانهٔ قوانین ──────────────────────────────────────────────────────
+# خانهٔ سبکِ این مخزن «چند دستور روی یک خط» است (if x: return y) که pycodestyle
+# آن را E701/E702 می‌گیرد ⇒ بازآراییِ ۲۵۰۰ خط، ریسکِ رگرسیون دارد و موضوعِ این
+# فاز نیست. بنابراین گیتِ lint روی قوانینی است که *واقعاً* باگ می‌گیرند:
+#   E9/F  : خطای نحوی و نامِ تعریف‌نشده (همان چیزی که pyflakes می‌گیرد)
+#   B     : bugbear — حلقهٔ بسته‌شده روی متغیرِ حلقه، raise-without-from، zip بدون strict
+#   C4    : comprehensions غیرضروری
+#   PIE   : ساختارهای مبهم
+#   W     : فاصله‌های اضافه
+select = ["E9", "F", "B", "C4", "PIE", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# تست‌ها عمداً بعضی متغیرهای حلقه را استفاده نمی‌کنند (نمونهٔ ماتریسِ آزمون).
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.13"
+files = ["newsbot"]
+# «تایپینگِ تدریجی»: کدِ موجود باید بدون شکستِ کاذب تحلیل شود ولی خطاهای
+# واقعی (None-attr، انتسابِ ناسازگار، ...) گرفته شوند.
+ignore_missing_imports = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_configs = true
+show_error_codes = true
+pretty = false
+
+[[tool.mypy.overrides]]
+# feedparser سِم‌استامپ/typing ندارد ⇒ تحلیلِ آن skipped می‌شود.
+module = ["feedparser", "feedparser.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

@@ -83,7 +83,7 @@ async def d1_table_cols(client, tbl):
         res = await d1(client, "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (tbl,))
         rows = res.get("results") or []
     except Exception as e:
-        raise RuntimeError(f"cannot read the schema of table {tbl!r}: " + " | ".join(errs + [str(e)]))
+        raise RuntimeError(f"cannot read the schema of table {tbl!r}: " + " | ".join(errs + [str(e)])) from e
     if not rows:
         return set()          # چنین جدولی وجود ندارد ⇒ مجموعهٔ خالی درست است
     cols = _create_sql_cols(rows[0].get("sql"))

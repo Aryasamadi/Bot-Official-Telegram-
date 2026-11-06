@@ -17,10 +17,10 @@ from newsbot.core_wallet import _apply as _wallet_apply
 
 # پلن‌های پایهٔ سیستم (DB-19): هرکدام با INSERT شرطیِ تک‌دستوره seed می‌شود
 _BASE_PLANS = [
-    dict(name="رایگان", name_en="Free", days=7, daily_posts=1, max_sources=2, max_channels=1, daily_tests=1,
-         price="رایگان", price_en="Free", description="۱ پست در روز · ۷ روز", description_en="1 post/day · 7 days", is_free=1, sort=0),
-    dict(name="حرفه‌ای", name_en="Pro", days=30, daily_posts=20, max_sources=15, max_channels=3, daily_tests=5,
-         price="توافقی", price_en="Contact us", description="۲۰ پست روزانه · ۱۵ منبع · ۳ کانال", description_en="20 posts/day · 15 sources · 3 channels", is_free=0, sort=1),
+    {"name": "رایگان", "name_en": "Free", "days": 7, "daily_posts": 1, "max_sources": 2, "max_channels": 1, "daily_tests": 1,
+     "price": "رایگان", "price_en": "Free", "description": "۱ پست در روز · ۷ روز", "description_en": "1 post/day · 7 days", "is_free": 1, "sort": 0},
+    {"name": "حرفه‌ای", "name_en": "Pro", "days": 30, "daily_posts": 20, "max_sources": 15, "max_channels": 3, "daily_tests": 5,
+     "price": "توافقی", "price_en": "Contact us", "description": "۲۰ پست روزانه · ۱۵ منبع · ۳ کانال", "description_en": "20 posts/day · 15 sources · 3 channels", "is_free": 0, "sort": 1},
 ]
 
 def seed_plans():

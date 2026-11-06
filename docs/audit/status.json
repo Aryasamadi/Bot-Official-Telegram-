@@ -24,7 +24,14 @@
       "phase-15-watchdog"
     ],
     "open_pull_requests": 0,
-    "pull_requests_seen": 19
+    "pull_requests_seen": 19,
+    "baseline_commit_sha": "08bc87655dc910a98076acd749ddf8f3e6bdca2c",
+    "baseline_commit_subject": "Fix referral invitation copy and fallback",
+    "baseline_commit_date": "2026-10-19T20:03:08Z",
+    "session3_commit_sha": "d0efb7e0692ec0b32c83e86a05b664ace315cded",
+    "session3_commit_subject": "fix: PTB 20+ Bot.bot is a User — the native rich path was never used",
+    "session3_commit_date": "2026-10-31T06:50:44Z",
+    "session3_audited_at": "2026-11-06T00:00:00Z"
   },
   "audit": {
     "status": "complete",
@@ -123,7 +130,14 @@
         "most_likely_cause": "OPS-033 - the one-off timestamp migration (normalize_iso_columns) could not finish on the grown database; systemd TimeoutStartSec=180 + Restart=always turned it into a 100% CPU restart loop.",
         "status": "code fix in PR #26; the host still needs the systemd drop-in installed and the migration to be resumed"
       }
-    ]
+    ],
+    "session3_update": {
+      "date": "2026-11-06",
+      "phase": "PH-C",
+      "status": "complete",
+      "history_preserved": true,
+      "note": "The original audit fields above are untouched; this block only records the Session-3 pass."
+    }
   },
   "summary": {
     "critical": 2,
@@ -137,7 +151,50 @@
     "verified_fixed": 89,
     "blocked": 0,
     "deferred": 5,
-    "wont_fix": 0
+    "wont_fix": 0,
+    "session3": {
+      "date": "2026-11-06",
+      "scope": "CI/CD, Docker/Compose, VPS deployment, documentation",
+      "findings_examined": 7,
+      "finding_ids": [
+        "TEST-01",
+        "DEVOPS-01",
+        "DEVOPS-03",
+        "DEVOPS-05",
+        "DEVOPS-06",
+        "DEVOPS-07",
+        "DEVOPS-08"
+      ],
+      "doc_config_drifts_examined": 4,
+      "total_items": 11,
+      "fixed": 11,
+      "open": 0,
+      "blocked": 0,
+      "verification": {
+        "tests_passed": 844,
+        "coverage_percent": 70,
+        "coverage_stmts": 9158,
+        "coverage_miss": 2704,
+        "pyflakes": "clean",
+        "ruff": "All checks passed!",
+        "mypy": "Success: no issues found in 44 source files",
+        "py_compile": "clean",
+        "pip_audit": "No known vulnerabilities found",
+        "bash_n_deploy": "clean",
+        "final_verification": "all checks green",
+        "github_protection": "verified live via the API (branch + production environment) — exit 0",
+        "live_vps_deploy": "NOT EXECUTED — no network route to the VPS from the audit environment; verified through the sandbox harness and GitHub Actions instead"
+      },
+      "reports": [
+        "docs/REPOSITORY_AUDIT_REPORT.md",
+        "docs/audit/MASTER_AUDIT_AND_REMEDIATION_REPORT.md",
+        "docs/audit/parts/01-codebase-architecture-testing.md",
+        "docs/audit/parts/02-database-security-business-logic.md",
+        "docs/audit/parts/03-telegram-ux-ai-content-publishing.md",
+        "docs/audit/parts/04-vps-devops-performance-scalability.md",
+        "docs/VPS_DEPLOYMENT.md"
+      ]
+    }
   },
   "findings": [
     {
@@ -2729,8 +2786,8 @@
       "objective": "Make every document, count, badge and default match the code."
     }
   ],
-  "current_phase": "PH-07",
-  "current_phase_status": "IMPLEMENTED_AWAITING_MERGE",
+  "current_phase": "PH-C (Session 3 — CI/CD, Docker/Compose, VPS deploy, documentation)",
+  "current_phase_status": "COMPLETED_VERIFIED_LOCAL",
   "owner_approval_required": true,
   "next_permitted_action": "AWAIT_OWNER_AUTHORIZATION",
   "recommended_next_phase": "PH-09",

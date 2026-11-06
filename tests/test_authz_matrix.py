@@ -139,19 +139,19 @@ def _texts(up, ctx):
     parts = []
     qy = up.callback_query
     if qy is not None:
-        for a, kw in qy.answers:
+        for a, _kw in qy.answers:
             if a and isinstance(a[0], str):
                 parts.append(a[0])
         parts += list(qy.message.edits)
-    for a, kw in ctx.bot.sent:
+    for a, _kw in ctx.bot.sent:
         if len(a) > 1 and isinstance(a[1], str):
             parts.append(a[1])
     return "\n".join(parts)
 
 
 def _mk_plan(uid, **kw):
-    fields = dict(name=f"plan-{uid}", name_en="plan", days=30, daily_posts=5,
-                  max_sources=10, max_channels=5, daily_tests=5)
+    fields = {"name": f"plan-{uid}", "name_en": "plan", "days": 30, "daily_posts": 5,
+              "max_sources": 10, "max_channels": 5, "daily_tests": 5}
     fields.update(kw)
     pid = create_plan(**fields)
     assign_plan(uid, pid)

@@ -557,10 +557,18 @@ def list_models_wrap():
 
 # PH-05/UI-004: مسیرهایی که کارشان طول می‌کشد ⇒ پاسخِ فوری به کاربر (اسپینرِ دکمه)
 SLOW_ROUTES = ("s:bc_go", "s:models_test", "s:model_test", "a:srcr", "a:pub", "a:myai_t", "a:artf", "s:bc")
+# نامِ صفت به‌صورتِ متغیر (mypy با getattr/setattr و رشتهٔ ثابت سخت‌گیر است)
+_CALLBACK_ANSWERED = "_callback_answered"
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    qy = update.callback_query; u = update.effective_user; context._callback_answered = False
+    qy = update.callback_query; u = update.effective_user
+    setattr(context, _CALLBACK_ANSWERED, False)
+    # یک callback بدونِ کاربر یا بدونِ query معتبر نیست ⇒ نادیده گرفته می‌شود
+    # (وگرنه یک AttributeError روی None کلِ مسیرِ UI را می‌شکند).
+    if u is None or qy is None:
+        log.debug("callback without an effective user/query — ignored")
+        return
     if not global_rate_ok(u.id):   # SEC-03: محدودیت سراسری per-user (کلیک‌های سیل‌آسا)
         try: await qy.answer(tr(user_lang(u.id) or "fa", "busy_click"))
         except Exception: pass
@@ -584,7 +592,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "sch", "con", "quiet", "tz", "cat", "catv", "cri", "criv", "que", "rej",
         "models", "model", "users", "admins", "user", "texts", "discs", "disc",
         "pays", "report", "rep", "qreset", "man_close", "ref")
-    back = (context.user_data.get("await") or {}).get("back", "home")
+    back = ((context.user_data or {}).get("await") or {}).get("back", "home")
     channel = int(parts[2]) if len(parts) > 2 and parts[0] == "a" and action == "test" and parts[2].isdigit() else None
     keep = ("disc",) if parts[0] == "u" and action in ("plan", "req", "disc", "discx") else ("bc_src",) if action == "bc_go" else ("qs", "qs_channel") if action == "qe" else ()
     async def work():

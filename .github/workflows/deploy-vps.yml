@@ -43,6 +43,9 @@ jobs:
       # پورتِ SSH (پیش‌فرض ۲۲؛ اگر sshd روی پورتِ دیگری گوش می‌دهد، همین secret
       # را به‌روز کنید — نیازی به ویرایشِ این فایل نیست)
       VPS_PORT: ${{ secrets.VPS_SSH_PORT || '22' }}
+      # کاربرِ SSH (DEVOPS-01): کاربرِ اختصاصی و محدودِ `deploy` — نه root.
+      # اگر secret خالی باشد، همین مقدارِ پیش‌فرض استفاده می‌شود.
+      VPS_USER: ${{ secrets.VPS_USER || 'deploy' }}
     steps:
       # بدون secrets کافی، خطا روشن و سریع است (به‌جای شکست مبهم وسط SSH)
       - name: Preflight — required secrets must exist
@@ -97,31 +100,54 @@ jobs:
       # اکشن‌ها به SHA کامیت پین شده‌اند (تگ متحرک = تغییر بی‌اعلام)
       # OPS-04: checkout باید روی همان SHA باشد تا «اسکریپتِ استقرار» و «کدِ مستقرشده»
       # از یک کامیت بیایند (قبلاً اسکریپت از headِ شاخهٔ پیش‌فرض برداشته می‌شد).
+      # fetch-depth: 0 ⇒ تاریخچهٔ کامل برای بررسیِ «عقب‌گرد» لازم است.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+
+      # DEVOPS-06: دروازهٔ ضدِ عقب‌گرد در *سمتِ کلاینت*.
+      # صفِ workflow_run ترتیبِ زمانیِ کامیت‌ها را تضمین نمی‌کند: یک CIِ قدیمی‌تر که
+      # دیرتر تمام می‌شود می‌تواند نسخهٔ جدیدتر را روی سرور بنویسد. اگر هدف، جدّ
+      # نیست (یعنی نوکِ فعلیِ main نیست ولی در تاریخچهٔ آن هست) ⇒ عقب‌گرد است
+      # و نباید مستقر شود. (سرور همین بررسی را با anti_downgrade_gate تکرار می‌کند.)
+      - name: Anti-downgrade — the target must be the newest green commit
+        env:
+          SHA: ${{ env.TARGET_SHA }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet --no-tags origin main
+          tip="$(git rev-parse origin/main)"
+          if [ "$SHA" = "$tip" ]; then
+            echo "the target is the tip of main — OK."
+            exit 0
+          fi
+          if git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::SHA موردنظر از نوکِ فعلیِ main ($tip) قدیمی‌تر است — استقرارِ عقب‌گرد رد شد."
+            exit 1
+          fi
+          echo "the target is not in main's history (a branch commit) — the server-side gate decides."
 
       - name: Copy deploy script to VPS
         uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
         with:
           host: ${{ secrets.VPS_HOST }}
-          username: root
+          username: ${{ env.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           port: ${{ env.VPS_PORT }}
           fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
           source: deploy/deploy.sh
           target: /tmp/newsbot-deploy.sh
 
-      - name: Run deploy (backup → sync → gate → restart → health)
+      # فرمانِ اجباریِ کاربرِ deploy فقط چهار فرمان را می‌پذیرد
+      # (deploy <sha> · rollback · preflight · health) ⇒ SSH اینجا یک پوسته نیست.
+      - name: Run deploy (backup → sync → gate → drain → restart → health)
         uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
         with:
           host: ${{ secrets.VPS_HOST }}
-          username: root
+          username: ${{ env.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           port: ${{ env.VPS_PORT }}
           fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
           command_timeout: 20m
-          envs: TARGET_SHA
-          script: |
-            chmod +x /tmp/newsbot-deploy.sh
-            bash /tmp/newsbot-deploy.sh deploy "$TARGET_SHA"
+          command: deploy ${{ env.TARGET_SHA }}

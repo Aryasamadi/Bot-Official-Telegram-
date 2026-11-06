@@ -7,10 +7,10 @@ import time
 from newsbot.config import RATE_PERSIST_PREFIXES
 from newsbot.logutils import log
 
-_rl = {}
-_win = {}      # SEC-03: شمارندهٔ پنجره‌ای (کلید → لیست زمان‌ها)؛ در حافظه، بدون ماندگاری DB
+_rl: dict = {}
+_win: dict = {}      # SEC-03: شمارندهٔ پنجره‌ای (کلید → لیست زمان‌ها)؛ در حافظه، بدون ماندگاری DB
 _PERSIST_MIN_GAP = 10.0   # OPS-21: حداقل فاصلهٔ نوشتن دوبارهٔ یک کلید در دیتابیس (کاهش فشار I/O)
-_last_persist = {}        # کلید ← آخرین ts نوشته‌شده در DB (throttle جدای از منطق سقف‌ها)
+_last_persist: dict = {}        # کلید ← آخرین ts نوشته‌شده در DB (throttle جدای از منطق سقف‌ها)
 
 def _rate_persistable(key): return any(key.startswith(p) for p in RATE_PERSIST_PREFIXES)
 

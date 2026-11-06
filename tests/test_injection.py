@@ -36,7 +36,7 @@ def test_dynamic_column_whitelist_rejects_forged_field():
     from newsbot.db import _safe_fields
     try:
         _safe_fields("discounts", {"percent": 10, "evil; DROP TABLE discounts; --": 1})
-        assert False, "نام ستونِ جعلی باید رد شود"
+        raise AssertionError("نام ستونِ جعلی باید رد شود")
     except ValueError:
         pass
     assert "percent" in _safe_fields("discounts", {"percent": 10})

@@ -173,7 +173,7 @@ class FakeD1:
                 cols = ", ".join("%s TEXT" % c for c in self.tables[tbl])
                 return _Resp({"success": True, "result": [{"results": [{"sql": "CREATE TABLE %s (%s)" % (tbl, cols)}]}]})
             return _Resp({"success": True, "result": [{"results": []}]})
-        if u.startswith("SELECT") or u.startswith("PRAGMA"):
+        if u.startswith(("SELECT", "PRAGMA")):
             return _Resp({"success": True, "result": [{"results": []}]})
         return _Resp({"success": True, "result": [{"results": [], "meta": {"changes": 0}}]})
 

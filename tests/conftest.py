@@ -9,6 +9,11 @@ os.environ.setdefault("DB_BACKEND", "sqlite")
 os.environ.setdefault("REFERRAL_ENABLED", "1")
 _tmp = tempfile.mkdtemp(prefix="newsbot-tests-")
 os.environ["DB_FILE"] = os.path.join(_tmp, "test.db")
+# DEVOPS-08: نشانگرهای تخلیه هم باید داخلِ پوشهٔ موقتِ تست باشند؛ وگرنه یک
+# نشانگرِ بازمانده در /tmp (مثلاً از یک استقرارِ واقعی یا از یک تستِ دیگر) کلِ
+# چرخه‌های انتشار را در مجموعهٔ تست «آفلاین» می‌کرد.
+os.environ["DRAIN_FLAG_FILE"] = os.path.join(_tmp, "drain.flag")
+os.environ["DRAINED_FLAG_FILE"] = os.path.join(_tmp, "drained.flag")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 

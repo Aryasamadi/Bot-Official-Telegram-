@@ -113,7 +113,7 @@ def test_i18n_dictionaries_are_complete_and_bilingual():
             assert isinstance(v, (tuple, list)) and len(v) == 2, f"{name}[{k}] باید (fa, en) باشد"
             assert str(v[0]).strip() and str(v[1]).strip(), f"{name}[{k}] نباید خالی باشد"
     for k, spec in WIZ.items():
-        for field, prompt, typ in spec:
+        for field, prompt, _typ in spec:
             assert isinstance(prompt, (tuple, list)) and len(prompt) == 2 and prompt[0] and prompt[1], f"WIZ[{k}][{field}]"
     for k, langs in DEFAULT_TEXTS.items():
         assert langs.get("fa") and langs.get("en"), f"DEFAULT_TEXTS[{k}]"

@@ -35,7 +35,7 @@ def issue_transfer_token(cid, issued_to):
             return row["token"]          # توکنِ معتبرِ در جریان ⇒ همان را برگردان
     for _ in range(6):
         tok = _new_transfer_token()
-        def _go(conn):
+        def _go(conn, tok=tok):
             conn.execute("DELETE FROM ch_tokens WHERE channel_id=? AND used_at IS NULL", (cid,))
             conn.execute("INSERT INTO ch_tokens(token,channel_id,issued_to,issued_at,expires_at) VALUES(?,?,?,?,?)",
                          (tok, cid, issued_to, now.isoformat(), (now + timedelta(minutes=TRANSFER_TTL_MIN)).isoformat()))

@@ -81,9 +81,11 @@ def _redact_record(*args, **kwargs):
         rec.stack_info = ""
     return rec
 
-if not getattr(logging, "_newsbot_redact_factory", False):
+# نامِ صفت به‌صورتِ متغیر: mypy در getattr/setattr با رشتهٔ ثابت، صفتِ ناشناخته را خطا می‌گیرد.
+_REDACT_FACTORY_FLAG = "_newsbot_redact_factory"
+if not getattr(logging, _REDACT_FACTORY_FLAG, False):
     logging.setLogRecordFactory(_redact_record)
-    logging._newsbot_redact_factory = True
+    setattr(logging, _REDACT_FACTORY_FLAG, True)
 
 def log_ctx(**kw):
     """فیلدهای زمینه را برای لاگ‌های همین تسک می‌چسباند (ContextVar ⇒ بین کانال‌ها قاطی نمی‌شود)."""

@@ -28,7 +28,7 @@ from newsbot.ui_support import on_message
 from newsbot.ui_dispatch import on_callback
 from newsbot.ui_views_super import cmd_health
 
-APP: Application = None
+APP: Application | None = None
 _db_lock = None      # قفل فایلِ دیتابیس: دو نسخه‌ی هم‌زمان ربات ⇒ دو چرخه روی یک کانال و پست تکراری
 _SHUTDOWN_CANCEL_TIMEOUT = 8.0   # مهلت settle پس از لغو اولِ تسک‌های در حال اجرا
 _SHUTDOWN_GRACE = 2.0            # فرصت دوم برای تسک‌هایی که لغو اول را قورت دادند
@@ -57,6 +57,9 @@ async def job_tick(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def post_init(app: Application):
+    # DEVOPS-08: نشانگرِ تخلیهٔ بازمانده از اجرای قبلی نباید ربات را برای همیشه در حالتِ
+    # «تخلیه» نگه دارد (پروسهٔ تازه هیچ انتشارِ در حالِ پروازی ندارد).
+    runtime.clear_stale_drain()
     me = await app.bot.get_me(); runtime.BOT_USERNAME = me.username
     runtime.NOTIFY_SUPER = notify_supers; runtime.NOTIFY_USER = notify_user_fn
     set_bot(app.bot)   # FIX v4: لایه‌ی UI بدون APP سراسری، بطری را از این‌جا می‌گیرد
@@ -64,7 +67,10 @@ async def post_init(app: Application):
     ensure_super_worker()
     await app.bot.set_my_commands([BotCommand("start", "منوی اصلی"), BotCommand("create", "پنل مدیریت"), BotCommand("ref", "دعوت دوستان"), BotCommand("man", "پشتیبانی"), BotCommand("lang", "زبان"), BotCommand("about", "درباره"), BotCommand("help", "راهنما"), BotCommand("cancel", "لغو عملیات")], language_code="fa")
     await app.bot.set_my_commands([BotCommand("start", "Main menu"), BotCommand("create", "Admin panel"), BotCommand("ref", "Invite friends"), BotCommand("man", "Support"), BotCommand("lang", "Language"), BotCommand("about", "About"), BotCommand("help", "Help"), BotCommand("cancel", "Cancel")])
-    app.job_queue.run_repeating(job_tick, interval=config.TICK_SECONDS, first=15, name="tick")
+    if app.job_queue is not None:
+        app.job_queue.run_repeating(job_tick, interval=config.TICK_SECONDS, first=15, name="tick")
+    else:
+        log.warning("JobQueue is disabled — the scheduler tick will not run automatically.")
     _dup = await arun(gget, "db_dup_warn")
     if _dup:
         await notify_super("⚠️ <b>ایندکس یکتای دیتابیس ساخته نشد</b>\n"
@@ -81,6 +87,10 @@ async def post_init(app: Application):
     await notify_super(f"🚀 @{me.username} راه‌اندازی شد · 🤖 مدل‌های فعال {len(await arun(list_models, True))} · backend {config.DB_BACKEND} · CF KV {'✅' if config.CF_ENABLED else '❌'} · تیک هر {config.TICK_SECONDS}s" + (f" · {' · '.join(extra)}" if extra else ""))
     app.bot_data["_watchdog_task"] = watchdog.start()
     watchdog.notify_ready()
+    # DEVOPS-08: ناظرِ نشانگرِ تخلیه — با دیدنِ فایلِ «در حالِ تخلیه» و صفر شدنِ
+    # انتشارهای در حالِ پرواز، فایلِ «تخلیه شد» را می‌نویسد تا deploy.sh بداند کِی
+    # سرویس را متوقف کند.
+    app.bot_data["_drain_task"] = asyncio.create_task(runtime.drain_watch_loop(), name="drain-watch")
 
 
 async def post_shutdown(app: Application):
@@ -90,6 +100,24 @@ async def post_shutdown(app: Application):
         _wd.cancel()
         try: await _wd
         except BaseException: pass
+    _dr = app.bot_data.pop("_drain_task", None) if app is not None else None
+    if _dr is not None:
+        _dr.cancel()
+        try: await _dr
+        except BaseException: pass
+    # ── DEVOPS-08: تخلیهٔ ایمن (Graceful Drain) ─────────────────────────────────
+    # پیش از لغوِ تسک‌ها، به انتشارهای «در حالِ پرواز» فرصتِ پایان داده می‌شود تا
+    # مقاله‌ای در وضعیت delivery_unknown رها نشود. پس از آن تسک‌ها (مثل قبل) لغو می‌شوند.
+    try:
+        runtime.request_drain("shutdown")
+        drained = await runtime.wait_for_in_flight_publishes(config.DRAIN_TIMEOUT_SEC)
+        if drained:
+            log.info("graceful drain: no publication is in flight — safe to stop")
+        else:
+            log.warning("graceful drain: %d publication(s) still in flight after %ss",
+                        runtime.in_flight_publishes(), config.DRAIN_TIMEOUT_SEC)
+    except Exception:
+        log.exception("graceful drain failed")
     _me = asyncio.current_task()
     # ARCH-06: همه‌ی تسک‌های نام‌دارِ طولانی (ارسال، عملیات کاربر، تفکر/چرخه) تا وسط کار رها نشوند
     pend = [t for t in asyncio.all_tasks() if t is not _me and t.get_name().split(":")[0] in ("publication", "user", "thinking")]
@@ -113,6 +141,10 @@ async def post_shutdown(app: Application):
     try:
         log_event("INFO", "ربات خاموش شد"); log.info("خاموشی تمیز انجام شد.")
     except Exception: pass
+    # ── DEVOPS-08: حالتِ تخلیه در پایانِ خاموشی پاک می‌شود ─────────────────────
+    # پروسه در حالِ خروج است، اما اگر برنامه در *همین* پروسه دوباره بالا بیاید
+    # (یا در مجموعهٔ تست اجرا شود) نباید ربات برای همیشه «خاموشِ انتشار» بماند.
+    runtime.cancel_drain()
 
 
 async def on_error(update, context):
@@ -211,7 +243,7 @@ def _acquire_single_instance_lock():
             msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
     except OSError:
         f.close()
-        raise SystemExit(f"⛔ نسخه‌ی دیگری از ربات روی همین دیتابیس در حال اجراست ({config.DB_FILE}) — ابتدا آن را ببندید.")
+        raise SystemExit(f"⛔ نسخه‌ی دیگری از ربات روی همین دیتابیس در حال اجراست ({config.DB_FILE}) — ابتدا آن را ببندید.") from None
     _db_lock = f
     return f
 

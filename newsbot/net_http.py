@@ -204,7 +204,7 @@ async def egress_url_strict(url):
     if is_private_host(host): return True          # در فهرستِ سفید ⇒ رزولوشن لازم نیست
     return await asyncio.to_thread(public_url_strict, url)
 
-_DNS_CACHE = {}
+_DNS_CACHE: dict = {}
 _DNS_CACHE_TTL = 5.0
 _DNS_CACHE_MAX = 512
 

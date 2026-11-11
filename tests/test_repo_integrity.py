@@ -35,7 +35,7 @@ PROPOSED_PATHS = {
 # فایل‌های سطح ریشه که مراجعه به آن‌ها باید معتبر باشد
 ROOT_ARTIFACTS = (
     "run.py", "requirements.txt", "requirements-dev.txt", "README.md", "ROADMAP.md",
-    "PHASE1-10-FINAL-REPORT.md", "DEPLOY-VPS-UPDATE.md", ".env.example",
+    ".env.example",
     ".gitignore", ".dockerignore", "Dockerfile",
 )
 

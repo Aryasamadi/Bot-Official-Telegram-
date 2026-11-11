@@ -10,6 +10,13 @@ FROM python:3.13-slim@sha256:09a17cad02668ae61ece136b4fd36ac3849e14f670ebedb637e
 
 WORKDIR /app
 
+# امنیت: CVE-2026-76844 / CVE-2026-85091 (zlib1g) در digest پین‌شدهٔ بالا هنوز رفع نشده؛
+# نسخهٔ اصلاح‌شده (1.3.1-1+deb13u1) در Debian 13 موجود است. فقط همین بسته ارتقا می‌یابد
+# (نه upgrade کامل) تا ایمیج قابل‌پیش‌بینی بماند. با bump بعدیِ digest می‌توان این بلوک را حذف کرد.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
 # نسخهٔ کد (SHA) هنگامِ build تزریق می‌شود تا پنلِ «نسخهٔ در حال اجرا» درست باشد.
 ARG NEWSBOT_VERSION=unknown
 ENV NEWSBOT_VERSION=${NEWSBOT_VERSION}

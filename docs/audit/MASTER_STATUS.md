@@ -420,3 +420,10 @@ All under `docs/audit/` in the audit workspace
 Read `docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md` first; it is the single source of truth.
 The audit below was built against `main` @ `08bc876`; `main` is now `d0efb7e` and contains the
 merged `PH-01…PH-08` work, so the per-phase narrative here is history, not the present.
+
+**Refresh 2026-11-11 (phase 1) — partial re-verification.** Six findings re-checked against the
+current code and updated in `status.json` (each with a `refresh.evidence` note): **OPS-016,
+TEST-003** (VERIFIED_FIXED by #46), **OPS-001** (FIXED_UNVERIFIED — not exercised on the host),
+and **OPS-011, OPS-012** (PR #49) and **OPS-014** (PR #48). **The other OPEN items have not been
+re-verified yet**; the register was last refreshed at PH-07/Session 3 and PRs #36–#45 are not
+reflected in it. Counters live in `status.json` (`summary.*`), not in this prose.

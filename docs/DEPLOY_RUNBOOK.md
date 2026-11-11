@@ -143,19 +143,28 @@ rollback: `HEAD ← .deployed_sha.prev` با تأیید `rev-parse`، سپس res
 - **آرشیوِ مقالات:** پوشهٔ `backups` کنارِ دیتابیس به `BACKUP_DIR/archive` آینه می‌شود؛
   در آن پوشه هم فقط فایل‌های `newsbot-archive-*.db` تا `KEEP_BACKUPS` تازه نگه داشته
   می‌شوند و فایل‌های دیگر دست‌نخورده می‌مانند.
-- **بازیابی** (مسیرِ دیتابیس را با `DB_FILE`/`WorkingDirectory` خودتان تعیین کنید):
+- **بازیابی** (OPS-011) — فقط با ابزار؛ بازیابی با `cp` یا بازنویسی مستقیم ممنوع است، چون
+  فایل‌های `-wal`/`-shm` دیتابیس قبلی ممکن است روی فایل تازه replay شوند:
 
 ```bash
-systemctl stop newsbot.service
-python3 - <<'PY'
-import sqlite3
-src = sqlite3.connect('/opt/backups/newsbot-<stamp>.db')
-dst = sqlite3.connect('<مسیر دیتابیسِ پیکربندی‌شده>')
-src.backup(dst); dst.close(); src.close()
-PY
+systemctl stop newsbot.service          # یا: docker compose stop
+python3 tools/restore_sqlite_backup.py /opt/backups/newsbot-<stamp>.db <مسیر دیتابیسِ پیکربندی‌شده> --dry-run
+python3 tools/restore_sqlite_backup.py /opt/backups/newsbot-<stamp>.db <مسیر دیتابیسِ پیکربندی‌شده> --confirm-service-stopped
+python3 run.py --check
 systemctl start newsbot.service
 ```
 
+  ابزار: بکاپ را فقط‌خواندنی با `integrity_check` می‌سنجد (بکاپ خراب/خالی رد می‌شود و مقصد
+  دست‌نخورده می‌ماند) ← از دیتابیس فعلی `<db>.pre-restore-<stamp>` می‌گیرد ← بکاپ را در فایل
+  موقت با `sqlite3.backup` می‌سازد ← `-wal`/`-shm` قدیمی را پاک می‌کند ← اتمیک جایگزین می‌کند.
+  تست: `tests/test_ops011_restore_tool.py`.
+
+- **رفع خطا (OPS-012):**
+  | علامت | علت | اقدام |
+  |---|---|---|
+  | `database schema_version N is newer than this build` (سرویس بالا نمی‌آید/restart loop) | rollback کد بدون rollback دیتابیس | کدِ جدید را برگردانید **یا** با ابزار بالا بکاپِ پیش از مهاجرت را بازیابی کنید |
+  | `integrity_check failed` / `database disk image is malformed` | دیتابیس خراب | سرویس را متوقف کنید؛ آخرین بکاپ سالم را با ابزار بالا بازیابی کنید (`<db>.pre-restore-*` برای بررسیِ بعدی می‌ماند) |
+  | `-wal`/`-shm` باقی‌مانده بعد از crash | توقف ناگهانی | بدون حذف دستی؛ فقط اجازه دهید سرویس بالا بیاید، یا از ابزار بازیابی استفاده کنید |
 - **اثباتِ بازیابی:** دو مسیر جداگانه تمرین شده‌اند:
   1. `tests/test_deploy_script.py` — بکاپِ واقعیِ `deploy.sh` روی دیتابیس sandbox ساخته و
      سالم برمی‌گردد.

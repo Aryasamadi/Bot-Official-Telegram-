@@ -13,6 +13,7 @@ WORKDIR /app
 # امنیت: CVE-2026-76844 / CVE-2026-85091 (zlib1g) در digest پین‌شدهٔ بالا هنوز رفع نشده؛
 # نسخهٔ اصلاح‌شده (1.3.1-1+deb13u1) در Debian 13 موجود است. فقط همین بسته ارتقا می‌یابد
 # (نه upgrade کامل) تا ایمیج قابل‌پیش‌بینی بماند. با bump بعدیِ digest می‌توان این بلوک را حذف کرد.
+# hadolint ignore=DL3008 — عمداً بدون پین: هدف دریافت جدیدترین build امنیتیِ zlib1g است و پینِ دقیق با آپدیت بعدی Debian build را می‌شکند.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade zlib1g \
     && rm -rf /var/lib/apt/lists/*

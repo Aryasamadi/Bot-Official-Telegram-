@@ -416,3 +416,10 @@ All under `docs/audit/` in the audit workspace
 
 **Reminder for future sessions:** always read `docs/audit/MASTER_STATUS.md` and `docs/audit/status.json`
 first, then compare the current Git commit against the recorded baseline (`08bc876`) before acting.
+
+
+---
+
+## Refresh 2026-11-11 (phase 1) - partial re-verification
+
+Six findings re-checked against the current code and updated in `status.json` (each has a `refresh.evidence` note): **OPS-016, TEST-003** (VERIFIED_FIXED by #46), **OPS-001** (FIXED_UNVERIFIED - not exercised on the host), **OPS-011, OPS-012** (PR #49) and **OPS-014** (PR #48), the last three pending merge. Totals now: OPEN 73, FIXED_UNVERIFIED 13, VERIFIED_FIXED 94, DEFERRED 5 (of 185). **The other OPEN items have not been re-verified yet**; the register was last refreshed at PH-07/Session 3 and PRs #36-#45 are not reflected in it.

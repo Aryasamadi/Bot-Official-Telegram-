@@ -146,9 +146,9 @@
     "low": 66,
     "informational": 12,
     "total": 185,
-    "open": 79,
-    "fixed_unverified": 12,
-    "verified_fixed": 89,
+    "open": 73,
+    "fixed_unverified": 13,
+    "verified_fixed": 94,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0,
@@ -194,6 +194,19 @@
         "docs/audit/parts/04-vps-devops-performance-scalability.md",
         "docs/VPS_DEPLOYMENT.md"
       ]
+    },
+    "refresh_2026_11_11": {
+      "date": "2026-11-11",
+      "scope": "phase-1 re-verification of findings against current code",
+      "updated": [
+        "OPS-001",
+        "OPS-011",
+        "OPS-012",
+        "OPS-014",
+        "OPS-016",
+        "TEST-003"
+      ],
+      "note": "register was last refreshed at PH-07/Session 3; remaining OPEN items have NOT been re-verified yet"
     }
   },
   "findings": [
@@ -945,10 +958,15 @@
       "priority": "P0",
       "category": "CONFIRMED CONFIGURATION DEFECT",
       "verification": "REPRODUCED",
-      "status": "OPEN",
+      "status": "FIXED_UNVERIFIED",
       "phase": "PH-04",
       "evidence_ref": "docs/audit/FINDINGS.md#ops-001",
-      "verification_note": "Repository side re-verified mechanically 2026-10-20: 51 occurrences of 'bot-ai-automatic' across 5 tracked files; 'newsbot.service' = 0; 'bot-official-telegram' = 0. One evidence site added: deploy/systemd/10-restart-always.conf:7 (ExecStopPost logger tag). The PRODUCTION side remains UNVERIFIED - no VPS access (see audit.environment_limitations)."
+      "verification_note": "Repository side re-verified mechanically 2026-10-20: 51 occurrences of 'bot-ai-automatic' across 5 tracked files; 'newsbot.service' = 0; 'bot-official-telegram' = 0. One evidence site added: deploy/systemd/10-restart-always.conf:7 (ExecStopPost logger tag). The PRODUCTION side remains UNVERIFIED - no VPS access (see audit.environment_limitations).",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-11",
+        "evidence": "deploy.sh now defaults to APP_DIR=/opt/Bot-Official-Telegram and SERVICE=newsbot.service; not exercised on the real host"
+      }
     },
     {
       "id": "OPS-002",
@@ -1064,9 +1082,14 @@
       "priority": "P1",
       "category": "DOCUMENTATION MISMATCH",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-011"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-011",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-11",
+        "evidence": "tools/restore_sqlite_backup.py (integrity check, pre-restore copy, stale -wal/-shm removal, atomic replace); tests/test_ops011_restore_tool.py; PR #49 (pending merge)"
+      }
     },
     {
       "id": "OPS-012",
@@ -1075,9 +1098,14 @@
       "priority": "P2",
       "category": "MISSING TEST / UNKNOWN BEHAVIOR",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-012"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-012",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-11",
+        "evidence": "docs/DEPLOY_RUNBOOK.md section 5 recovery + troubleshooting table (schema newer than build, corrupt DB, leftover WAL); PR #49 (pending merge)"
+      }
     },
     {
       "id": "OPS-013",
@@ -1098,9 +1126,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-014"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-014",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-11",
+        "evidence": "post_init sends READY=1 before any Telegram call, run_polling bootstrap_retries=-1; tests/test_ops014_ready_independent.py; PR #48 (pending merge)"
+      }
     },
     {
       "id": "OPS-015",
@@ -1121,9 +1154,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-10",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-016"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-016",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-11",
+        "evidence": "ci.yml runs ruff, mypy, pytest --cov-fail-under=68 and pip-audit; PR #46 CI green on 2026-11-11"
+      }
     },
     {
       "id": "OPS-017",
@@ -1932,9 +1970,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-10",
-      "evidence_ref": "docs/audit/FINDINGS.md#test-003"
+      "evidence_ref": "docs/audit/FINDINGS.md#test-003",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-11",
+        "evidence": "pyproject.toml has [tool.pytest.ini_options] (plus ruff/mypy config)"
+      }
     },
     {
       "id": "TEST-004",

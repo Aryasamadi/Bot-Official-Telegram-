@@ -101,6 +101,7 @@ def transfer_channel(cid, new_uid, lang="fa"):
     old_uid = ch["admin_id"]
     def _go(conn):
         conn.execute("DELETE FROM sources WHERE channel_id=?", (cid,))
+        conn.execute("DELETE FROM pub_journal WHERE article_id IN (SELECT id FROM articles WHERE channel_id=? AND status!='published')", (cid,))
         conn.execute("DELETE FROM articles WHERE channel_id=? AND status!='published'", (cid,))
         conn.execute("DELETE FROM ch_tokens WHERE channel_id=?", (cid,))
         conn.execute("DELETE FROM dedup WHERE channel_id=?", (cid,))
@@ -127,6 +128,7 @@ def reset_channel_queue(cid):
     if publication_pending(cid): raise RuntimeError("channel_busy")
     n = q("SELECT COUNT(*) c FROM articles WHERE channel_id=? AND status!='published'", (cid,), one=True)["c"]
     def _go(conn):
+        conn.execute("DELETE FROM pub_journal WHERE article_id IN (SELECT id FROM articles WHERE channel_id=? AND status!='published')", (cid,))
         conn.execute("DELETE FROM articles WHERE channel_id=? AND status!='published'", (cid,))
         s = get_settings(cid)   # در همان تراکنش: یا صف و وضعیت با هم پاک می‌شوند یا هیچ‌کدام
         s.update(enabled=False, last_run=None, last_end=None, last_result="", last_diag=None, last_notified_diag="")
@@ -142,10 +144,12 @@ def del_channel(cid, uid):
     if not ch or ch["admin_id"] != uid: return None
     def _go(conn):
         conn.execute("DELETE FROM sources WHERE channel_id=?", (cid,))
+        conn.execute("DELETE FROM pub_journal WHERE article_id IN (SELECT id FROM articles WHERE channel_id=?)", (cid,))
         conn.execute("DELETE FROM articles WHERE channel_id=?", (cid,))
         conn.execute("DELETE FROM ch_tokens WHERE channel_id=?", (cid,))
         conn.execute("DELETE FROM dedup WHERE channel_id=?", (cid,))
         conn.execute("DELETE FROM posted WHERE channel_id=?", (ch["chat_id"],))
+        conn.execute("DELETE FROM usage WHERE admin_id=?", (-int(cid),))
         conn.execute("DELETE FROM channels WHERE id=? AND admin_id=?", (cid, uid))
         return ch["chat_id"]
     return _trx(_go)

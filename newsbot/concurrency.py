@@ -83,6 +83,11 @@ def ch_lock(cid):
     return _get_lock(_ch_locks, _ch_last_used, "ch", cid)
 
 
+def active_channel_locks() -> list[int]:
+    """OBS-014: شناسه‌های کانال‌هایی که همین لحظه قفلشان در دست است (برای نمای سلامت اپراتور)."""
+    return sorted(int(cid) for cid, lk in list(_ch_locks.items()) if lk.locked())
+
+
 def model_lock(mid):
     """قفل هر مدل: دو فراخوان هم‌زمان به یک مدل (که بعضی سرویس‌ها تحمل نمی‌کنند) جلوگیری می‌شود."""
     return _get_lock(_model_locks, _model_last_used, "model", mid)

@@ -146,9 +146,9 @@
     "low": 66,
     "informational": 12,
     "total": 185,
-    "open": 57,
+    "open": 51,
     "fixed_unverified": 13,
-    "verified_fixed": 110,
+    "verified_fixed": 116,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0,
@@ -245,6 +245,18 @@
         "TEST-013",
         "TEST-014"
       ]
+    },
+    "refresh_2026_11_12_obs_db": {
+      "date": "2026-11-12",
+      "scope": "phase-3 observability + DB referential integrity",
+      "updated": [
+        "DB-007",
+        "OBS-001",
+        "OBS-003",
+        "OBS-008",
+        "OBS-010",
+        "OBS-014"
+      ]
     }
   },
   "findings": [
@@ -322,9 +334,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-09",
-      "evidence_ref": "docs/audit/FINDINGS.md#db-007"
+      "evidence_ref": "docs/audit/FINDINGS.md#db-007",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "newsbot/db.py: db_orphan_counts(); newsbot/core_channels.py cascades pub_journal and per-channel usage rows on channel delete/reset/transfer; tests/test_phase3_observability_and_db.py"
+      }
     },
     {
       "id": "DB-008",
@@ -826,10 +843,15 @@
       "priority": "P1",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-06",
       "evidence_ref": "docs/audit/FINDINGS.md#obs-001",
-      "fix_applied": "PH-06 بخشِ «اعلانِ گم‌شده» را بست (outbox پایدار، dead-letter و نمایش در health). export متریک خارجی (Prometheus/Grafana) طبق DECISIONS عمداً خارج از دامنه ماند و این یافته کامل بسته نشده است."
+      "fix_applied": "PH-06 بخشِ «اعلانِ گم‌شده» را بست (outbox پایدار، dead-letter و نمایش در health). export متریک خارجی (Prometheus/Grafana) طبق DECISIONS عمداً خارج از دامنه ماند و این یافته کامل بسته نشده است.",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "newsbot/logutils.py: render_prometheus_metrics() and atomic export_prometheus_metrics(); durable outbox with dead-letter in newsbot/core_alerts.py; tests/test_phase3_observability_and_db.py"
+      }
     },
     {
       "id": "OBS-002",
@@ -850,9 +872,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-003"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-003",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "newsbot/logutils.py: global LogRecordFactory (_redact_record) attaches _logctx correlation fields to all direct log.* calls; tests/test_phase3_observability_and_db.py"
+      }
     },
     {
       "id": "OBS-004",
@@ -909,9 +936,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-06",
-      "evidence_ref": "docs/audit/FINDINGS.md#obs-008"
+      "evidence_ref": "docs/audit/FINDINGS.md#obs-008",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "newsbot/logutils.py: configure_file_logging with RotatingFileHandler and JsonLogFormatter (redaction-safe); deploy/systemd/10-restart-always.conf sets StandardOutput=journal and SyslogIdentifier=newsbot; tests/test_phase3_observability_and_db.py"
+      }
     },
     {
       "id": "OBS-009",
@@ -932,10 +964,15 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-06",
       "evidence_ref": "docs/audit/FINDINGS.md#obs-010",
-      "fix_applied": "PH-06: مسیرهای scheduler/app خطا را با error_class و traceback ثبت می‌کنند. نرمال‌سازی سراسری error_class در cycle/AI و persist کردن reason همچنان باقی است (PH-08/PH-10)."
+      "fix_applied": "PH-06: مسیرهای scheduler/app خطا را با error_class و traceback ثبت می‌کنند. نرمال‌سازی سراسری error_class در cycle/AI و persist کردن reason همچنان باقی است (PH-08/PH-10).",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "newsbot/logutils.py: classify_error() and automatic error_class attachment on WARN/ERROR log_event calls; tests/test_phase3_observability_and_db.py"
+      }
     },
     {
       "id": "OBS-011",
@@ -980,10 +1017,15 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-06",
       "evidence_ref": "docs/audit/FINDINGS.md#obs-014",
-      "fix_applied": "PH-06: last_successful_publish، pending journals، پرداخت‌های اعلام‌نشده، رسیدهای دیده‌نشده و اعلان‌های مرده به health اضافه شدند. سن قفل‌های درون‌حافظه‌ای و صفحهٔ اختصاصی صف هنوز پیاده نشده‌اند."
+      "fix_applied": "PH-06: last_successful_publish، pending journals، پرداخت‌های اعلام‌نشده، رسیدهای دیده‌نشده و اعلان‌های مرده به health اضافه شدند. سن قفل‌های درون‌حافظه‌ای و صفحهٔ اختصاصی صف هنوز پیاده نشده‌اند.",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "newsbot/concurrency.py: active_channel_locks(); newsbot/ui_views_super.py: health_snapshot/view_health surface active_locks, processing_payments, and orphan_rows; tests/test_phase3_observability_and_db.py"
+      }
     },
     {
       "id": "OBS-015",

@@ -14,21 +14,23 @@
 | **Default branch** | `main` |
 | **Current working branch** | `phase1-10/state-and-truth-alignment` |
 | **Branch base commit** | `d0efb7e0692ec0b32c83e86a05b664ace315cded` |
-| **Last verified commit** | `d0efb7e0692ec0b32c83e86a05b664ace315cded` (2026-10-31 06:50:44 +0000) |
+| **Last verified commit** | `d6ae7c2` (phase 1 branch) · `main` is `d0efb7e0692ec0b32c83e86a05b664ace315cded` |
 | **Last state update** | 2026-11-12T00:00:00Z (UTC) |
 | **Overall status** | `IN_PROGRESS` |
 | **Current phase** | Phase 1 of 10 |
-| **Current sub-step** | P1-1 — create this file and align the documentation with reality |
+| **Current sub-step** | P1-1 — **COMPLETE**; PR #56 open, CI green, awaiting the required approving review |
 | **Owner authorization** | Required for every phase. Phase 1 authorized 2026-11-12. |
 
 ---
 
 ## 1. Immediate state (read this before anything else)
 
-**Where we are:** Phase 1, sub-step P1-1.
-**Done so far:** audit (Phase 0) complete; this file created; documentation being aligned.
-**Remaining in Phase 1:** see §4 (Task P1-1 checklist).
-**Exact next action:** finish the README and `docs/audit/MASTER_STATUS.md` alignment, run the suite, commit, push, open PR.
+**Where we are:** Phase 1, sub-step P1-1 — **done**. PR #56 open, CI green, blocked only by the
+required approving review (branch protection, not a code problem).
+**Done so far:** Phase 0 audit; this file created; README/docs aligned; regression test added.
+**Remaining in Phase 1:** obtain the approving review → merge PR #56 → then Phase 1's remaining
+task P1-2 (merge the #46–#55 chain), which needs an owner ruling (see B-1).
+**Exact next action:** owner reviews and merges PR #56. Nothing else may start without a new instruction.
 
 **Do not repeat** the Phase 0 audit — it is recorded in §7 and in the owner's report
 (`PHASE0_AUDIT_REPORT.md`, outside the repository).
@@ -52,7 +54,8 @@
 
 **Status values:** `NOT_STARTED` · `IN_PROGRESS` · `BLOCKED` · `COMPLETED`
 
-**Completed phases:** none yet.
+**Completed phases:** none yet. Phase 1 is `IN_PROGRESS`: task P1-1 complete (PR #56), task P1-2
+(the PR-chain merge) blocked on an owner ruling.
 
 ---
 
@@ -92,14 +95,14 @@
 **Migration / backup / rollback:** none. Rollback = revert the commit.
 
 **Tests and acceptance criteria**
-1. `pytest -q` is green (same result as the recorded baseline).
-2. `python -m pyflakes newsbot tools run.py tests` is silent.
-3. `python tools/final_verification.py` reports 17/17.
-4. README states Python 3.13+ and the real test count (781 collected).
-5. `docs/audit/MASTER_STATUS.md` no longer claims the audited commit is `08bc876`.
-6. This file records the true branch-protection rules and the reason for `BLOCKED`.
+1. `pytest -q` is green (same result as the recorded baseline). — **MET** (781 passed / 4 known Windows-only failures)
+2. `python -m pyflakes newsbot tools run.py tests` is silent. — **MET**
+3. `python tools/final_verification.py` reports 17/17. — **MET**
+4. README states Python 3.13+ and the real test count (785 collected). — **MET**
+5. `docs/audit/MASTER_STATUS.md` no longer claims the audited commit is `08bc876`. — **MET** (marked historical, points at this file)
+6. This file records the true branch-protection rules and the reason for `BLOCKED`. — **MET**
 
-**Deliverables:** this file, the aligned docs, a PR.
+**Deliverables:** this file, the aligned docs, the regression test, commit `d6ae7c2`, PR #56.
 
 ---
 
@@ -131,10 +134,11 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 |---|---|
 | Working branch | `phase1-10/state-and-truth-alignment` |
 | Base | `d0efb7e` |
-| PR | (to be created — see §1) |
+| Phase 1 commit | `d6ae7c2` |
+| PR | **#56** — `MERGEABLE` / `BLOCKED` (review required) · CI `test: SUCCESS`, `docker-build: SUCCESS` |
 | CI on `main` at `d0efb7e` | `test: success`, `docker-build: success`, `deploy: skipped` |
 | Production commit SHA | **UNVERIFIED** — no VPS read was possible |
-| Open PR chain | #46 → #47 → #48 → #49 → #50 → #51 → #52 → #53 → #54 → #55 |
+| Open PR chain | #46 → #47 → #48 → #49 → #50 → #51 → #52 → #53 → #54 → #55 (plus #56 from this phase) |
 | PR #46 block reason | `REVIEW_REQUIRED` — branch protection requires 1 approving review; also `required_status_checks: test` (strict), linear history, signed commits off, `enforce_admins: true` |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-12):**

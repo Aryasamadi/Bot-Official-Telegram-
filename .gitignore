@@ -42,6 +42,9 @@ Thumbs.db
 /probe_*.py
 /_probe*.py
 
+# ── فضای کاری موقت اجرای فازها (SDD) ──
+/.superpowers/
+
 # ── نشانگر استقرار (deploy.sh) ──
 .deployed_sha
 .deployed_sha.prev

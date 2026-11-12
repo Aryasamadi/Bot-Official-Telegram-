@@ -58,10 +58,10 @@ def _git(*args):
 def _all_repo_files():
     out = []
     for root, dirs, files in os.walk(ROOT):
-        # محیط‌های مجازی داخلِ پوشهٔ مخزن (`.venv` و `venv`) اسکن نمی‌شوند: کتابخانه‌های
-        # نصب‌شده ارجاع‌هایی به مسیرهایی دارند که در مخزنِ ما وجود ندارند ⇒ تستِ
-        # «ارجاع‌ها باید وجود داشته باشند» بی‌دلیل شکست می‌خورد.
-        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".venv", "venv")]
+        # محیط‌های مجازی داخلِ پوشهٔ مخزن (`.venv` و `venv`) و فضای کاری موقتِ فازها
+        # (`.superpowers`) اسکن نمی‌شوند: این پوشه‌ها git-ignored هستند و محتوایشان
+        # بخشی از مخزن نیست، پس ارجاع‌های داخلشان نباید «مسیرِ شکسته» شمرده شوند.
+        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".venv", "venv", ".superpowers")]
         for f in files:
             p = os.path.join(root, f)
             out.append(os.path.relpath(p, ROOT).replace("\\", "/"))

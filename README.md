@@ -5,11 +5,11 @@
 <br>
 
 [![CI](https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/workflows/ci.yml/badge.svg)](https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.13%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-21.6%2B-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://python-telegram-bot.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-default-003B57?style=flat-square&logo=sqlite&logoColor=white)](#-پیکربندی)
 [![Cloudflare D1](https://img.shields.io/badge/Cloudflare-D1%20optional-F38020?style=flat-square&logo=cloudflare&logoColor=white)](#-پیکربندی)
-[![Tests](https://img.shields.io/badge/tests-770%20passing-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
+[![Tests](https://img.shields.io/badge/tests-785%20collected-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
 [![i18n](https://img.shields.io/badge/i18n-fa%20%7C%20en-8B5CF6?style=flat-square)](#)
 
 **ربات تک‌پروسه‌ای مدیریت خودکار کانال تلگرام** — منابع خبری را می‌خواند، با چند مدل هوش مصنوعی بازنویسی و امتیازدهی می‌کند، و به‌صورت **crash-safe** منتشر می‌کند.
@@ -147,7 +147,7 @@ flowchart LR
 
 ### ۱. پیش‌نیاز
 
-- **Python 3.12+**
+- **Python 3.13+**
 - یک توکن ربات از [@BotFather](https://t.me/BotFather)
 - شناسهٔ عددی تلگرام خودتان (برای `SUPER_ADMIN_IDS`)
 
@@ -394,7 +394,7 @@ stateDiagram-v2
 ## 🧪 تست‌ها
 
 ```bash
-pytest -q                              # ۷۵۴ تست
+pytest -q                              # ۷۸۵ تست
 python -m pyflakes newsbot tools run.py tests   # نگهبان ایستا
 python tools/final_verification.py     # راستی‌آزمایی مستقل (۱۷ بررسی)
 python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08 · docs/PERFORMANCE.md)
@@ -404,7 +404,7 @@ python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08
 |---|---|
 | `test_agent_contract.py` | **قرارداد بایت‌به‌بایت** پرامپت و خروجی ایجنت |
 | `test_static_guard.py` | صفر `undefined name` + محافظت `.gitignore` |
-| `test_security.py` | SSRF · تزریق پرامپت · XSS (۴۹ تست) |
+| `test_security.py` | SSRF · تزریق پرامپت · XSS (۷۳ تست) |
 | `test_trx_atomicity.py` | اتمیک‌بودن تراکنش SQLite و batch روی D1 |
 | `test_recovery_concurrency.py` | ژورنال انتشار · قفل‌ها · «هرگز پست تکراری» |
 | `test_business_logic.py` | سهمیه · تخفیف · ارجاع (۲۵ تست) |
@@ -418,7 +418,7 @@ python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08
 | `test_phase15_watchdog.py` | `Restart=always` · حذف start-limit · sd_notify/READY/STOPPING · watchdog loop |
 | `test_rich_messages.py` | موتور قالب‌بندی · جدول بومی · RTL · **fallback بدون حذف محتوا** · نگاشت خطای Bot API · ژورنال انتشار |
 
-> **«تست‌نشده = رد‌شده».** هیچ تستی برای سبز شدن تغییر نکرده و هیچ `except` خالی‌ای خطا را پنهان نمی‌کند.
+> **«تست‌نشده = رد‌شده».** هیچ تستی برای سبز شدن تغییر نکرده است.
 
 ---
 

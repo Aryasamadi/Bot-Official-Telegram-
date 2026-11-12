@@ -145,9 +145,9 @@
     "low": 66,
     "informational": 12,
     "total": 185,
-    "open": 73,
+    "open": 68,
     "fixed_unverified": 13,
-    "verified_fixed": 94,
+    "verified_fixed": 99,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0,
@@ -211,6 +211,17 @@
         "TEST-003"
       ],
       "note": "register was last refreshed at PH-07/Session 3; remaining OPEN items have NOT been re-verified yet"
+    },
+    "refresh_2026_11_12": {
+      "date": "2026-11-12",
+      "scope": "phase-2 money, publishing, and pipeline quota integrity",
+      "updated": [
+        "FIN-024",
+        "FIN-025",
+        "PIPE-017",
+        "PIPE-018",
+        "PUB-002"
+      ]
     }
   },
   "findings": [
@@ -651,9 +662,14 @@
       "priority": "P2",
       "category": "MISSING TEST / UNKNOWN BEHAVIOR",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-024"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-024",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "tests/test_ph01_money.py::test_ledger_reconciles_with_wallet_after_many_movements + tests/test_fin025_legacy_allocation.py"
+      }
     },
     {
       "id": "FIN-025",
@@ -662,14 +678,19 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
       "evidence_ref": "docs/audit/FINDINGS.md#fin-025",
       "evidence": [
         "newsbot/db.py:_migrate_legacy_credit",
         "newsbot/core_wallet.py:CUR_LEGACY"
       ],
-      "fix_applied": "PH-01: موجودیِ قدیمی در سطلِ «legacy» منجمد شد (نه تبدیل، نه خرج). تخصیصِ دستیِ آن یک اسکریپتِ جداگانه و صریحاً مجاز است که هنوز نوشته نشده."
+      "fix_applied": "PH-01: موجودیِ قدیمی در سطلِ «legacy» منجمد شد (نه تبدیل، نه خرج). تخصیصِ دستیِ آن یک اسکریپتِ جداگانه و صریحاً مجاز است که هنوز نوشته نشده.",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "wallet_allocate_legacy in newsbot/core_wallet.py + tools/allocate_legacy_wallet.py (--dry-run/--confirm) + tests/test_fin025_legacy_allocation.py"
+      }
     },
     {
       "id": "NET-001",
@@ -1644,9 +1665,14 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-09",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-017"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-017",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "atomic per-channel daily cap reservation in reserve_publication/release_publication using usage(-cid, day) + tests/test_pipe017_channel_cap_reservation.py"
+      }
     },
     {
       "id": "PIPE-018",
@@ -1655,9 +1681,14 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-018"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-018",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "carry_usage_day in newsbot/core_users.py carries posts, tests, and ai across timezone boundary changes + tests/test_pipe018_tz_usage_carry.py"
+      }
     },
     {
       "id": "PIPE-019",
@@ -1722,9 +1753,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-09",
-      "evidence_ref": "docs/audit/FINDINGS.md#pub-002"
+      "evidence_ref": "docs/audit/FINDINGS.md#pub-002",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "_settle_with_retry in newsbot/publish.py retries post-send journal/settle DB writes and records reason=settle_failed on exhaustion + tests/test_pub002_settle_retry.py"
+      }
     },
     {
       "id": "PUB-003",

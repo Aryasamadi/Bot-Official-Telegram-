@@ -318,6 +318,29 @@ def _release_with_current_reason(aid, journal):
     current = get_article(aid)
     return release_publication(aid, journal, current["reason"] if current else "")
 
+_SETTLE_RETRY_DELAYS = (0.2, 0.6, 1.5)
+
+async def _settle_with_retry(aid, ch, journal):
+    """PUB-002: پیام در کانال منتشر شده؛ ثبت ژورنال (ack) و settle باید در برابر خطای گذرای DB مقاوم باشد.
+    هر دو مرحله idempotent‌اند، پس تکرارشان امن است. اگر همهٔ تلاش‌ها شکست خورد، دلیل مشخص
+    `settle_failed` روی مقاله ثبت می‌شود (اپراتور می‌داند ممکن است پست زنده باشد) و خطا بالا می‌رود؛
+    ژورنال ack (اگر نوشته شده) در ری‌استارتِ بعدی توسط recover_publications بسته می‌شود."""
+    last = None
+    for attempt in range(len(_SETTLE_RETRY_DELAYS) + 1):
+        try:
+            await arun(set_pub_journal, aid, journal)
+            await arun(settle_publication, aid, ch, journal)
+            return
+        except Exception as e:
+            last = e
+            log.warning("settle attempt %d failed article=%s: %s: %s", attempt + 1, aid, type(e).__name__, e)
+            if attempt < len(_SETTLE_RETRY_DELAYS):
+                await asyncio.sleep(_SETTLE_RETRY_DELAYS[attempt])
+    try: await arun(article_update, aid, reason="settle_failed")
+    except Exception: log.exception("could not record settle_failed article=%s", aid)
+    bump("posts_settle_failed")
+    log.error("settle failed after retries; the message may be LIVE in the channel but is not recorded article=%s", aid)
+    raise last
 async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
     a = await arun(get_article, aid)
     if not a or a["status"] != "ready" or not a["post_html"]: return False, "not_ready"
@@ -413,8 +436,7 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
             if op: op.published_count += 1
             link = msg_link(ch, msg)
             journal.update(phase="ack", link=link)
-            await arun(set_pub_journal, aid, journal)
-            await arun(settle_publication, aid, ch, journal)
+            await _settle_with_retry(aid, ch, journal)   # PUB-002: خطای گذرای DB بعد از ارسال، پست را گم نکند
             if dl_key and dl_payload:
                 # PUB-04: ردیف دیپ‌لینک فقط پس از موفقیت ارسال نوشته می‌شود تا شکست قطعی ردیف یتیم نسازد
                 try: await save_deeplink(dl_key, admin_id, dl_payload)

@@ -3,9 +3,10 @@
 کمک‌های مشترک رسانه (_bad_media_url/_mk_media/_ext_kind) این‌جا定义 می‌شوند و
 extract.py و publish.py از همین‌جا import می‌کنند (یک منبع حقیقت برای فیلتر رسانه).
 """
-import asyncio, html, json, re
+import asyncio, html, json, re, time
 from datetime import timedelta
 from urllib.parse import urljoin, urlparse, parse_qsl, urlencode, urlunparse
+from urllib.robotparser import RobotFileParser
 import feedparser
 from bs4 import BeautifulSoup
 from newsbot import config
@@ -177,6 +178,48 @@ def _parse_any(content, base, limit, tz=None):
     except Exception: return None
     return _feed_items(f, base, limit, tz) if f.entries else None
 
+# PIPE-013: سیاستِ ادب (politeness) و احترام به robots.txt در کاوشِ مسیرهای حدسی
+HOST_DELAY_SEC = 0.05
+DISCOVER_PROBE_BUDGET = 14
+_HOST_LAST_REQ: dict[str, float] = {}
+_HOST_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def robots_allows(robots_txt: str, url_or_path: str, ua: str = "NewsBot") -> bool:
+    """آیا مسیرِ حدسی (فید/سایت‌مپ) طبقِ محتوای robots.txt مجاز است؟ (PIPE-013)"""
+    if not (robots_txt or "").strip():
+        return True
+    try:
+        rp = RobotFileParser()
+        rp.parse(str(robots_txt).splitlines())
+        p = urlparse(str(url_or_path))
+        path = p.path or "/"
+        if p.query:
+            path = f"{path}?{p.query}"
+        return bool(rp.can_fetch(ua, path) and rp.can_fetch("*", path))
+    except Exception:
+        return True
+
+
+async def _host_pace(url: str, min_interval: float | None = None) -> None:
+    """فاصله‌گذاریِ درخواست‌های پیاپی به یک میزبانِ واحد (PIPE-013)."""
+    gap = HOST_DELAY_SEC if min_interval is None else float(min_interval)
+    if gap <= 0:
+        return
+    h = hostname(str(url)) or ""
+    if not h:
+        return
+    lk = _HOST_LOCKS.setdefault(h, asyncio.Lock())
+    async with lk:
+        now = time.monotonic()
+        prev = _HOST_LAST_REQ.get(h)
+        if prev is not None:
+            rem = (prev + gap) - now
+            if rem > 0:
+                await asyncio.sleep(rem)
+        _HOST_LAST_REQ[h] = time.monotonic()
+
+
 async def _get(url, cond=None, feed=False):
     h = {"Accept": FEED_ACCEPT} if feed else {}
     if cond: h.update(cond)
@@ -312,20 +355,32 @@ async def discover_source(src, limit=25, use_cache=True, tz=None):
             if re.search(r"(/|\.)(rss|feed|atom)s?(/|\.xml|\?|$)", h, re.I) and (hostname(h) == hostname(src["url"]) or "feedburner" in h or "feeds." in h): cands.append(h)
         if p.path.strip("/"): cands += [src["url"] + g for g in ("/feed", "/rss", "/feed/", "/rss.xml", "/atom.xml")]
         cands += [origin + g for g in FEED_PATHS]
+        robots_txt = ""
+        smaps = list(SITEMAP_PATHS)
+        try:
+            rb = await fetch(origin + "/robots.txt", timeout=10)
+            if rb.status_code == 200:
+                robots_txt = rb.text or ""
+                smaps = [m.strip() for m in re.findall(r"(?im)^sitemap:\s*(\S+)", robots_txt)][:3] + smaps
+        except Exception: pass
+        probes_used = 0
         seen = set()
         for fu in [c for c in cands if not (c in seen or seen.add(c))][:14]:
+            if probes_used >= DISCOVER_PROBE_BUDGET: break
+            if not robots_allows(robots_txt, fu): continue
+            probes_used += 1
+            await _host_pace(fu)
             try: rr = await _get(fu, feed=True)
             except Exception: continue
             if rr.status_code == 200:
                 items = await asyncio.to_thread(_parse_any, rr.content, fu, limit, tz)
                 if items: source_ok(src["id"], fu, rr.headers.get("etag"), rr.headers.get("last-modified")); return items, True, "feed"
-        smaps = list(SITEMAP_PATHS)
-        try:
-            rb = await fetch(origin + "/robots.txt", timeout=10)
-            if rb.status_code == 200: smaps = [m.strip() for m in re.findall(r"(?im)^sitemap:\s*(\S+)", rb.text)][:3] + smaps
-        except Exception: pass
         for sp in smaps[:9]:
+            if probes_used >= DISCOVER_PROBE_BUDGET: break
             su = sp if sp.startswith("http") else origin + sp
+            if not robots_allows(robots_txt, su): continue
+            probes_used += 1
+            await _host_pace(su)
             try: rr = await _get(su, feed=True)
             except Exception: continue
             if rr.status_code != 200: continue
@@ -337,11 +392,16 @@ async def discover_source(src, limit=25, use_cache=True, tz=None):
                 kids = re.findall(r"<sitemap>.*?<loc>\s*(.*?)\s*</loc>", rr.content.decode("utf-8", "ignore"), re.S)
                 pref = [k for k in kids if re.search(r"news|post|article|blog|\d{4}", k, re.I)] or kids
                 for ku in pref[-2:]:
-                    try: rk = await _get(html.unescape(ku), feed=True)
+                    if probes_used >= DISCOVER_PROBE_BUDGET: break
+                    ku_clean = html.unescape(ku)
+                    if not robots_allows(robots_txt, ku_clean): continue
+                    probes_used += 1
+                    await _host_pace(ku_clean)
+                    try: rk = await _get(ku_clean, feed=True)
                     except Exception: continue
                     if rk.status_code == 200 and b"<urlset" in rk.content[:4096].lower():
                         items = await asyncio.to_thread(_sitemap_items, rk.content.decode("utf-8", "ignore"), limit, tz)
-                        if items: source_ok(src["id"], html.unescape(ku)); return items, True, "sitemap"
+                        if items: source_ok(src["id"], ku_clean); return items, True, "sitemap"
         items = await asyncio.to_thread(_html_links, soup, src["url"], limit)
         if items: source_ok(src["id"])
         else: source_fail(src["id"], "no_items")

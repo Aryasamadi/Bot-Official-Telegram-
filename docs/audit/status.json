@@ -145,9 +145,9 @@
     "low": 66,
     "informational": 12,
     "total": 185,
-    "open": 63,
+    "open": 57,
     "fixed_unverified": 13,
-    "verified_fixed": 104,
+    "verified_fixed": 110,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0,
@@ -231,6 +231,18 @@
       "not_done": [
         "PIPE-013 (robots/politeness policy) still OPEN",
         "about 65 benign best-effort silent excepts not yet triaged; the payment compensation ones now log"
+      ]
+    },
+    "refresh_2026_11_12_politeness_qa": {
+      "date": "2026-11-12",
+      "scope": "phase-2 discovery politeness + QA test debt",
+      "updated": [
+        "PIPE-013",
+        "TEST-007",
+        "TEST-008",
+        "TEST-009",
+        "TEST-013",
+        "TEST-014"
       ]
     }
   },
@@ -1645,9 +1657,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-013"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-013",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "newsbot/discover.py: robots_allows (RobotFileParser), per-host politeness spacing (_host_pace with HOST_DELAY_SEC=0.05) and DISCOVER_PROBE_BUDGET=14; tests/test_phase2_politeness_and_qa.py"
+      }
     },
     {
       "id": "PIPE-014",
@@ -2095,9 +2112,14 @@
       "priority": "P2",
       "category": "MISSING TEST / UNKNOWN BEHAVIOR",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-10",
-      "evidence_ref": "docs/audit/FINDINGS.md#test-007"
+      "evidence_ref": "docs/audit/FINDINGS.md#test-007",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "tests/test_phase2_politeness_and_qa.py verifies exponential backoff, 12h cap, source_ok reset, auto-disable at SOURCE_FAIL_LIMIT, and cycle paused/cooldown skip"
+      }
     },
     {
       "id": "TEST-008",
@@ -2106,9 +2128,14 @@
       "priority": "P2",
       "category": "MISSING TEST / UNKNOWN BEHAVIOR",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-10",
-      "evidence_ref": "docs/audit/FINDINGS.md#test-008"
+      "evidence_ref": "docs/audit/FINDINGS.md#test-008",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "tests/test_phase2_politeness_and_qa.py drives daily_tests quota to its cap via reserve_publication, verifies quota_tests cycle stop and usage_reset"
+      }
     },
     {
       "id": "TEST-009",
@@ -2117,9 +2144,14 @@
       "priority": "P2",
       "category": "MISSING TEST / UNKNOWN BEHAVIOR",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-10",
-      "evidence_ref": "docs/audit/FINDINGS.md#test-009"
+      "evidence_ref": "docs/audit/FINDINGS.md#test-009",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "newsbot/ui_dispatch.py logs unrouted callback warnings; tests/test_phase2_politeness_and_qa.py harvests callbacks from 28 UI views and verifies every button routes cleanly"
+      }
     },
     {
       "id": "TEST-010",
@@ -2161,9 +2193,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-10",
-      "evidence_ref": "docs/audit/FINDINGS.md#test-013"
+      "evidence_ref": "docs/audit/FINDINGS.md#test-013",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "tests/conftest.py closes SQLite connections and removes _tmp on session teardown/atexit + provides isolated_db fixture; tests/test_phase2_politeness_and_qa.py"
+      }
     },
     {
       "id": "TEST-014",
@@ -2172,9 +2209,14 @@
       "priority": "P2",
       "category": "DOCUMENTATION MISMATCH",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-10",
-      "evidence_ref": "docs/audit/FINDINGS.md#test-014"
+      "evidence_ref": "docs/audit/FINDINGS.md#test-014",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "README.md claim scoped accurately to business-critical paths and AST-guarded in tests/test_phase2_politeness_and_qa.py"
+      }
     },
     {
       "id": "UI-001",

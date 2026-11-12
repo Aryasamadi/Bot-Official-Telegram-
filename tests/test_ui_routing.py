@@ -86,6 +86,9 @@ async def _call(fn, *args):
 
 
 def _mk_fixtures():
+    from newsbot.core_users import ensure_user, set_lang
+    ensure_user(1, "admin", "Admin")
+    set_lang(1, "fa")
     add_channel(1, 9501, "ch", "chan", 1)
     cid = channel_by_chat(9501)["id"]
     add_source(1, cid, "https://example.com/feed.xml")

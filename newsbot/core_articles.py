@@ -123,19 +123,22 @@ def release_publication(aid, journal, reason):
         day = journal.get("reserved_day")
         if day is not None and journal.get("phase") != "in_flight":
             conn.execute("UPDATE usage SET posts=MAX(0,posts-1) WHERE admin_id=? AND day=?", (journal["admin_id"], day))
+        cday = journal.get("ch_reserved_day"); cid = journal.get("ch_id")
+        if cday is not None and cid is not None and journal.get("phase") != "in_flight":
+            conn.execute("UPDATE usage SET posts=MAX(0,posts-1) WHERE admin_id=? AND day=?", (-int(cid), cday))
         tday = journal.get("test_day")
         if tday is not None and journal.get("phase") != "in_flight":
             conn.execute("UPDATE usage SET tests=MAX(0,tests-1) WHERE admin_id=? AND day=?", (journal.get("test_user"), tday))
         if journal.get("phase") == "in_flight":
             # تحویل نامعلوم: روزِ رزروشده می‌ماند (شاید واقعاً منتشر شده باشد) ولی فاز از in_flight بیرون می‌رود،
             # وگرنه publication_pending تا ۴۸ ساعت کانال را برای ریست صف/انتقال مالکیت/حذف کانال قفل می‌کند.
-            jr = dict(journal, phase="unsettled", reserved_day=day)
+            jr = dict(journal, phase="unsettled", reserved_day=day, ch_reserved_day=cday)
         elif journal.get("phase") == "partial":
             # رسانه آپلود شده ولی ارسال نشده (کرش وسط آپلود): سهمیه برمی‌گردد و فاز به unsettled می‌رود؛
             # اگر partial بماند، publication_pending کانال را برای همیشه busy نگه می‌دارد.
-            jr = dict(journal, phase="unsettled", reserved_day=None)
+            jr = dict(journal, phase="unsettled", reserved_day=None, ch_reserved_day=None)
         else:
-            jr = dict(journal, reserved_day=None)
+            jr = dict(journal, reserved_day=None, ch_reserved_day=None)
         conn.execute("UPDATE articles SET reason=? WHERE id=?", (reason, aid))
         if jr.get("phase") == "prepared":
             conn.execute("DELETE FROM pub_journal WHERE article_id=?", (aid,))
@@ -192,11 +195,40 @@ def reserve_publication(aid, admin_id, count_usage, test_user, previous):
     tcap = lim["daily_tests"] if test_user is not None else None
     journal = dict(previous or {}, phase="partial" if previous and previous.get("media_id") else "prepared",
                    admin_id=admin_id, test_user=test_user, day=day, reserved_day=day if count_usage and cap is not None else None,
+                   ch_reserved_day=None, ch_id=None,
                    test_day=day if (test_user is not None and tcap is not None) else None)
     def _go(conn):
         if journal["reserved_day"] is not None:
             cur = conn.execute("INSERT INTO usage(admin_id,day,posts,tests) VALUES(?,?,1,0) ON CONFLICT(admin_id,day) DO UPDATE SET posts=posts+1 WHERE posts <?", (admin_id, day, cap))
             if not cur.rowcount: raise PublicationQuotaExceeded
+        if count_usage:
+            # PIPE-017: رزرو اتمیِ سقفِ روزانهٔ کانال در همان تراکنشِ سقفِ پلن (با ردیف شمارندهٔ admin_id = -cid).
+            arow = conn.execute("SELECT channel_id FROM articles WHERE id=?", (aid,)).fetchone()
+            cid = int(arow[0]) if (arow and arow[0]) else None
+            ch_row = conn.execute("SELECT chat_id, settings FROM channels WHERE id=?", (cid,)).fetchone() if cid else None
+            if ch_row:
+                try:
+                    st = json.loads(ch_row[1] or "{}")
+                    raw_cap = st.get("daily_posts_cap")
+                    ch_cap = int(raw_cap) if raw_cap else None
+                except Exception:
+                    ch_cap = None
+                if ch_cap is not None:
+                    ch_off = st.get("tz") or st.get("utc_offset")
+                    if ch_off is None: ch_off = admin_offset(admin_id)
+                    ch_day = today_str(ch_off)
+                    from newsbot.timeutils import zone_of, iso_fixed
+                    z = zone_of(ch_off)
+                    loc = now_utc().astimezone(z)
+                    ch_cut = iso_fixed(datetime(loc.year, loc.month, loc.day, tzinfo=z))
+                    posted_n = int(conn.execute("SELECT COUNT(*) FROM posted WHERE channel_id=? AND posted_at>=?", (ch_row[0], ch_cut)).fetchone()[0] or 0)
+                    if posted_n >= ch_cap: raise PublicationQuotaExceeded
+                    if posted_n > 0:
+                        conn.execute("INSERT INTO usage(admin_id,day,posts,tests) VALUES(?,?,?,0) ON CONFLICT(admin_id,day) DO UPDATE SET posts=MAX(posts,excluded.posts)", (-cid, ch_day, posted_n))
+                    cur = conn.execute("INSERT INTO usage(admin_id,day,posts,tests) VALUES(?,?,1,0) ON CONFLICT(admin_id,day) DO UPDATE SET posts=posts+1 WHERE posts <?", (-cid, ch_day, ch_cap))
+                    if not cur.rowcount: raise PublicationQuotaExceeded
+                    journal["ch_id"] = cid
+                    journal["ch_reserved_day"] = ch_day
         if journal["test_day"] is not None:
             # رزرو اتمی سهمیهٔ تست روزانه: یک UPDATE شرطی (WHERE tests <limit) که با rowcount بررسی می‌شود،
             # پس دو تست هم‌زمان نمی‌توانند هر دو از دروازه رد شوند.

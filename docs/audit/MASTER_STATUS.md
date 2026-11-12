@@ -1,23 +1,25 @@
 # MASTER STATUS — Bot-Official-Telegram- Comprehensive Engineering Audit
 
-> This file is the single entry point for audit state. It always points to exactly one current
-> phase and one next permitted action. Read it first in every session.
+> **HISTORICAL DOCUMENT (reconciled 2026-11-12).** The remediation phases `PH-00…PH-11` recorded here
+> belong to the 2026-10 audit cycle and are largely merged into `main`. **The live source of truth is
+> `docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md`.** Read that first. This file is kept for the audit
+> history and the original findings register (`FINDINGS.md`).
+>
+> The fields below were updated on 2026-11-12 to remove claims that git no longer supports. The
+> per-phase narrative sections further down are **not** re-verified and must not be treated as current.
 
 | Field | Value |
 |---|---|
-| **Last audit timestamp** | 2026-10-20 (UTC) · **verification pass:** 2026-10-20 (phase `PH-00`) · **remediation update:** 2026-10-23 (`PH-06`) |
+| **Last audit timestamp** | 2026-10-20 (UTC) · **verification pass:** 2026-10-20 (phase `PH-00`) · **reconciled:** 2026-11-12 |
 | **Audited repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Remote** | `https://github.com/Aryasamadi/Bot-Official-Telegram-.git` |
 | **Audited branch** | `main` |
-| **Audited commit SHA** | `08bc87655dc910a98076acd749ddf8f3e6bdca2c` ("Fix referral invitation copy and fallback", 2026-10-19T20:03:08Z) |
-| **Production commit SHA** | **UNKNOWN — NOT VERIFIED.** No VPS/host access was available: this environment has **no `~/.ssh`, no ssh config, no `gh` CLI and no VPS environment variables**. The repository contains no deployment ledger; `.deployed_sha` is written on the host and never committed. The only in-repo evidence of the running SHA is the super-admin `/health` panel (`newsbot/ui_views_super.py:36-60`). See `FINDINGS.md` §13.1. |
-| **Audit workspace** | `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (clean clone of `main` @ `08bc876`; audit docs written here) |
-| **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **2 CRITICAL** defects (FIN-001 financial + OPS-033 restart loop), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
-| **Audit completion** | **~94 %** (all 20 audit domains inspected; a second verification pass executed the FIN-001 reproduction and re-ran the suite; production runtime verification unavailable) |
-| **Current phase** | `PH-07` — Event-loop correctness and performance — **implemented on `feature/ph-07-event-loop`; PR #35 open** |
-| **Current phase status** | PRs #20–#33 merged · **#34** payment hotfix (open) · **#35 PH-07 (open, not merged)** · PH-09/10/11 pending |
-| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` — after the PH-07 PR, proceed to PH-09 → PH-10 → PH-11 only on explicit instruction |
-| **Owner approval required** | `true` |
+| **Audited commit SHA (historical)** | `08bc87655dc910a98076acd749ddf8f3e6bdca2c` ("Fix referral invitation copy and fallback", 2026-10-19T20:03:08Z) — **superseded** |
+| **Current `main` (verified 2026-11-12)** | `d0efb7e0692ec0b32c83e86a05b664ace315cded` (2026-10-31 06:50:44 +0000) |
+| **Production commit SHA** | **UNKNOWN — NOT VERIFIED.** No VPS/host access is available from this environment. The repository contains no deployment ledger; `.deployed_sha` is written on the host and never committed. The only in-repo evidence of the running SHA is the super-admin `/health` panel (`newsbot/ui_views_super.py:36-60`). The latest recorded deployment run for `d0efb7e` was `skipped`. |
+| **Current state of record** | `docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md` (phase 1 of 10, `IN_PROGRESS`) |
+| **Remediation status at reconciliation** | `PH-01…PH-08` are merged into `main` (PRs #20–#36). Their narrative sections below describe the *state at the time of implementation*, not the current code. |
+| **Next permitted action** | Per the owner's explicit instruction for each phase; Phase 1 is authorized. |
 
 ---
 

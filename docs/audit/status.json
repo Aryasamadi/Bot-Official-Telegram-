@@ -1,6 +1,12 @@
 {
   "schema_version": 1,
   "repository": "Aryasamadi/Bot-Official-Telegram-",
+  "reconciliation": {
+    "reconciled_at": "2026-11-12T00:00:00Z",
+    "note": "This register was built against 08bc876 (2026-10-19). main is now d0efb7e (2026-10-31) and contains the merged PH-01..PH-08 work, so many entries below marked OPEN are in fact fixed. Treat this file as a historical register, not as current state. The live source of truth is docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md.",
+    "current_main_sha": "d0efb7e0692ec0b32c83e86a05b664ace315cded",
+    "status_values_are_historical": true
+  },
   "baseline": {
     "branch": "main",
     "commit_sha": "08bc87655dc910a98076acd749ddf8f3e6bdca2c",

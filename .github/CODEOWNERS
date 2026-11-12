@@ -1,0 +1,10 @@
+# OPS-023: Ownership for deploy-critical, financial, and core infrastructure paths
+* @Aryasamadi
+/.github/workflows/ @Aryasamadi
+/deploy/ @Aryasamadi
+/tools/ @Aryasamadi
+/newsbot/db.py @Aryasamadi
+/newsbot/config.py @Aryasamadi
+/newsbot/core_payments.py @Aryasamadi
+/newsbot/core_wallet.py @Aryasamadi
+/newsbot/publish.py @Aryasamadi

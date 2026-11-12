@@ -147,7 +147,7 @@ flowchart LR
 
 ### ۱. پیش‌نیاز
 
-- **Python 3.12+**
+- **Python 3.13+**
 - یک توکن ربات از [@BotFather](https://t.me/BotFather)
 - شناسهٔ عددی تلگرام خودتان (برای `SUPER_ADMIN_IDS`)
 

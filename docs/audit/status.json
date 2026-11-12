@@ -146,9 +146,9 @@
     "low": 66,
     "informational": 12,
     "total": 185,
-    "open": 51,
+    "open": 46,
     "fixed_unverified": 13,
-    "verified_fixed": 116,
+    "verified_fixed": 121,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0,
@@ -256,6 +256,17 @@
         "OBS-008",
         "OBS-010",
         "OBS-014"
+      ]
+    },
+    "refresh_2026_11_12_hygiene_i18n": {
+      "date": "2026-11-12",
+      "scope": "phase-3 repository hygiene + semantic i18n parity",
+      "updated": [
+        "OPS-017",
+        "OPS-019",
+        "OPS-023",
+        "OPS-029",
+        "TEST-010"
       ]
     }
   },
@@ -1270,9 +1281,14 @@
       "priority": "P2",
       "category": "DOCUMENTATION MISMATCH",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-11",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-017"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-017",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "README.md requirement updated from Python 3.12+ to Python 3.13+ to match CI, Dockerfile, and requirements.txt; tests/test_phase3_hygiene_and_i18n.py"
+      }
     },
     {
       "id": "OPS-018",
@@ -1292,9 +1308,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-019"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-019",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": ".github/workflows/ci.yml pins pip==26.2.2; tests/test_phase3_hygiene_and_i18n.py asserts all dependencies in requirements*.txt and pip in CI are strictly pinned"
+      }
     },
     {
       "id": "OPS-020",
@@ -1336,9 +1357,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-11",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-023"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-023",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "Added .github/CODEOWNERS, .github/dependabot.yml, .github/pull_request_template.md, CHANGELOG.md, and LICENSE; tests/test_phase3_hygiene_and_i18n.py"
+      }
     },
     {
       "id": "OPS-024",
@@ -1405,9 +1431,14 @@
       "priority": "P2",
       "category": "DOCUMENTATION MISMATCH",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-04",
-      "evidence_ref": "docs/audit/FINDINGS.md#ops-029"
+      "evidence_ref": "docs/audit/FINDINGS.md#ops-029",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "docs/DEPLOY_RUNBOOK.md unified with docs/SECURITY.md on ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub for VPS_HOST_FINGERPRINT; tests/test_phase3_hygiene_and_i18n.py"
+      }
     },
     {
       "id": "OPS-030",
@@ -2203,9 +2234,14 @@
       "priority": "P2",
       "category": "MISSING TEST / UNKNOWN BEHAVIOR",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-10",
-      "evidence_ref": "docs/audit/FINDINGS.md#test-010"
+      "evidence_ref": "docs/audit/FINDINGS.md#test-010",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "tests/test_phase3_hygiene_and_i18n.py verifies identical placeholder sets, Latin script in English strings, no Persian leakage in English strings across TXT/DIAG/STAGES/FIELD_LABEL, tr() fallback, and gtext() DB overrides"
+      }
     },
     {
       "id": "TEST-011",

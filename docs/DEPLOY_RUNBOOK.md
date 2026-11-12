@@ -55,7 +55,7 @@ Deploy: preflight (وجود secrets) ──▶ checkout ──▶ scp deploy.sh 
 |---|---|
 | `VPS_HOST` | آدرس IP/میزبان VPS |
 | `VPS_SSH_PRIVATE_KEY` | کلید خصوصی SSH (با `username: root`) |
-| `VPS_HOST_FINGERPRINT` | `sha256:...` اثر انگشت میزبان — با `ssh-keyscan -t ed25519 <host>` استخراج شود |
+| `VPS_HOST_FINGERPRINT` | `SHA256:...` اثر انگشت میزبان — مستقیم روی خودِ سرور (از کنسولِ پنل، نه از شبکه) با `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` استخراج شود (`ssh-keyscan` فقط برای تطبیق ثانویه است، نه مرجع اولیه؛ OPS-029) |
 
 نکته: قبلاً `secrets.VPS_HOST` خالی بود و هر ۱۵ اجرای deploy با
 `Error: missing server host` شکست می‌خورد. حالا پیش‌شرطِ روشن (preflight) قبل از هر

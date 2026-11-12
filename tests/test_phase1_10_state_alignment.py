@@ -85,6 +85,51 @@ def test_readme_test_count_matches_collection():
     )
 
 
+def test_every_open_pr_has_a_disposition_in_the_roadmap():
+    """هر PR باز باید تعیین‌تکلیفِ صریح داشته باشد — داخل فازِ خودش.
+
+    بدون این نگهبان، یک PR می‌تواند بی‌صدا از قلم بیفتد و تا آخر باز بماند؛
+    در حالی که قاعدهٔ «هر فاز با PRهای خودش merge می‌شود» نقض شده است.
+    """
+    body = _src("docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md")
+    assert "Disposition" in body or "تعیین‌تکلیف" in body, (
+        "فایل وضعیت باید بخشِ تعیین‌تکلیفِ PRها را داشته باشد"
+    )
+    # هر PR زنجیره باید با تصمیم صریح (MERGE یا MERGED) مشخص شده باشد
+    for n in range(46, 57):
+        row = re.search(r"^\|\s*\*\*#%d\*\*\s*\|(.*)$" % n, body, re.M)
+        assert row, "PR #%d در جدول تعیین‌تکلیف نیست" % n
+        cells = [c.strip() for c in row.group(1).split("|")]
+        # ستون‌ها: عنوان | فازِ مالک | تصمیم | ترتیبِ merge
+        assert len(cells) >= 3, "ردیف PR #%d ستون‌های کافی ندارد" % n
+        assert "MERGE" in cells[2], (
+            "PR #%d تصمیم صریح ندارد (باید MERGE یا MERGED باشد)" % n
+        )
+        phase_cell = cells[1]
+        assert re.search(r"Phase\s*(10|[1-9])\b", phase_cell), (
+            "PR #%d فازِ مالک را ندارد (ستون: %r)" % (n, phase_cell)
+        )
+    # قاعدهٔ «merge در پایان فاز» باید صریحاً ثبت شده باشد
+    assert re.search(r"COMPLETED.*PR", body, re.S) or "still open" in body, (
+        "قاعدهٔ «فاز با PRهای بازِ خودش COMPLETED نیست» ثبت نشده است"
+    )
+
+
+def test_merge_gate_workaround_is_documented_and_verifiable():
+    """راه‌حلِ موقتِ برداشتن گیتِ تأیید باید مستند باشد و راه بازگرداندنش هم باشد."""
+    body = _src("docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md")
+    assert "updateBranchProtectionRule" in body, (
+        "راهِ بازگرداندنِ قاعدهٔ تأیید (GraphQL) باید مستند باشد"
+    )
+    assert "required_approving_review_count" in body, (
+        "نامِ فیلدِ قاعدهٔ تأیید باید ثبت شود"
+    )
+    # قاعدهٔ نگهبانی: درِ امنیتی نباید باز بماند
+    assert re.search(r"Never leave a security gate disabled", body), (
+        "قاعدهٔ «گیت امنیتی نباید باز بماند» باید در توافق کاری باشد"
+    )
+
+
 def test_audit_status_files_declare_their_age():
     """اسناد ممیزی باید کهنه‌نبودن خود را اعلام کنند و به فایل مرجع اشاره کنند.
 

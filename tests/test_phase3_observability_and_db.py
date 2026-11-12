@@ -82,7 +82,7 @@ def test_obs010_classify_error_and_log_event_attaches_error_class(caplog):
     assert any("error_class=rate_limit" in r.message for r in caplog.records)
 
 
-def test_obs014_and_db007_health_snapshot_and_channel_cascade_leave_zero_orphans():
+def test_obs014_and_db007_health_snapshot_and_channel_cascade_leave_zero_orphans(isolated_db):
     uid = 881001
     ensure_user(uid, "u881001", "U")
     cid = add_channel(uid, -100881001, "Ch881001", "ch881001", uid)

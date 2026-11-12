@@ -99,7 +99,7 @@ if not getattr(logging, _REDACT_FACTORY_FLAG, False):
 
 class JsonLogFormatter(logging.Formatter):
     """OBS-003/OBS-008: قالبِ JSONِ خطی برای سینک‌های پایدار و جمع‌آوریِ ماشینی."""
-    def format(self, record: logging.LogRecord) -> str:
+    def format(self, record):
         payload = {
             "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%SZ"),
             "level": record.levelname,
@@ -150,7 +150,7 @@ def classify_error(err_or_text) -> str:
     return "unknown"
 
 
-def render_prometheus_metrics() -> str:
+def render_prometheus_metrics():
     """OBS-001: خروجیِ استانداردِ متریک‌ها در قالبِ متنیِ Prometheus."""
     from newsbot.db import gget
     from newsbot.timeutils import parse_dt

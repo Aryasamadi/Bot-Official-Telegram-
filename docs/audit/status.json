@@ -146,9 +146,9 @@
     "low": 66,
     "informational": 12,
     "total": 185,
-    "open": 68,
+    "open": 63,
     "fixed_unverified": 13,
-    "verified_fixed": 99,
+    "verified_fixed": 104,
     "blocked": 0,
     "deferred": 5,
     "wont_fix": 0,
@@ -217,6 +217,21 @@
         "PIPE-017",
         "PIPE-018",
         "PUB-002"
+      ]
+    },
+    "refresh_2026_11_12_pipeline": {
+      "date": "2026-11-12",
+      "scope": "phase-2 pipeline hardening + network pinning",
+      "updated": [
+        "FIN-011",
+        "NET-003",
+        "PIPE-011",
+        "PIPE-014",
+        "TEST-006"
+      ],
+      "not_done": [
+        "PIPE-013 (robots/politeness policy) still OPEN",
+        "about 65 benign best-effort silent excepts not yet triaged; the payment compensation ones now log"
       ]
     }
   },
@@ -507,9 +522,14 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#fin-011"
+      "evidence_ref": "docs/audit/FINDINGS.md#fin-011",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "stale register entry: _pay_approve_d1 applies everything in one batch and recover_stuck_payments honours applied_at; tests/test_d1_payment_path.py"
+      }
     },
     {
       "id": "FIN-012",
@@ -719,10 +739,15 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-02",
       "evidence_ref": "docs/audit/FINDINGS.md#net-003",
-      "fix_applied": "PH-02: هر جهشِ redirect جداگانه اعتبارسنجی می‌شود (پنجره باریک‌تر شد) اما پنجرهٔ TOCTOU باقی است ⇒ باز."
+      "fix_applied": "PH-02: هر جهشِ redirect جداگانه اعتبارسنجی می‌شود (پنجره باریک‌تر شد) اما پنجرهٔ TOCTOU باقی است ⇒ باز.",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "newsbot/pinned_transport.py: httpcore network backend resolves, validates and connects to the same address (SNI/Host untouched); wired into net_http.http(); tests/test_net003_dns_pinning.py incl. end-to-end loopback server never contacted"
+      }
     },
     {
       "id": "NET-004",
@@ -1594,9 +1619,14 @@
       "priority": "P2",
       "category": "DESIGN WEAKNESS",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-011"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-011",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "extract_article wrapped in asyncio.timeout(EXTRACT_ARTICLE_DEADLINE_SEC=45); tests/test_pipe011_014_extract_url.py"
+      }
     },
     {
       "id": "PIPE-012",
@@ -1627,9 +1657,14 @@
       "priority": "P2",
       "category": "CONFIRMED BUG",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-08",
-      "evidence_ref": "docs/audit/FINDINGS.md#pipe-014"
+      "evidence_ref": "docs/audit/FINDINGS.md#pipe-014",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "clean_url sorts query parameters; tests/test_pipe011_014_extract_url.py"
+      }
     },
     {
       "id": "PIPE-015",
@@ -2045,9 +2080,14 @@
       "priority": "P1",
       "category": "MISSING TEST / UNKNOWN BEHAVIOR",
       "verification": "STATIC",
-      "status": "OPEN",
+      "status": "VERIFIED_FIXED",
       "phase": "PH-01",
-      "evidence_ref": "docs/audit/FINDINGS.md#test-006"
+      "evidence_ref": "docs/audit/FINDINGS.md#test-006",
+      "previous_status": "OPEN",
+      "refresh": {
+        "date": "2026-11-12",
+        "evidence": "stale register entry: tests/test_d1_payment_path.py already covers _pay_approve_d1 (atomic batch, failure rollback, double approve, stuck recovery) against a real-SQLite D1 fake; 49 payment tests pass"
+      }
     },
     {
       "id": "TEST-007",

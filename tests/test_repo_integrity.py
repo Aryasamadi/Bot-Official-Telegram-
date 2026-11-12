@@ -27,14 +27,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROPOSED_PATHS = {
     "deploy/systemd/newsbot.service",   # OPS-001 — پیشنهادِ فایل واحد سرویس
     "deploy/env.example",               # OPS-001 — پیشنهادِ تک‌منبعِ APP_DIR/SERVICE
-    ".github/CODEOWNERS",               # OPS-023 — پیشنهادِ مالکیت مسیرهای حساس
-    ".github/dependabot.yml",           # OPS-023 — پیشنهادِ به‌روزرسانی خودکار وابستگی
     "tests/test_deploy_gate.py",        # OPS-032 — در PR #21 (نگهبانِ دروازهٔ تأییدِ استقرار)
 }
 
 # فایل‌های سطح ریشه که مراجعه به آن‌ها باید معتبر باشد
 ROOT_ARTIFACTS = (
     "run.py", "requirements.txt", "requirements-dev.txt", "README.md", "ROADMAP.md",
+    "CHANGELOG.md", "LICENSE",
     ".env.example",
     ".gitignore", ".dockerignore", "Dockerfile",
 )

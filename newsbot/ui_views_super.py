@@ -57,6 +57,9 @@ def health_snapshot():
     chans = probe("channels", lambda: q("SELECT COUNT(*) c FROM channels", one=True)["c"], None)
     ready = probe("ready", lambda: q("SELECT COUNT(*) c FROM articles WHERE status='ready'", one=True)["c"], None)
     pending = probe("journal", lambda: q("SELECT COUNT(*) c FROM pub_journal", one=True)["c"], None)
+    proc_pays = probe("pay_processing", lambda: q("SELECT COUNT(*) c FROM pay_requests WHERE status='processing'", one=True)["c"], 0)
+    orphans = probe("orphans", lambda: sum(__import__("newsbot.db", fromlist=["db_orphan_counts"]).db_orphan_counts().values()), 0)
+    active_locks = probe("locks", lambda: __import__("newsbot.concurrency", fromlist=["active_channel_locks"]).active_channel_locks(), [])
     unnot = probe("pay_unnotified", lambda: len(pay_unnotified(50)), None)
     superunnot = probe("super_unnotified", pay_super_unnotified_count, None)
     alert_pending_n = alert_dead_n = None
@@ -105,6 +108,10 @@ def health_snapshot():
         status = "degraded" if status != "unknown" else status; reasons.append(f"unseen receipts={superunnot}")
     if pending:
         status = "degraded" if status != "unknown" else status; reasons.append(f"pending journals={pending}")
+    if proc_pays:
+        status = "degraded" if status != "unknown" else status; reasons.append(f"processing payments={proc_pays}")
+    if orphans:
+        status = "degraded" if status != "unknown" else status; reasons.append(f"orphan rows={orphans}")
     if auto and chans and last_pub is None and status == "ok":
         status = "unknown"; reasons.append("no successful publish recorded")
     if auto and chans and last_pub_age is not None and last_pub_age > int(config.DEADMAN_STALE_HOURS) * 3600:
@@ -114,6 +121,7 @@ def health_snapshot():
     return {"status": status, "reasons": reasons, "errors": errors, "heartbeat_age": hb_age,
             "last_publish_age": last_pub_age, "auto": bool(auto), "db_size_mb": size_mb,
             "db_integrity": integ, "channels": chans, "ready": ready, "pending_journals": pending,
+            "processing_payments": proc_pays, "orphan_rows": orphans, "active_locks": active_locks or [],
             "unnotified_payments": unnot, "super_unnotified": superunnot,
             "alerts_pending": alert_pending_n, "alerts_dead": alert_dead_n,
             "models_ok": ok, "models_total": len(models)}
@@ -154,6 +162,8 @@ async def view_health(update, context):
         f"\n\n📡 کانال‌های ثبت‌شده: {s['channels'] if s['channels'] is not None else 'نامعلوم'}"
         f"\n📥 موارد آماده در صف: {s['ready'] if s['ready'] is not None else 'نامعلوم'}"
         f"\n📌 موارد معلق ژورنال: {s['pending_journals'] if s['pending_journals'] is not None else 'نامعلوم'}"
+        f"\n🔒 قفل‌های فعال کانال: {len(s.get('active_locks') or [])}"
+        f"\n⏳ پرداخت‌های در حال پردازش: {s.get('processing_payments', 0)}"
         f"\n🧾 پرداخت‌های تأییدشدهٔ اعلام‌نشده: {s['unnotified_payments'] if s['unnotified_payments'] is not None else 'نامعلوم'}"
         f"\n📨 رسیدهای اعلام‌نشده به مدیر: {s['super_unnotified'] if s['super_unnotified'] is not None else 'نامعلوم'}"
         f"\n🔔 اعلان‌های نرسیده: {s['alerts_pending'] if s['alerts_pending'] is not None else 'نامعلوم'} (مرده: {s['alerts_dead'] if s['alerts_dead'] is not None else 'نامعلوم'})"
@@ -174,6 +184,8 @@ async def view_health(update, context):
         f"\n\n📡 Registered channels: {s['channels'] if s['channels'] is not None else 'unknown'}"
         f"\n📥 Ready in queue: {s['ready'] if s['ready'] is not None else 'unknown'}"
         f"\n📌 Pending journals: {s['pending_journals'] if s['pending_journals'] is not None else 'unknown'}"
+        f"\n🔒 Active channel locks: {len(s.get('active_locks') or [])}"
+        f"\n⏳ Payments in processing: {s.get('processing_payments', 0)}"
         f"\n🧾 Unnotified approved payments: {s['unnotified_payments'] if s['unnotified_payments'] is not None else 'unknown'}"
         f"\n📨 Receipts not seen by an admin: {s['super_unnotified'] if s['super_unnotified'] is not None else 'unknown'}"
         f"\n🔔 Undelivered alerts: {s['alerts_pending'] if s['alerts_pending'] is not None else 'unknown'} (dead: {s['alerts_dead'] if s['alerts_dead'] is not None else 'unknown'})"

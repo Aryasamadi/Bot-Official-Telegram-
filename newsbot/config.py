@@ -274,6 +274,11 @@ DRAIN_TIMEOUT_SEC = _env_int("DRAIN_TIMEOUT_SEC", 30, 5, 120)
 # UISEC-06 (فاز ۶): مهلت state فرم‌های ورودی — پس از این مدت state منقضی و ورودی بعدی رد می‌شود
 AWAIT_TTL_SEC = _env_int("AWAIT_TTL_SEC", 1800)
 
+# ── مشاهده‌پذیری و لاگ پایدار (OBS-001 / OBS-008) ──
+LOG_FILE = os.getenv("LOG_FILE", "").strip()
+LOG_FORMAT = (os.getenv("LOG_FORMAT", "text").strip().lower() or "text")
+METRICS_FILE = os.getenv("METRICS_FILE", "").strip()
+
 # ── ابزارهای مشترک ──
 _FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 

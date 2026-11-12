@@ -1121,3 +1121,13 @@ def readonly_check():
     finally:
         conn.close()
     return problems
+
+
+def db_orphan_counts() -> dict[str, int]:
+    """DB-007: شمارشِ رکوردهای یتیم در جداولِ وابسته به کانال و مقاله (صفر = یکپارچگیِ ارجاعیِ کامل)."""
+    return {
+        "sources": int((q("SELECT COUNT(*) c FROM sources WHERE channel_id NOT IN (SELECT id FROM channels)", one=True) or {"c": 0})["c"]),
+        "articles": int((q("SELECT COUNT(*) c FROM articles WHERE channel_id NOT IN (SELECT id FROM channels)", one=True) or {"c": 0})["c"]),
+        "pub_journal": int((q("SELECT COUNT(*) c FROM pub_journal WHERE article_id NOT IN (SELECT id FROM articles)", one=True) or {"c": 0})["c"]),
+        "ch_tokens": int((q("SELECT COUNT(*) c FROM ch_tokens WHERE channel_id NOT IN (SELECT id FROM channels)", one=True) or {"c": 0})["c"]),
+    }

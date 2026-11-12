@@ -404,7 +404,7 @@ python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08
 |---|---|
 | `test_agent_contract.py` | **قرارداد بایت‌به‌بایت** پرامپت و خروجی ایجنت |
 | `test_static_guard.py` | صفر `undefined name` + محافظت `.gitignore` |
-| `test_security.py` | SSRF · تزریق پرامپت · XSS (۴۹ تست) |
+| `test_security.py` | SSRF · تزریق پرامپت · XSS (۷۳ تست) |
 | `test_trx_atomicity.py` | اتمیک‌بودن تراکنش SQLite و batch روی D1 |
 | `test_recovery_concurrency.py` | ژورنال انتشار · قفل‌ها · «هرگز پست تکراری» |
 | `test_business_logic.py` | سهمیه · تخفیف · ارجاع (۲۵ تست) |
@@ -418,7 +418,7 @@ python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08
 | `test_phase15_watchdog.py` | `Restart=always` · حذف start-limit · sd_notify/READY/STOPPING · watchdog loop |
 | `test_rich_messages.py` | موتور قالب‌بندی · جدول بومی · RTL · **fallback بدون حذف محتوا** · نگاشت خطای Bot API · ژورنال انتشار |
 
-> **«تست‌نشده = رد‌شده».** هیچ تستی برای سبز شدن تغییر نکرده و هیچ `except` خالی‌ای خطا را پنهان نمی‌کند.
+> **«تست‌نشده = رد‌شده».** هیچ تستی برای سبز شدن تغییر نکرده است.
 
 ---
 

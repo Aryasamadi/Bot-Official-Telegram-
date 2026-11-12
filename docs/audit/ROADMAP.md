@@ -1,5 +1,11 @@
 # ROADMAP — Bot-Official-Telegram- Remediation Plan
 
+> **HISTORICAL DOCUMENT (reconciled 2026-11-12).** The `PH-00…PH-11` remediation phases below belong to
+> the 2026-10 audit cycle and are largely merged into `main`. **The live source of truth is
+> `docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md`**, which carries the current 10-phase product roadmap.
+> This file is kept for the audit history only. The owner instruction below is retained as a record of
+> the original agreement and is **not** an instruction to start any phase now.
+
 **Baseline:** commit `08bc87655dc910a98076acd749ddf8f3e6bdca2c` (branch `main`) · the original snapshot recorded **180 findings, all OPEN**; the current register contains **185 findings** and reconciled statuses.
 **Status of this document:** the owner controls execution. **Nothing in this roadmap may be started without
 an explicit owner instruction naming the phase ID.**

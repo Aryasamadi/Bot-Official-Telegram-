@@ -14,11 +14,11 @@
 | **Default branch** | `main` |
 | **Current working branch** | `phase1-10/state-and-truth-alignment` |
 | **Branch base commit** | `d0efb7e0692ec0b32c83e86a05b664ace315cded` |
-| **Last verified commit** | `d6ae7c2` (phase 1 branch) · `main` is `d0efb7e0692ec0b32c83e86a05b664ace315cded` |
-| **Last state update** | 2026-11-12T00:00:00Z (UTC) |
+| **Last verified commit** | `fed5098` (this branch) · `main` is `d0efb7e0692ec0b32c83e86a05b664ace315cded` |
+| **Last state update** | 2026-11-12 (UTC) |
 | **Overall status** | `IN_PROGRESS` |
 | **Current phase** | Phase 1 of 10 |
-| **Current sub-step** | P1-1 — **COMPLETE**; PR #56 open, CI green, awaiting the required approving review |
+| **Current sub-step** | P1-1 — **COMPLETE** (review pass applied); PR #56 updated, CI re-running, awaiting the required approving review |
 | **Owner authorization** | Required for every phase. Phase 1 authorized 2026-11-12. |
 
 ---
@@ -32,8 +32,8 @@ required approving review (branch protection, not a code problem).
 task P1-2 (merge the #46–#55 chain), which needs an owner ruling (see B-1).
 **Exact next action:** owner reviews and merges PR #56. Nothing else may start without a new instruction.
 
-**Do not repeat** the Phase 0 audit — it is recorded in §7 and in the owner's report
-(`PHASE0_AUDIT_REPORT.md`, outside the repository).
+**Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
+(outside this repository; not committed).
 
 ---
 
@@ -63,7 +63,7 @@ task P1-2 (merge the #46–#55 chain), which needs an owner ruling (see B-1).
 
 | ID | Decision | Alternatives rejected | Why |
 |---|---|---|---|
-| ADR-1 | Single state file: this one. `ROADMAP.md` (root) and `docs/audit/ROADMAP.md` are **historical** | Multiple status files | Contradictory state files were already the cause of a wrong picture of the project |
+| ADR-1 | Single state file: this one. `ROADMAP.md` (root), `docs/audit/ROADMAP.md`, `docs/audit/MASTER_STATUS.md`, `docs/audit/status.json` and `PHASE1-10-FINAL-REPORT.md` are **historical** (all now carry a banner) | Multiple status files | Contradictory state files were already the cause of a wrong picture of the project |
 | ADR-2 | Provider model = new `ai_providers` table + additive `ai_models.provider_id` | Reuse a text column on `ai_models` | A text column cannot carry discovery, per-provider keys or grouping |
 | ADR-3 | Rotation cursor persisted in DB with CAS (`version` column) | In-memory cursor; `ORDER BY RANDOM()` | Restart/multi-worker safe; random is not "round-robin" |
 | ADR-4 | Round-robin is **not** failover: a provider error does not advance within the same request | Current `_try_models` behaviour | Explicit product requirement; must be flagged and tested |
@@ -86,7 +86,8 @@ task P1-2 (merge the #46–#55 chain), which needs an owner ruling (see B-1).
 
 **Files/modules involved**
 `README.md`, `docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md` (new), `docs/audit/MASTER_STATUS.md`,
-`docs/audit/status.json`, `docs/audit/ROADMAP.md`.
+`docs/audit/status.json`, `docs/audit/ROADMAP.md`, `ROADMAP.md`, `PHASE1-10-FINAL-REPORT.md`,
+`tests/test_phase1_10_state_alignment.py` (new), `.gitignore`.
 
 **Prerequisites / dependencies:** none.
 
@@ -95,7 +96,7 @@ task P1-2 (merge the #46–#55 chain), which needs an owner ruling (see B-1).
 **Migration / backup / rollback:** none. Rollback = revert the commit.
 
 **Tests and acceptance criteria**
-1. `pytest -q` is green (same result as the recorded baseline). — **MET** (781 passed / 4 known Windows-only failures)
+1. `pytest -q` matches the recorded baseline: 4 known Windows-only failures, no new failures. — **MET** (branch: 781 passed / 4 failed; `main` baseline: 777 passed / 4 failed — the +4 are this phase's new tests)
 2. `python -m pyflakes newsbot tools run.py tests` is silent. — **MET**
 3. `python tools/final_verification.py` reports 17/17. — **MET**
 4. README states Python 3.13+ and the real test count (785 collected). — **MET**
@@ -108,12 +109,15 @@ task P1-2 (merge the #46–#55 chain), which needs an owner ruling (see B-1).
 
 ## 5. Test evidence (real runs only — never claim an unrun test)
 
-| Date (UTC) | Command | Result |
-|---|---|---|
-| 2026-11-12 | `pytest -q` (isolated clean clone of `main`) | 4 failed, 777 passed in 387.59s — the 4 failures are Windows-only Git-Bash path artifacts (`/app` → `C:\Program Files\Git\app`) in `tests/test_deploy_script.py`; Linux CI is green |
-| 2026-11-12 | `python -m pyflakes newsbot tools run.py tests` | clean (exit 0) |
-| 2026-11-12 | `python tools/final_verification.py` | 17/17 |
-| 2026-11-12 | `pytest -q --collect-only` | 781 tests collected |
+| Date (UTC) | Ref | Command | Result |
+|---|---|---|---|
+| 2026-11-12 | `main` @ `d0efb7e` | `pytest -q` (isolated clean clone) | 4 failed, 777 passed in 387.59s — the 4 are Windows-only Git-Bash path artifacts (`/app` → `C:\Program Files\Git\app`) in `tests/test_deploy_script.py`; Linux CI is green |
+| 2026-11-12 | `main` @ `d0efb7e` | `pytest -q --collect-only` | 781 tests collected |
+| 2026-11-12 | branch (with the new guard) | `pytest -q` | 4 failed, **781 passed** in 514.85s — same 4 Windows-only failures; the +4 new tests pass |
+| 2026-11-12 | branch (with the new guard) | `pytest -q --collect-only` | 785 tests collected |
+| 2026-11-12 | branch | `python -m pyflakes newsbot tools run.py tests` | clean (exit 0) |
+| 2026-11-12 | branch | `python tools/final_verification.py` | 17/17 |
+| 2026-11-12 | branch (PR #56) | GitHub CI `test` / `docker-build` | both SUCCESS |
 
 **Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
 deployment verification, real Telegram integration, Cloudflare D1 live migration.
@@ -134,17 +138,18 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 |---|---|
 | Working branch | `phase1-10/state-and-truth-alignment` |
 | Base | `d0efb7e` |
-| Phase 1 commit | `d6ae7c2` |
+| Phase 1 commit | `d6ae7c2` (docs) · `fed5098` (state update) · PR head at review time |
 | PR | **#56** — `MERGEABLE` / `BLOCKED` (review required) · CI `test: SUCCESS`, `docker-build: SUCCESS` |
 | CI on `main` at `d0efb7e` | `test: success`, `docker-build: success`, `deploy: skipped` |
 | Production commit SHA | **UNVERIFIED** — no VPS read was possible |
 | Open PR chain | #46 → #47 → #48 → #49 → #50 → #51 → #52 → #53 → #54 → #55 (plus #56 from this phase) |
-| PR #46 block reason | `REVIEW_REQUIRED` — branch protection requires 1 approving review; also `required_status_checks: test` (strict), linear history, signed commits off, `enforce_admins: true` |
+| PR #46 block reason | `REVIEW_REQUIRED` — branch protection requires 1 approving review, and the branch is otherwise `MERGEABLE` with green checks. (The other branch-protection rules below apply to all PRs; they are not additional blockers for #46.) |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-12):**
 - Required status checks: `test` (strict = branch must be up to date)
 - Required approving reviews: 1 (stale reviews dismissed on new pushes)
-- Required linear history: **true** (no merge commits on `main` — see §9)
+- Required linear history: **true** (enforced going forward — new merge commits are rejected; `main`
+  still contains 21 historical merge commits from before the rule)
 - Force pushes / deletions: disabled
 - `enforce_admins`: true
 
@@ -156,9 +161,9 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 |---|---|---|
 | B-1 | Merging the stacked PR chain requires an approving review and **linear history** (rebase, not merge) | needs owner decision + review |
 | B-2 | Production commit SHA / unit name / env permissions are unverified | needs VPS access |
-| B-3 | 350-minute GitHub-hosted run vs the hard 6-hour job cap (zero safety margin) | needs owner decision |
+| B-3 | A 350-minute GitHub-hosted run would leave only ~10 minutes of headroom against the hard 6-hour (360-minute) job cap; the cap cannot be raised | needs owner decision |
 | B-4 | Whether the bot is added to the channel discussion group (prerequisite for Phase 4) | needs owner action |
-| B-5 | `newsbot.env` outside the repo holds a real bot token and `SECRETS_KEY` in plain text | needs rotation |
+| B-5 | A file **outside** this repository (the local `newsbot-deploy-pkg` folder) holds a bot token matching the BotFather format and a 64-char `SECRETS_KEY` in plain text (names/lengths only; values never read) | needs rotation |
 | D-1 | 18 unmerged stale branches, 37 remote branches total | deferred to Phase 10 |
 | D-2 | 4 Windows-only failing deploy tests degrade the local signal | deferred to Phase 10 |
 

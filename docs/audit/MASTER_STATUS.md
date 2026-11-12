@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **نشانه** | پنل VPS (vyce.cloud): CPU روی ۱۰۰٪ به‌صورت دندانه‌ای؛ ربات کار نمی‌کند؛ سرور ~۴ ساعت قبل از اسکرین‌شات خاموش و ~۵۱ ثانیه قبلش روشن شده بود |
-| **رد شد (واقعیت، نه حدس)** | ۱) **کدِ من نیست:** `main` هنوز `08bc876` است و **هیچ‌کدام** از PRهای #20…#25 merge نشده‌اند ⇒ کدِ فازها هرگز به سرور نرسیده. ۲) **استقرارهای اخیر نیست:** اجراهای #42، #43 و #44 همگی در **۱۲ تا ۱۵ ثانیه** شکست خوردند، یعنی پیش از هر SSH/SCP ⇒ سرور اصلاً به‌روزرسانی نشد. |
+| **رد شد (واقعیت، نه حدس)** | ۱) **کدِ من نیست:** در آن تاریخ `main` هنوز `08bc876` بود و **هیچ‌کدام** از PRهای #20…#25 merge نشده بودند ⇒ کدِ فازها هرگز به سرور نرسیده بود. ۲) **استقرارهای اخیر نیست:** اجراهای #42، #43 و #44 همگی در **۱۲ تا ۱۵ ثانیه** شکست خوردند، یعنی پیش از هر SSH/SCP ⇒ سرور اصلاً به‌روزرسانی نشده بود. |
 | **علتِ تأییدشده (۲۰۲۶-۱۰-۲۱، بعداً)** | **DB-27**: خطای بحرانیِ استارتاپ روی D1 — «`D1 HTTP 400 … duplicate column name: next_plan_id`» — یعنی برنامه در هر بار بالا آمدن می‌افتاد ⇒ با `Restart=always` **حلقهٔ ۱۰۰٪ CPU**. ریشه: `_table_cols()` روی D1 مجموعهٔ خالی برمی‌گرداند (PRAGMA در D1 no-op بود و خطای واقعی پنهان می‌شد) ⇒ migration ستونِ موجود را دوباره اضافه می‌کرد. اصلاح: **PR #26** (کامیت `3393596`، merge شده). |
 | **اصلاحِ کد** | **PR #26** (ادغام‌نشده): مهاجرت اکنون **بسته‌ای** (مصرف حافظهٔ کران‌دار)، **قابلِ ادامه** (checkpoint هر ستون، commit‌شده بیرون از تراکنشِ اسکیما) و drop-inِ systemd سقفِ ری‌استارت دارد ⇒ حلقهٔ بی‌پایان متوقف می‌شود. |
 | **اصلاحِ فوری روی سرور** | چون مسیرِ استقرار خودش خراب است (۱۳ ثانیه)، اصلاح باید **دستی** اعمال شود — دستورها در گزارشِ همین نوبت آمده است. |
@@ -395,8 +395,10 @@ All under `docs/audit/` in the audit workspace
 "start phase PH-00"
 
 # Read the current state
-"read docs/audit/MASTER_STATUS.md"
+"read docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md"
 ```
 
-**Reminder for future sessions:** always read `docs/audit/MASTER_STATUS.md` and `docs/audit/status.json`
-first, then compare the current Git commit against the recorded baseline (`08bc876`) before acting.
+**Reminder for future sessions (updated 2026-11-12):** do **not** treat this file as current state.
+Read `docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md` first; it is the single source of truth.
+The audit below was built against `main` @ `08bc876`; `main` is now `d0efb7e` and contains the
+merged `PH-01…PH-08` work, so the per-phase narrative here is history, not the present.

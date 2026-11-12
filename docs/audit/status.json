@@ -2735,12 +2735,13 @@
       "objective": "Make every document, count, badge and default match the code."
     }
   ],
-  "current_phase": "PH-07",
-  "current_phase_status": "IMPLEMENTED_AWAITING_MERGE",
+  "current_phase": "SEE docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md",
+  "current_phase_status": "SUPERSEDED — this register is historical; see the reconciliation block above",
   "owner_approval_required": true,
-  "next_permitted_action": "AWAIT_OWNER_AUTHORIZATION",
-  "recommended_next_phase": "PH-09",
-  "recommended_first_remediation_phase": "PH-01",
+  "next_permitted_action": "SUPERSEDED — read docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md",
+  "recommended_next_phase": "SUPERSEDED — the live roadmap is the 10-phase plan in docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md",
+  "recommended_first_remediation_phase": "SUPERSEDED",
+  "superseded_by": "docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md",
   "documents": {
     "master_status": "docs/audit/MASTER_STATUS.md",
     "roadmap": "docs/audit/ROADMAP.md",

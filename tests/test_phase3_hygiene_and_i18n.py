@@ -73,7 +73,7 @@ def test_test010_i18n_semantic_parity_and_placeholders():
                     f"Persian characters leaked into English {table_name}[{key}]: {en_txt}"
                 )
 
-    for key, val in ui_i18n.FIELD_LABEL.items():
+    for _key, val in ui_i18n.FIELD_LABEL.items():
         assert isinstance(val, tuple) and len(val) == 2
         assert re.search(r"[\u0600-\u06FF]", str(val[0]))
         assert re.search(r"[A-Za-z]", str(val[1]))

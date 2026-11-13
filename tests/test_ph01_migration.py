@@ -123,7 +123,7 @@ def test_migration_on_a_copy_is_additive_and_preserves_data(legacy_copy):
         assert "wallet" in tables
         # نسخهٔ اسکیما بالا رفته
         ver = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-        assert ver == "9"
+        assert ver == "10"   # فاز ۲: ai_providers + ai_models.provider_id
         # دادهٔ موجود سالم است
         n_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         assert n_users >= 0

@@ -9,7 +9,7 @@
 [![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-22.8%2B-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://python-telegram-bot.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-default-003B57?style=flat-square&logo=sqlite&logoColor=white)](#-پیکربندی)
 [![Cloudflare D1](https://img.shields.io/badge/Cloudflare-D1%20optional-F38020?style=flat-square&logo=cloudflare&logoColor=white)](#-پیکربندی)
-[![Tests](https://img.shields.io/badge/tests-898%20collected-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
+[![Tests](https://img.shields.io/badge/tests-912%20collected-2ea043?style=flat-square&logo=pytest&logoColor=white)](#-تستها)
 [![i18n](https://img.shields.io/badge/i18n-fa%20%7C%20en-8B5CF6?style=flat-square)](#)
 
 **ربات تک‌پروسه‌ای مدیریت خودکار کانال تلگرام** — منابع خبری را می‌خواند، با چند مدل هوش مصنوعی بازنویسی و امتیازدهی می‌کند، و به‌صورت **crash-safe** منتشر می‌کند.
@@ -66,6 +66,13 @@
 - کش پاسخ‌ها با نسخه‌بندی پرامپت
 - **بودجهٔ per-article** (نه global) با ایزوله‌ی `ContextVar`
 - probe دوره‌ای مدل‌های خراب
+
+**رجیستریِ فراهم‌کننده (فاز ۲)** — یک ردیف به‌ازای (محدودهٔ مالک × میزبان × کلید):
+- جدول `ai_providers` کلید را **رمزنگاری‌شده** نگه می‌دارد و وضعیتِ آخرین آزمونِ اتصال را دارد
+- `ai_models.provider_id` (افزایشی) مدل را به فراهم‌کننده وصل می‌کند؛ ردیف‌های قدیمی بدونِ
+  مهاجرت به `base_url`/`api_key` خودشان برمی‌گردند
+- مهاجرتِ v9 → v10 گروه‌بندیِ خودکار: هر `(owner, base_url)` یک فراهم‌کننده
+- مدیریت با دستورِ مدیر کلان: `/providers` · `add` · `test` · `discover` · `model` · `del`
 
 ### 📣 انتشار idempotent و crash-safe
 **ژورنال انتشار** + جدول `posted` تضمین می‌کند هیچ مقاله‌ای دو بار منتشر نشود — حتی اگر پروسه وسط آپلود کشته شود.
@@ -394,7 +401,7 @@ stateDiagram-v2
 ## 🧪 تست‌ها
 
 ```bash
-pytest -q --cov=newsbot --cov-report=term-missing   # ۸۹۸ تست
+pytest -q --cov=newsbot --cov-report=term-missing   # ۹۱۲ تست
 ruff check newsbot tests tools run.py        # lint (قوانین در pyproject.toml)
 mypy newsbot                                 # بررسیِ نوع
 python -m pyflakes newsbot tools run.py tests   # نگهبان ایستا

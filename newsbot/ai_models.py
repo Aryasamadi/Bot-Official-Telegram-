@@ -155,10 +155,11 @@ def list_models(active_only=False, owner_id=None):
 
 def get_model(mid): return q("SELECT * FROM ai_models WHERE id=?", (mid,), one=True)
 
-def add_model(base_url, api_key, model, name="", priority=10, temperature=0.5, max_tokens=2500, owner_id=None):
+def add_model(base_url, api_key, model, name="", priority=10, temperature=0.5, max_tokens=2500, owner_id=None, provider_id=None):
     base_url = str(base_url).strip().rstrip("/"); model = str(model).strip(); kind = detect_kind(base_url)
     name = (name or f"{hostname(base_url) or kind}").strip()[:40]
-    return q("INSERT INTO ai_models(name,kind,base_url,api_key,model,priority,temperature,max_tokens,owner_id) VALUES(?,?,?,?,?,?,?,?,?)", (name, kind, base_url, _sec_encrypt(api_key.strip()), model, priority, temperature, max_tokens, owner_id), commit=True)
+    return q("INSERT INTO ai_models(name,kind,base_url,api_key,model,priority,temperature,max_tokens,owner_id,provider_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+             (name, kind, base_url, _sec_encrypt(api_key.strip()), model, priority, temperature, max_tokens, owner_id, provider_id), commit=True)
 
 def update_model(mid, **f):
     if "base_url" in f: f["base_url"] = str(f["base_url"]).strip().rstrip("/"); f["kind"] = detect_kind(f["base_url"])
@@ -451,8 +452,27 @@ async def _call_model(m, system, user):
     finally:
         _net_http.post_model_reset(tok)
 
+def resolve_endpoint(m):
+    """(kind, base_url, api_key) یک مدل — با اولویتِ **فراهم‌کننده** (فاز ۲، ADR-۲).
+
+    اگر ``provider_id`` داشته باشد، هویت و کلید از ``ai_providers`` می‌آید (تنها منبعِ
+    حقیقت)؛ در غیر این صورت به ``base_url``/``api_key`` خودِ ردیف برمی‌گردیم (ردیف‌های
+    مهاجرت‌نشده ⇒ عقب‌گرد بدونِ از دست رفتنِ سرویس).
+    """
+    pid = m["provider_id"] if "provider_id" in (m.keys() if hasattr(m, "keys") else ()) else None
+    if pid:
+        p = q("SELECT kind, base_url, api_key FROM ai_providers WHERE id=?", (pid,), one=True)
+        if p is not None:
+            kind = p["kind"] or detect_kind(p["base_url"])
+            key = _sec_decrypt(p["api_key"] or "")
+            return kind, (p["base_url"] or "").rstrip("/"), key
+    kind = m["kind"] or detect_kind(m["base_url"])
+    return kind, (m["base_url"] or "").rstrip("/"), _sec_decrypt(m["api_key"] or "")
+
+
 async def _call_model_impl(m, system, user):
-    kind = m["kind"] or detect_kind(m["base_url"]); base = (m["base_url"] or "").rstrip("/"); key = _sec_decrypt(m["api_key"] or ""); model = m["model"]; temp = 0.5 if m["temperature"] is None else float(m["temperature"]); mx = int(m["max_tokens"] or 2500)
+    kind, base, key = resolve_endpoint(m)
+    model = m["model"]; temp = 0.5 if m["temperature"] is None else float(m["temperature"]); mx = int(m["max_tokens"] or 2500)
     if kind == "anthropic":
         url = base + ("/messages" if base.endswith("/v1") else "/v1/messages")
         r = await _post_retry(url, headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}, json={"model": model, "max_tokens": mx, "temperature": temp, "system": system, "messages": [{"role": "user", "content": user}]})

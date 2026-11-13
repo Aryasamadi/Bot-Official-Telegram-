@@ -60,13 +60,21 @@ async def post_init(app: Application):
     # DEVOPS-08: نشانگرِ تخلیهٔ بازمانده از اجرای قبلی نباید ربات را برای همیشه در حالتِ
     # «تخلیه» نگه دارد (پروسهٔ تازه هیچ انتشارِ در حالِ پروازی ندارد).
     runtime.clear_stale_drain()
-    me = await app.bot.get_me(); runtime.BOT_USERNAME = me.username
+    # OPS-014: READY=1 و watchdog پیش از هر فراخوانی شبکه‌ایِ تلگرام؛ قطعیِ موقتِ تلگرام نباید
+    # واحد systemd (Type=notify) را در حالت activating نگه دارد و به حلقهٔ restart برساند.
+    app.bot_data["_watchdog_task"] = watchdog.start()
+    watchdog.notify_ready()
+    # PTB در initialize() همین حالا get_me را زده و کاربر ربات را نگه داشته؛ فراخوانی شبکه‌ایِ دوم لازم نیست.
+    me = app.bot.bot; runtime.BOT_USERNAME = me.username
     runtime.NOTIFY_SUPER = notify_supers; runtime.NOTIFY_USER = notify_user_fn
     set_bot(app.bot)   # FIX v4: لایه‌ی UI بدون APP سراسری، بطری را از این‌جا می‌گیرد
     from newsbot.notify import ensure_super_worker, notify_super   # ARCH-09/PH-06: outbox پایدار اعلان‌ها
     ensure_super_worker()
-    await app.bot.set_my_commands([BotCommand("start", "منوی اصلی"), BotCommand("create", "پنل مدیریت"), BotCommand("ref", "دعوت دوستان"), BotCommand("man", "پشتیبانی"), BotCommand("lang", "زبان"), BotCommand("about", "درباره"), BotCommand("help", "راهنما"), BotCommand("cancel", "لغو عملیات")], language_code="fa")
-    await app.bot.set_my_commands([BotCommand("start", "Main menu"), BotCommand("create", "Admin panel"), BotCommand("ref", "Invite friends"), BotCommand("man", "Support"), BotCommand("lang", "Language"), BotCommand("about", "About"), BotCommand("help", "Help"), BotCommand("cancel", "Cancel")])
+    try:
+        await app.bot.set_my_commands([BotCommand("start", "منوی اصلی"), BotCommand("create", "پنل مدیریت"), BotCommand("ref", "دعوت دوستان"), BotCommand("man", "پشتیبانی"), BotCommand("lang", "زبان"), BotCommand("about", "درباره"), BotCommand("help", "راهنما"), BotCommand("cancel", "لغو عملیات")], language_code="fa")
+        await app.bot.set_my_commands([BotCommand("start", "Main menu"), BotCommand("create", "Admin panel"), BotCommand("ref", "Invite friends"), BotCommand("man", "Support"), BotCommand("lang", "Language"), BotCommand("about", "About"), BotCommand("help", "Help"), BotCommand("cancel", "Cancel")])
+    except Exception as e:   # OPS-014: ثبت دستورات best-effort است؛ شکست آن نباید راه‌اندازی را بشکند
+        log.warning("set_my_commands failed (ignored): %s: %s", type(e).__name__, e)
     if app.job_queue is not None:
         app.job_queue.run_repeating(job_tick, interval=config.TICK_SECONDS, first=15, name="tick")
     else:
@@ -85,8 +93,6 @@ async def post_init(app: Application):
         extra.append(f"referral {referral_cfg()[0]:g}%")
     if config.MANDATORY_CHANNEL_ID or config.MANDATORY_CHANNEL_USERNAME: extra.append("mandatory-channel ON")
     await notify_super(f"🚀 @{me.username} راه‌اندازی شد · 🤖 مدل‌های فعال {len(await arun(list_models, True))} · backend {config.DB_BACKEND} · CF KV {'✅' if config.CF_ENABLED else '❌'} · تیک هر {config.TICK_SECONDS}s" + (f" · {' · '.join(extra)}" if extra else ""))
-    app.bot_data["_watchdog_task"] = watchdog.start()
-    watchdog.notify_ready()
     # DEVOPS-08: ناظرِ نشانگرِ تخلیه — با دیدنِ فایلِ «در حالِ تخلیه» و صفر شدنِ
     # انتشارهای در حالِ پرواز، فایلِ «تخلیه شد» را می‌نویسد تا deploy.sh بداند کِی
     # سرویس را متوقف کند.
@@ -267,4 +273,5 @@ def main():
     APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.COMMAND, managed_command(cmd_unknown)))
     APP.add_handler(CallbackQueryHandler(on_callback)); APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, on_message)); APP.add_error_handler(on_error)
     # drop_pending_updates=False: پیام‌هایی که کاربر در زمان خاموشی فرستاده از دست نمی‌روند؛ کهنه‌ها با stale() رد می‌شوند.
-    log.info("در حال اجرا…"); APP.run_polling(drop_pending_updates=False, allowed_updates=["message", "callback_query"])
+    log.info("در حال اجرا…"); APP.run_polling(drop_pending_updates=False, allowed_updates=["message", "callback_query"],
+                    bootstrap_retries=-1)   # OPS-014: قطعیِ تلگرام هنگام استارت = تلاش مجدد، نه crash

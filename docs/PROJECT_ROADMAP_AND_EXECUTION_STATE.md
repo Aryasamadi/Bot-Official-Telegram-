@@ -16,8 +16,8 @@
 | **Branch base commit** | `b2b200d29ee546bcffbe7040748abfed26b6adbb` (Phase 1 · PR #50 merged) |
 | **Last verified commit** | `b2b200d` on `main` (PR #50 squash-merge, 2026-11-13) |
 | **Last state update** | 2026-11-13 (UTC) |
-| **Overall status** | `IN_PROGRESS` — **Phase 1 is COMPLETE**; Phase 2 not authorized |
-| **Current phase** | Phase 1 of 10 — **`COMPLETED`** (2026-11-13) |
+| **Overall status** | `IN_PROGRESS` — **Phase 1 and Phase 2 are COMPLETE**; Phase 3 not authorized |
+| **Current phase** | Phase 3 of 10 — `NOT_STARTED` (Phase 1 and Phase 2 are `COMPLETED`) |
 | **Current sub-step** | — (nothing started; the next phase needs a new owner instruction) |
 | **Owner authorization** | Required for every phase. Phase 1 authorized 2026-11-12. The owner ruled on 2026-11-12: every PR of a phase must be **merged** when that phase completes, and each existing PR (#46–#56) gets its disposition **inside its own phase**. |
 
@@ -44,7 +44,7 @@ merged; the full suite run on the final `main`.
 | # | Phase | Goal | Status | Depends on |
 |---|---|---|---|---|
 | 1 | Truth, state file, PR-chain unblock | Make the repo's recorded state match GitHub; create this file; unblock the stacked PR chain; align README/docs | **`COMPLETED`** 2026-11-13 | — |
-| 2 | Provider-centric model data + backend | Independent Providers (name / base URL / token), connection test, model discovery with manual fallback, encrypted keys | `NOT_STARTED` | 1 |
+| 2 | Provider-centric model data + backend | Independent Providers (name / base URL / token), connection test, model discovery with manual fallback, encrypted keys | **`COMPLETED`** 2026-11-13 | 1 |
 | 3 | Round-robin model rotation engine | Every request takes the next model in order; atomic cursor; restart/concurrency safe; per-request audit | `NOT_STARTED` | 2 |
 | 4 | Reply-to-channel-post Q&A core | Answer questions replied to a channel post, with controlled post context and idempotent delivery | `NOT_STARTED` | 2, 3 |
 | 5 | Q&A quotas | Per-post/day, cooldown, per-user daily cap — enforced atomically in the backend | `NOT_STARTED` | 4 |
@@ -56,15 +56,15 @@ merged; the full suite run on the final `main`.
 
 **Status values:** `NOT_STARTED` · `IN_PROGRESS` · `BLOCKED` · `COMPLETED`
 
-**Completed phases:** **Phase 1 — `COMPLETED` 2026-11-13.** Tasks P1-1 (PR #56 `e3e321e`, PR #57
-`533f753`) and P1-2 (PRs #46 → #50, merged oldest-first) are both done; every Phase 1 PR is merged.
+**Completed phases:** **Phase 1 — `COMPLETED` 2026-11-13** (P1-1: #56 `e3e321e`, #57 `533f753`; P1-2: #46→#50, oldest-first; closed by #58 `0f4b90a`).
+**Phase 2 — `COMPLETED` 2026-11-13** (P2-1: #51 `16a7353`, #52 `886e19d`, #53 `bf34390`; P2-2: #60 `bf73b39`).
 
 **PRs owned by each phase** (a phase is not `COMPLETED` while one of its own PRs is open — §9 rule 10):
 
 | Phase | PRs it owns | State |
 |---|---|---|
 | 1 | #46, #47, #48, #49, #50, #56, #57 | **all merged** — Phase 1 `COMPLETED` 2026-11-13 |
-| 2 | #51, #52, #53 | open, awaiting Phase 2 |
+| 2 | #51, #52, #53, #60 | **all merged** — Phase 2 `COMPLETED` 2026-11-13 |
 | 3 | #54, #55 | open, awaiting Phase 3 |
 
 ---
@@ -149,7 +149,7 @@ history it belonged to stays in `docs/audit/FINDINGS.md`.
 gate lift/restore: **#51 `16a7353`** (FIN-024/025, PIPE-017/018, PUB-002) · **#52 `886e19d`**
 (NET-003 DNS pinning, PIPE-011/014) · **#53 `bf34390`** (PIPE-013 politeness, QA debt).
 
-**Task P2-2 — provider registry.** Additive only; no product-behaviour change.
+**Task P2-2 — provider registry.** Merged as **#60 `bf73b39`**. Additive only; no product-behaviour change.
 
 | Item | Decision |
 |---|---|
@@ -318,6 +318,8 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | CI on `main` at `b2b200d` | `test: success` |
 | Production commit SHA | **UNVERIFIED** — no VPS read was possible |
 | **Phase 1 closes with** | **PR #58 — MERGED** as `0f4b90a` (2026-11-13), CI `test: SUCCESS`, review gate lifted for the merge only and restored with all 15 fields verified identical |
+| Phase 2 commits on `main` | `16a7353` (#51) · `886e19d` (#52) · `bf34390` (#53) · `bf73b39` (#60 provider registry) |
+| Phase 2 result | **COMPLETE** — every Phase 2 PR (#51, #52, #53, #60) is merged; §4.2 is satisfied |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)

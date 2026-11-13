@@ -168,10 +168,10 @@ per-kind headers, Gemini shape, key never echoed in errors, test/discovery persi
 branches of `resolve_endpoint`.
 
 **Acceptance criteria**
-1. `pytest -q` has no new failures versus the recorded baseline (§5). — pending final run
+1. `pytest -q` has no new failures versus the recorded baseline (§5). — **MET**: 893 passed / 19 failed, and all 19 are the same Windows-only bash-path failures recorded in §5.1 (4 + 15); CI `test` is green.
 2. `ruff check newsbot tests tools run.py` clean. — **MET**
-3. Migration is idempotent and safe on a copy of a v9 DB. — **MET** (tested)
-4. No secret in code, tests, docs, logs or this file. — **MET** (fixtures use `sk-test-*`/dummy keys; `_safe_error` redacts)
+3. Migration is idempotent and safe on a copy of a v9 DB. — **MET** (tested on a real v9 fixture, re-run twice)
+4. No secret in code, tests, docs, logs or this file. — **MET** (fixtures use dummy keys; `_safe_error` redacts the key from every error string)
 
 ---
 
@@ -271,6 +271,12 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-13 | `main` @ `b2b200d` | GitHub CI `test` | **SUCCESS** |
 | 2026-11-13 | each of #46–#50 | protection JSON compared field by field after every merge | **all 15 fields identical** every time; gate lifted only for the duration of one merge |
 | 2026-11-13 | `main` @ `0f4b90a` (PR #58) | `gh pr merge 58 --squash` → **MERGED**; protection compared field by field | merge SHA `0f4b90a960c92f1f0bf69955aa29fdbae066e06e` · **all 15 fields identical to backup** · CI `test: SUCCESS` |
+| 2026-11-13 | Phase 2 branches | `pytest` the new/affected files after each rebase | #51 12 passed · #52 17 passed · #53 19 passed · provider work 14 passed |
+| 2026-11-13 | `phase2/provider-registry` | `ruff check newsbot tests tools run.py` | All checks passed |
+| 2026-11-13 | `phase2/provider-registry` | `python -m pyflakes` the touched modules | clean |
+| 2026-11-13 | `phase2/provider-registry` | `python tools/final_verification.py` | 17/17 |
+| 2026-11-13 | `phase2/provider-registry` | full `pytest -q` (local, Windows) | **893 passed, 19 failed in 714.34s** — the 19 are exactly the pre-existing Windows-only bash-path failures of §5.1 (4 + 15); **no new failure** |
+| 2026-11-13 | `phase2/provider-registry` | GitHub CI `test` | **SUCCESS** |
 
 **Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
 deployment verification, real Telegram integration, Cloudflare D1 live migration.

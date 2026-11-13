@@ -100,6 +100,7 @@ async def _dispatch(update, context, data):
         if b == "pending": return await popup(update, context, tr(lang, "u_pending_note"))
         if b == "locked":  return await popup(update, context, tr(lang, "u_locked_note"))
         if b == "freeused": return await popup(update, context, tr(lang, "free_once"))
+        log.warning("unrouted callback: %s", str(data)[:64])
         return await go_home_safe(update, context)
     # ---------------- کانال اجباری (همهٔ کاربران، پیش از دروازهٔ ادمین)
     if a == "a" and b == "mand":
@@ -295,6 +296,7 @@ async def _dispatch(update, context, data):
             if lim["max_sources"] is not None and count_sources(uid) >= lim["max_sources"]: await popup(update, context, tr(lang, "limit_sources", n=lim["max_sources"])); return await view_sources(update, context, cid)
             return await ask(update, context, tr(lang, "src_add_prompt"), "src_add", f"a:src:{cid}", cid=cid)
         if b in ("que", "rej"): return await view_queue(update, context, cid, "ready" if b == "que" else "rejected", d)
+        log.warning("unrouted callback: %s", str(data)[:64])
         return await view_channel(update, context, cid)
     # ---------------- مدیر کلان
     if a == "s":
@@ -508,7 +510,9 @@ async def _dispatch(update, context, data):
             if ok: log_event("WARN", f"بازگشت وجه برای پرداخت #{rid}", update.effective_user.id)
             return await view_s_pays(update, context)
         if b in ("pay_ok", "pay_no2"): return await decide_pay(update, context, int(c), b == "pay_ok", d == "l")
+        log.warning("unrouted callback: %s", str(data)[:64])
         return await view_super_home(update, context)
+    log.warning("unrouted callback: %s", str(data)[:64])
     return await go_home_safe(update, context)
 
 

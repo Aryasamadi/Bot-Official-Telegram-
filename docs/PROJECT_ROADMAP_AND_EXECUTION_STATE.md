@@ -235,6 +235,7 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-13 | `main` @ `b2b200d` | full `pytest -q` (local, Windows, twice) | **839 passed, 19 failed in 882.95s** / **751.35s** — the 19 are Windows-only bash path artifacts, see §5.1 |
 | 2026-11-13 | `main` @ `b2b200d` | GitHub CI `test` | **SUCCESS** |
 | 2026-11-13 | each of #46–#50 | protection JSON compared field by field after every merge | **all 15 fields identical** every time; gate lifted only for the duration of one merge |
+| 2026-11-13 | `main` @ `0f4b90a` (PR #58) | `gh pr merge 58 --squash` → **MERGED**; protection compared field by field | merge SHA `0f4b90a960c92f1f0bf69955aa29fdbae066e06e` · **all 15 fields identical to backup** · CI `test: SUCCESS` |
 
 **Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
 deployment verification, real Telegram integration, Cloudflare D1 live migration.
@@ -268,14 +269,14 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Item | Value |
 |---|---|
 | Phase 1 (P1-1) | `d6ae7c2` (docs) · `fed5098` (state update) · `b5c9125` (review pass) → squashed into `e3e321e` |
-| Phase 1 (P1-2) | this close-out commit on `phase1/close-phase-1` → the closing PR |
+| Phase 1 (P1-2) | **PR #58 — MERGED** as `0f4b90a` (2026-11-13) · CI `test: SUCCESS` · this file's close-out record |
 | PR #56 | **MERGED** 2026-11-12, merge commit `e3e321e41634fce726e77ab76cad92250081677f` · CI `test: SUCCESS`, `docker-build: SUCCESS` |
 | PR #57 | **MERGED** 2026-11-13, merge commit `533f7532ab27475aaeec8ec48d3987bb563051f9` · CI `test: SUCCESS` |
 | PR chain | #46 → #47 → #48 → #49 → #50 (stacked) — **all merged 2026-11-13**, dispositions and merge SHAs in §4.1 |
 | PR chain commits on `main` | `123bafe` (#46) · `685aecd` (#47) · `29416af` (#48) · `d386467` (#49) · `b2b200d` (#50) |
 | CI on `main` at `b2b200d` | `test: success` |
 | Production commit SHA | **UNVERIFIED** — no VPS read was possible |
-| Phase 1 result | **COMPLETE** — every Phase 1 PR (#46, #47, #48, #49, #50, #56, #57) is merged; §4.1 is satisfied |
+| **Phase 1 closes with** | **PR #58 — MERGED** as `0f4b90a` (2026-11-13), CI `test: SUCCESS`, review gate lifted for the merge only and restored with all 15 fields verified identical |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)

@@ -12,27 +12,27 @@
 |---|---|
 | **Repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Default branch** | `main` |
-| **Current working branch** | `phase1-10/pr-chain-disposition` (from `main` @ `e3e321e`) |
-| **Branch base commit** | `e3e321e41634fce726e77ab76cad92250081677f` (Phase 1 · PR #56 merged) |
-| **Last verified commit** | `e3e321e` on `main` (PR #56 squash-merge, 2026-11-12) |
+| **Current working branch** | `phase1/close-phase-1` (from `main` @ `b2b200d`) |
+| **Branch base commit** | `b2b200d29ee546bcffbe7040748abfed26b6adbb` (Phase 1 · PR #50 merged) |
+| **Last verified commit** | `b2b200d` on `main` (PR #50 squash-merge, 2026-11-13) |
 | **Last state update** | 2026-11-13 (UTC) |
-| **Overall status** | `IN_PROGRESS` |
-| **Current phase** | Phase 1 of 10 |
-| **Current sub-step** | P1-2 — unstack + merge the PR chain (#46 → #50), dispositions recorded in §4.1 |
+| **Overall status** | `IN_PROGRESS` — **Phase 1 is COMPLETE**; Phase 2 not authorized |
+| **Current phase** | Phase 1 of 10 — **`COMPLETED`** (2026-11-13) |
+| **Current sub-step** | — (nothing started; the next phase needs a new owner instruction) |
 | **Owner authorization** | Required for every phase. Phase 1 authorized 2026-11-12. The owner ruled on 2026-11-12: every PR of a phase must be **merged** when that phase completes, and each existing PR (#46–#56) gets its disposition **inside its own phase**. |
 
 ---
 
 ## 1. Immediate state (read this before anything else)
 
-**Where we are:** Phase 1, sub-step P1-2 — unstack and merge the PR chain. PR #56 (P1-1) is
-**merged** into `main` as `e3e321e`.
-**Done so far:** Phase 0 audit; this file created; README/docs aligned; regression test added;
-PR #56 merged; the disposition of every existing PR (#46–#56) recorded in §4.1.
-**Remaining in Phase 1:** merge #46 → #47 → #48 → #49 → #50 in chain order (each rebased onto the
-new `main`, each merged as its own PR), then update this file and close Phase 1.
-**Exact next action:** rebase #46 onto `main`, resolve the 4 doc-file conflicts in favour of the
-canonical state file, open and merge its PR. Nothing else may start without a new instruction.
+**Where we are:** Phase 1 is **COMPLETE**. The whole chain was unstacked and merged oldest-first
+(#46 → #47 → #48 → #49 → #50), each rebased onto the then-current `main`, each squashed, each with
+the review gate lifted and restored.
+**Done so far:** Phase 0 audit; this file; README/docs aligned; P1-1 regression guards added; the
+disposition of every existing PR (#46–#56) recorded in §4.1; PRs #46, #47, #48, #49, #50 and #56/#57
+merged; the full suite run on the final `main`.
+**Remaining in Phase 1:** nothing. **Phase 2 is NOT started** — it needs a new explicit instruction.
+**Exact next action:** none until the owner says which phase to start next.
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -43,7 +43,7 @@ canonical state file, open and merge its PR. Nothing else may start without a ne
 
 | # | Phase | Goal | Status | Depends on |
 |---|---|---|---|---|
-| 1 | Truth, state file, PR-chain unblock | Make the repo's recorded state match GitHub; create this file; unblock the stacked PR chain; align README/docs | `IN_PROGRESS` | — |
+| 1 | Truth, state file, PR-chain unblock | Make the repo's recorded state match GitHub; create this file; unblock the stacked PR chain; align README/docs | **`COMPLETED`** 2026-11-13 | — |
 | 2 | Provider-centric model data + backend | Independent Providers (name / base URL / token), connection test, model discovery with manual fallback, encrypted keys | `NOT_STARTED` | 1 |
 | 3 | Round-robin model rotation engine | Every request takes the next model in order; atomic cursor; restart/concurrency safe; per-request audit | `NOT_STARTED` | 2 |
 | 4 | Reply-to-channel-post Q&A core | Answer questions replied to a channel post, with controlled post context and idempotent delivery | `NOT_STARTED` | 2, 3 |
@@ -56,16 +56,16 @@ canonical state file, open and merge its PR. Nothing else may start without a ne
 
 **Status values:** `NOT_STARTED` · `IN_PROGRESS` · `BLOCKED` · `COMPLETED`
 
-**Completed phases:** none yet. Phase 1 is `IN_PROGRESS`: task P1-1 complete (PR #56 merged as
-`e3e321e`), task P1-2 in progress (unstack + merge #46 → #50, dispositions recorded in §4.1).
+**Completed phases:** **Phase 1 — `COMPLETED` 2026-11-13.** Tasks P1-1 (PR #56 `e3e321e`, PR #57
+`533f753`) and P1-2 (PRs #46 → #50, merged oldest-first) are both done; every Phase 1 PR is merged.
 
 **PRs owned by each phase** (a phase is not `COMPLETED` while one of its own PRs is open — §9 rule 10):
 
 | Phase | PRs it owns | State |
 |---|---|---|
-| 1 | #46, #47, #48, #49, #50, #56 | #56 merged; #46–#50 to merge (oldest first) |
-| 2 | #51, #52, #53 | to merge after Phase 1 |
-| 3 | #54, #55 | to merge after Phase 2 |
+| 1 | #46, #47, #48, #49, #50, #56, #57 | **all merged** — Phase 1 `COMPLETED` 2026-11-13 |
+| 2 | #51, #52, #53 | open, awaiting Phase 2 |
+| 3 | #54, #55 | open, awaiting Phase 3 |
 
 ---
 
@@ -173,19 +173,20 @@ the historical banners added in P1-1.
 | PR | Title | Owning phase | Disposition | Merge order |
 |---|---|---|---|---|
 | **#56** | Phase 1 — state-of-record file, docs truth alignment | **Phase 1** | **MERGED** as `e3e321e` (2026-11-12). Canonical. | done |
-| **#46** | CI/CD gates, immutable Docker deploy, hardened VPS access, docs (60 files) | **Phase 1** | **MERGE** — rebase onto `main`, resolve 3 doc conflicts, squash-merge. First in the chain; nothing else can merge before it. | 1 |
-| **#47** | docs: remove stale deploy guide and phase 1-10 report | **Phase 1** | **MERGE** — rebase onto `main` after #46. Deletes `PHASE1-10-FINAL-REPORT.md`; the historical banner P1-1 added to it must move to the canonical state file before the file is deleted. | 2 |
-| **#48** | fix(ops): READY=1 no longer depends on Telegram reachability | **Phase 1** | **MERGE** — rebase onto `main` after #47. No doc conflict; code-only (`newsbot/app.py` + 2 new tests). | 3 |
-| **#49** | feat(ops): safe SQLite restore tool + recovery runbook | **Phase 1** | **MERGE** — rebase onto `main` after #48. No doc conflict; code-only. | 4 |
-| **#50** | docs(audit): partial refresh of the findings register | **Phase 1** | **MERGE** — rebase onto `main` after #49. Touches the same two audit files as #46; the `reconciliation` block added in P1-1 must survive the rebase. | 5 |
+| **#57** | Phase 1 — record PR-chain disposition + merge rule | **Phase 1** | **MERGED** as `533f753` (2026-11-13). | done |
+| **#46** | CI/CD gates, immutable Docker deploy, hardened VPS access, docs (60 files) | **Phase 1** | **MERGED** as `123bafe` (2026-11-13). Rebased; the 3 doc conflicts were resolved as a *union* (main's reconciled facts + the branch's dropped Session-3 section/badges); also fixed a `W292` the branch's own `pyproject.toml` introduced and the `soupsieve` advisory. | 1 |
+| **#47** | docs: remove stale deploy guide and phase 1-10 report | **Phase 1** | **MERGED** as `685aecd` (2026-11-13). Cherry-picked onto `main` (the banner conflict was a delete-vs-banner, resolved by keeping the deletion) and the retired banner is preserved in §3.1. | 2 |
+| **#48** | fix(ops): READY=1 no longer depends on Telegram reachability | **Phase 1** | **MERGED** as `29416af` (2026-11-13). Clean cherry-pick; the new tests moved the README count 850 → 852. | 3 |
+| **#49** | feat(ops): safe SQLite restore tool + recovery runbook | **Phase 1** | **MERGED** as `d386467` (2026-11-13). Clean cherry-pick; README count 852 → 858. | 4 |
+| **#50** | docs(audit): partial refresh of the findings register | **Phase 1** | **MERGED** as `b2b200d` (2026-11-13). Conflicts resolved as a union: main's reconciled counters were kept and the branch's `refresh_2026_11_11` block + per-finding evidence restored. | 5 |
 | **#51** | feat(phase2): money, publishing & quota integrity (FIN-024/025, PIPE-017/018, PUB-002) | **Phase 2** | **MERGE** — rebase onto `main` after #50; 12 new tests, no schema change. Re-verify against the Phase 2 provider model. | 6 |
 | **#52** | fix(phase2): NET-003 DNS pinning, PIPE-011/014 extraction & URL canonicalization | **Phase 2** | **MERGE** — rebase onto `main` after #51; 17 new tests. It adds a new pinned-transport module under `newsbot/` — that module must be reviewed before merge (it is not yet in `main`). | 7 |
 | **#53** | fix(phase2): PIPE-013 discovery politeness & TEST-007/008/009/013/014 QA debt | **Phase 2** | **MERGE** — rebase onto `main` after #52; 11 new tests. | 8 |
 | **#54** | fix(phase3): OBS-001/003/008/010/014 observability & DB-007 orphan protection | **Phase 3** | **MERGE** — rebase onto `main` after #53; 6 new tests. Touches `newsbot/db.py`: confirm the orphan-protection change is additive and does not collide with the Phase 2 `ai_providers` migration. | 9 |
 | **#55** | fix(phase3): OPS-017/019/023/029 repo hygiene & TEST-010 semantic i18n parity | **Phase 3** | **MERGE** — rebase onto `main` after #54; 6 new tests. Adds `LICENSE`, `CHANGELOG.md`, `CODEOWNERS`, `dependabot.yml` — the owner must confirm the licence choice before merge (see B-6). | 10 |
 
-**Count:** 11 PRs — 1 merged, 10 to merge in the order above. Each phase's own PRs are merged
-before that phase is called `COMPLETED`.
+**Count:** 11 PRs — all 11 **merged** (Phase 1: #46, #47, #48, #49, #50, #56, #57). The remaining
+#51–#55 are Phase 2 / Phase 3 and stay open until their own phase runs.
 
 ### Merge mechanics that must be followed
 
@@ -221,12 +222,36 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-12 | branch | `python tools/final_verification.py` | 17/17 |
 | 2026-11-12 | branch (PR #56) | GitHub CI `test` / `docker-build` | both SUCCESS |
 | 2026-11-13 | `main` @ `e3e321e` | `gh pr merge 56 --squash` | **MERGED** as `e3e321e` (review gate lifted for the merge, then restored — see §7.1) |
-| 2026-11-13 | `main` @ `e3e321e` | protection JSON compared field by field against the pre-merge backup | **all 14 fields identical** — reviews back to 1, status checks `test`/strict, linear history on, force pushes off, deletions off |
+| 2026-11-13 | `main` @ `e3e321e` | protection JSON compared field by field against the pre-merge backup | **all 15 fields identical** — reviews back to 1, status checks `test`/strict, linear history on, force pushes off, deletions off |
 | 2026-11-13 | all 10 chain heads vs `main` | `git merge --no-commit --no-ff` per head | **0 of 10** merge cleanly; every conflict is in `README.md`, `docs/audit/MASTER_STATUS.md`, `docs/audit/status.json` (+ `PHASE1-10-FINAL-REPORT.md`); **no code file conflicts** |
 | 2026-11-13 | chain patches #46–#55 | grep for new product requirements | none (`ai_providers`, `rotation`, `send_chat_action`, deeplink feature: no hits) |
+| 2026-11-13 | branch for #46 (`706cd4d`) | `pytest tests/test_phase1_10_state_alignment.py tests/test_repo_integrity.py` | 9 passed |
+| 2026-11-13 | branch for #46 (`010912f`) | `pip-audit -r requirements.txt --no-deps` | `No known vulnerabilities found` after the `soupsieve` 3.0.3 → 4.0.0 bump |
+| 2026-11-13 | branch for #46 (`706cd4d`) | GitHub CI `test` on the PR | **SUCCESS** (ruff W292, the `pip-audit` advisory and 2 doc-consistency guards all fixed and re-run) |
+| 2026-11-13 | branch for #47 (`fbd30e3`) | `pytest` the 3 doc/integrity files | 16 passed · `ruff` clean · CI `test` **SUCCESS** |
+| 2026-11-13 | branch for #48 (`a86f209`) | `pytest tests/test_ops014_ready_independent.py` | 2 passed · CI `test` **SUCCESS** (852 collected) |
+| 2026-11-13 | branch for #49 (`eab7ee6`) | `pytest tests/test_ops011_restore_tool.py tests/test_phase1_10_state_alignment.py` | 11 passed · CI `test` **SUCCESS** (858 collected) |
+| 2026-11-13 | branch for #50 (`d07c15e`) | `pytest` the 2 doc/integrity files | 9 passed · `ruff` clean · `tools/final_verification.py` 17/17 · CI `test` **SUCCESS** |
+| 2026-11-13 | `main` @ `b2b200d` | full `pytest -q` (local, Windows, twice) | **839 passed, 19 failed in 882.95s** / **751.35s** — the 19 are Windows-only bash path artifacts, see §5.1 |
+| 2026-11-13 | `main` @ `b2b200d` | GitHub CI `test` | **SUCCESS** |
+| 2026-11-13 | each of #46–#50 | protection JSON compared field by field after every merge | **all 15 fields identical** every time; gate lifted only for the duration of one merge |
 
 **Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
 deployment verification, real Telegram integration, Cloudflare D1 live migration.
+
+### 5.1 The 19 local failures on the final `main` (measured, not assumed)
+
+| Source | Count | Why it fails on Windows |
+|---|---|---|
+| `tests/test_deploy_script.py` (docker-runtime cases) | 4 | The test hands a Git-Bash-style path to `docker`/`bash`; Windows rewrites it to `C:\Program Files\Git\...`, so the container path never resolves (`FileNotFoundError`) |
+| `tests/test_session3_cicd_docker_deploy_docs.py` (forced-command / preserve-tree / setup-user) | 15 | The test invokes `bash deploy/ssh-forced-command.sh` with a `C:\...` argument; Git Bash answers *"No such file or directory"* (exit 127) |
+
+Both groups are the same class of defect: the **test harness** builds a POSIX path and runs it
+through a POSIX shell on an NT host. None of them exercises product logic, none touches the
+database, and none is new: the same two files were already the 4-failure baseline recorded in §5
+above. GitHub's Linux runner runs both files green — CI `test` is `SUCCESS` on `b2b200d`.
+The real fix (making the harness portable) belongs to Phase 10 (D-2); it is out of Phase 1 scope
+because it changes test infrastructure, not behaviour.
 
 ---
 
@@ -242,14 +267,15 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 
 | Item | Value |
 |---|---|
-| Working branch | `phase1-10/pr-chain-disposition` (from `main` @ `e3e321e`) |
-| Base | `e3e321e` (Phase 1 · PR #56 merged) |
-| Phase 1 commits | `d6ae7c2` (docs) · `fed5098` (state update) · `b5c9125` (review pass) → squashed into `e3e321e` |
-| PR | **#56 — MERGED** 2026-11-12, merge commit `e3e321e41634fce726e77ab76cad92250081677f` · CI `test: SUCCESS`, `docker-build: SUCCESS` |
-| PR chain | #46 → #47 → #48 → #49 → #50 → #51 → #52 → #53 → #54 → #55 (stacked) — dispositions in §4.1 |
-| CI on `main` at `e3e321e` | `test: success`, `docker-build: success`, `deploy: skipped` |
+| Phase 1 (P1-1) | `d6ae7c2` (docs) · `fed5098` (state update) · `b5c9125` (review pass) → squashed into `e3e321e` |
+| Phase 1 (P1-2) | this close-out commit on `phase1/close-phase-1` → the closing PR |
+| PR #56 | **MERGED** 2026-11-12, merge commit `e3e321e41634fce726e77ab76cad92250081677f` · CI `test: SUCCESS`, `docker-build: SUCCESS` |
+| PR #57 | **MERGED** 2026-11-13, merge commit `533f7532ab27475aaeec8ec48d3987bb563051f9` · CI `test: SUCCESS` |
+| PR chain | #46 → #47 → #48 → #49 → #50 (stacked) — **all merged 2026-11-13**, dispositions and merge SHAs in §4.1 |
+| PR chain commits on `main` | `123bafe` (#46) · `685aecd` (#47) · `29416af` (#48) · `d386467` (#49) · `b2b200d` (#50) |
+| CI on `main` at `b2b200d` | `test: success` |
 | Production commit SHA | **UNVERIFIED** — no VPS read was possible |
-| PR #46 block reason | `REVIEW_REQUIRED` — the branch is otherwise `MERGEABLE` with green checks. Since the chain is unstacked, #46 is rebased onto `main` and reopened before merge. |
+| Phase 1 result | **COMPLETE** — every Phase 1 PR (#46, #47, #48, #49, #50, #56, #57) is merged; §4.1 is satisfied |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)
@@ -275,7 +301,7 @@ makes the repository unmergeable by its owner. Measured on 2026-11-13:
 | `DELETE /branches/main/protection/required_pull_request_reviews` (REST) | **works** (HTTP 204) |
 | GraphQL `updateBranchProtectionRule` | **works** — the only way to *set* the review rule |
 
-**Sanctioned procedure** (used to merge #56; repeat it for every chain PR):
+**Sanctioned procedure** (used for #56 and for every chain PR #46–#50, each with its own backup file):
 
 1. Save the current protection JSON and compare field by field.
 2. `DELETE .../branches/main/protection/required_pull_request_reviews` — removes only the review rule.
@@ -289,10 +315,14 @@ makes the repository unmergeable by its owner. Measured on 2026-11-13:
 5. **Verify** the restored protection field by field against the backup, then confirm the PR is
    `MERGED` and `main` contains it.
 
-**Verified on 2026-11-13 after merging #56:** all 14 protection fields match the backup exactly
+**Verified on 2026-11-13 after merging #56:** all 15 protection fields match the backup exactly
 (status checks `test`/strict, reviews 1/dismiss-stale, admins enforced, linear history on, force
 pushes off, deletions off, signatures off, conversation resolution off, branch not locked, fork
 syncing off). The gate was off for the duration of one merge only.
+
+**Verified again after each of #46, #47, #48, #49, #50 (2026-11-13):** the same field-by-field
+comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every time. Tooling used:
+`gate.py <PR> lift` / `gate.py <PR> restore`, which writes `protection-before-pr<N>.json`.
 
 ---
 
@@ -307,7 +337,7 @@ syncing off). The gate was off for the duration of one merge only.
 | B-5 | A file **outside** this repository (the local `newsbot-deploy-pkg` folder) holds a bot token matching the BotFather format and a 64-char `SECRETS_KEY` in plain text (names/lengths only; values never read) | needs rotation |
 | B-6 | PR #55 adds a `LICENSE` file — the licence type is the owner's choice and must not be assumed | needs owner decision before #55 merges |
 | D-1 | 18 unmerged stale branches, 37 remote branches total | deferred to Phase 10 |
-| D-2 | 4 Windows-only failing deploy tests degrade the local signal | deferred to Phase 10 |
+| D-2 | 19 Windows-only failing deploy tests (4 in `tests/test_deploy_script.py`, 15 in `tests/test_session3_cicd_docker_deploy_docs.py`) degrade the local signal; §5.1 records the exact cause and why CI is unaffected | deferred to Phase 10 |
 
 ---
 

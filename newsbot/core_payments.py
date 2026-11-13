@@ -267,9 +267,11 @@ def _pay_approve_d1(rid, r, pc, by_uid=None):
         # جبران: نه تخفیفی مصرف‌شده بماند، نه پرداخت در «processing» گیر کند (و اعمالِ نیمه‌کاره نماند)
         if r["discount"]:
             try: disc_refund(r["discount"])
-            except Exception: pass
+            except Exception as e:   # جبران شکست خورد: بی‌صدا نماند (اپراتور باید تخفیف را دستی برگرداند)
+                log_event("ERROR", f"payment compensation failed: discount refund rid={rid}: {type(e).__name__}: {e}", exc_info=True, error_class=type(e).__name__)
         try: pay_set(rid, "pending")
-        except Exception: pass
+        except Exception as e:   # پرداخت ممکن است در «processing» بماند؛ recover_stuck_payments آن را برمی‌گرداند
+            log_event("ERROR", f"payment compensation failed: could not reset rid={rid} to pending: {type(e).__name__}: {e}", exc_info=True, error_class=type(e).__name__)
         raise
     admin_limits_invalidate(r["user_id"])
     return out

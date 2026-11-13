@@ -199,9 +199,11 @@ def _raise_for_payload(status, data):
 
 async def api_call(bot, method, payload):
     """فراخوانیِ مستقیم Bot API؛ خروجی: ``result`` یا استثنای هم‌خانوادهٔ PTB."""
+    from newsbot.pinned_transport import trusted_origin
     url = _endpoint(bot, method)
     try:
-        r = await http().post(url, json=payload, timeout=httpx.Timeout(30, connect=10))
+        with trusted_origin(url):
+            r = await http().post(url, json=payload, timeout=httpx.Timeout(30, connect=10), follow_redirects=False)
     except httpx.HTTPError as e:
         raise NetworkError("%s: %s" % (method, e)) from e
     try:

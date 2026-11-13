@@ -9,6 +9,7 @@ import trafilatura
 from bs4 import BeautifulSoup
 from newsbot import config
 from newsbot.discover import _get, _mk_media, _bad_media_url, _ext_kind, clean_url
+from newsbot.logutils import log
 from newsbot.timeutils import parse_dt, zone_of
 
 
@@ -169,6 +170,16 @@ def _merge_text(a, b):
     return "\n\n".join(out)
 
 async def extract_article(url, fallback_html="", tz=None):
+    """PIPE-011: سقفِ زمانیِ کلِ استخراجِ یک مقاله (EXTRACT_ARTICLE_DEADLINE_SEC). یک سایتِ کند که چند صفحه
+    را کُند برمی‌گرداند نباید کلِ چرخه را تا deadline آن نگه دارد؛ با اتمام مهلت None (= استخراج ناموفق) برمی‌گردد."""
+    try:
+        async with asyncio.timeout(config.EXTRACT_ARTICLE_DEADLINE_SEC):
+            return await _extract_article_impl(url, fallback_html, tz)
+    except TimeoutError:
+        log.warning("extract_article deadline (%ss) exceeded url=%s", config.EXTRACT_ARTICLE_DEADLINE_SEC, str(url)[:120])
+        return None
+
+async def _extract_article_impl(url, fallback_html="", tz=None):
     """کل متن خبر خوانده می‌شود: اگر مقاله چندصفحه‌ای باشد (rel=next) تا MAX_ARTICLE_PAGES صفحه دنبال و به هم دوخته می‌شود.
     tz (ARCH-11): منطقهٔ کانال برای برچسب‌زدن تاریخ‌های بی‌tz صفحه."""
     raw = None

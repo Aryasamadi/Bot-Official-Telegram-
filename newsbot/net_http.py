@@ -76,7 +76,11 @@ def http():
     try: loop = asyncio.get_running_loop()
     except RuntimeError: loop = None
     if _http is None or getattr(_http, "is_closed", False) or (loop is not None and _http_loop is not None and _http_loop is not loop):
-        _http = httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(25, connect=10), limits=httpx.Limits(max_connections=config.FETCH_CONCURRENCY + 8, max_keepalive_connections=8),
+        # NET-003: اتصال فقط به همان IPی که همین لحظه اعتبارسنجی شده (pin) — بسته‌شدنِ پنجرهٔ DNS-rebinding.
+        from newsbot.pinned_transport import install_pinning
+        _limits = httpx.Limits(max_connections=config.FETCH_CONCURRENCY + 8, max_keepalive_connections=8)
+        _transport = install_pinning(httpx.AsyncHTTPTransport(limits=_limits))
+        _http = httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(25, connect=10), transport=_transport,
                                   headers={"User-Agent": UA_BROWSER, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "fa,en;q=0.8", "Accept-Encoding": "identity"})
         _http_loop = loop
     return _http

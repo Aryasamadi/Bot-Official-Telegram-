@@ -7,4 +7,5 @@ __version__ = "4.0.0"
 # v6 (فاز ۱۳/BIZ-09): جدول credit_log (رسید حرکت‌های کیف پول) + trigger با ثبت رسید اتمیک
 # v7 (فاز ۱۴): plans.price_num_fa — تعرفهٔ عددی تومان برای کاربران fa (price_num = تعرفهٔ دلاری/en)
 # v8 (فاز PH-01): کیف پولِ واحد‌دار — جدول wallet + واحد روی credit_log/referrals/pay_requests
-SCHEMA_VERSION = 9
+# v10 (فاز ۲): رجیستریِ فراهم‌کننده — جدول ai_providers + ستونِ افزایشیِ ai_models.provider_id
+SCHEMA_VERSION = 10

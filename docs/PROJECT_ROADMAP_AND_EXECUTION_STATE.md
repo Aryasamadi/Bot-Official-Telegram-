@@ -140,6 +140,41 @@ history it belonged to stays in `docs/audit/FINDINGS.md`.
 
 ---
 
+## 4.2 Phase 2 — scope, decisions and acceptance criteria
+
+**Goal (from §2):** provider-centric model data + backend. Design of record:
+`docs/superpowers/specs/2026-11-13-phase2-provider-registry-design.md`.
+
+**Task P2-1 — merge Phase 2's own PRs (rule 10).** Done, oldest-first, each with its own CI and
+gate lift/restore: **#51 `16a7353`** (FIN-024/025, PIPE-017/018, PUB-002) · **#52 `886e19d`**
+(NET-003 DNS pinning, PIPE-011/014) · **#53 `bf34390`** (PIPE-013 politeness, QA debt).
+
+**Task P2-2 — provider registry.** Additive only; no product-behaviour change.
+
+| Item | Decision |
+|---|---|
+| Table | `ai_providers(id, owner_id, name, kind, base_url, api_key, enabled, last_test_at, last_test_ok, last_test_error, created_at)` |
+| Link | `ai_models.provider_id` nullable; `NULL` = legacy row that still uses its own `base_url`/`api_key` |
+| Migration | v9 → **v10**, idempotent, additive DDL only; backfill groups models by `(owner_id, base_url)` and keeps the first key |
+| Connection test | `GET {base_url}/models` through `net_http.fetch` (SSRF + size cap + 15 s), per-`kind` auth header, result persisted |
+| Discovery | parse `data[].id` / `models[].name`; candidates only — inserting a model stays an admin action (manual entry always works) |
+| Delete guard | blocked while any model references the provider |
+| Surface | super-admin command `/providers` (`add` · `test` · `discover` · `model` · `del`); no user-facing UI |
+| Out of scope | round-robin rotation, atomic cursor, per-request audit → **Phase 3** |
+
+**Tests:** `tests/test_phase2_provider_registry.py` (14) — migration on a v9 fixture, idempotent
+re-run, first-key/owner grouping, encryption at rest + masking, delete guard, `/models` path and
+per-kind headers, Gemini shape, key never echoed in errors, test/discovery persistence, and both
+branches of `resolve_endpoint`.
+
+**Acceptance criteria**
+1. `pytest -q` has no new failures versus the recorded baseline (§5). — **MET**: 893 passed / 19 failed, and all 19 are the same Windows-only bash-path failures recorded in §5.1 (4 + 15); CI `test` is green.
+2. `ruff check newsbot tests tools run.py` clean. — **MET**
+3. Migration is idempotent and safe on a copy of a v9 DB. — **MET** (tested on a real v9 fixture, re-run twice)
+4. No secret in code, tests, docs, logs or this file. — **MET** (fixtures use dummy keys; `_safe_error` redacts the key from every error string)
+
+---
+
 ## 4.1 Disposition of the existing PR chain (#46–#56) — binding
 
 > **Owner rule (2026-11-12):** every existing pull request gets its disposition **inside the phase
@@ -236,6 +271,12 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-13 | `main` @ `b2b200d` | GitHub CI `test` | **SUCCESS** |
 | 2026-11-13 | each of #46–#50 | protection JSON compared field by field after every merge | **all 15 fields identical** every time; gate lifted only for the duration of one merge |
 | 2026-11-13 | `main` @ `0f4b90a` (PR #58) | `gh pr merge 58 --squash` → **MERGED**; protection compared field by field | merge SHA `0f4b90a960c92f1f0bf69955aa29fdbae066e06e` · **all 15 fields identical to backup** · CI `test: SUCCESS` |
+| 2026-11-13 | Phase 2 branches | `pytest` the new/affected files after each rebase | #51 12 passed · #52 17 passed · #53 19 passed · provider work 14 passed |
+| 2026-11-13 | `phase2/provider-registry` | `ruff check newsbot tests tools run.py` | All checks passed |
+| 2026-11-13 | `phase2/provider-registry` | `python -m pyflakes` the touched modules | clean |
+| 2026-11-13 | `phase2/provider-registry` | `python tools/final_verification.py` | 17/17 |
+| 2026-11-13 | `phase2/provider-registry` | full `pytest -q` (local, Windows) | **893 passed, 19 failed in 714.34s** — the 19 are exactly the pre-existing Windows-only bash-path failures of §5.1 (4 + 15); **no new failure** |
+| 2026-11-13 | `phase2/provider-registry` | GitHub CI `test` | **SUCCESS** |
 
 **Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
 deployment verification, real Telegram integration, Cloudflare D1 live migration.

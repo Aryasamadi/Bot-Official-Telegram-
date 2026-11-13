@@ -21,10 +21,11 @@ from newsbot.core_payments import (pay_pending, pay_get, pay_set, pay_approve_at
 from newsbot.core_referrals import referral_cfg
 from newsbot.secret_store import decrypt as decrypt_key   # SEC-09: نمایش ماسک‌شدهٔ کلید رمزنگاری‌شده
 from newsbot.ai_models import list_models, get_model
+from newsbot import providers
 from newsbot.text_format import strip_tags
 from newsbot.ui_i18n import tr, gtext, TEXT_KEYS
 from newsbot.ui_widgets import (B, pairs, esc, onoff, L, uname, render, popup,
-                                notify_user_fn)
+                                notify_user_fn, operation_status)
 from newsbot.ui_views_admin import PLAN_FIELDS, MODEL_FIELDS, _mic, _mname
 
 
@@ -189,6 +190,78 @@ async def view_health(update, context):
 async def cmd_health(update, context):
     if not is_super(update.effective_user.id): return
     await view_health(update, context)
+
+
+# ── فاز ۲: «/providers» — پنلِ متنیِ رجیستریِ فراهم‌کننده ─────────────────────────────
+# چرا دستور و نه صفحهٔ دکمه‌دار: این فاز «داده + backend» است؛ یک دستورِ متنی همان
+# پنج عملیات (لیست/افزودن/آزمون/کشف/حذف) را بدونِ یک ویزاردِ کامل و ده‌ها رشتهٔ i18n
+# دوزبانه در اختیار مدیر کلان می‌گذارد و بعداً صفحهٔ دکمه‌دار روی همین backend سوار می‌شود.
+P_HELP = (
+    "فراهم‌کننده‌ها (فاز ۲)\n"
+    "/providers — فهرست\n"
+    "/providers add <name> <base_url> <api_key> — افزودن\n"
+    "/providers test <id> — آزمون اتصال\n"
+    "/providers discover <id> — کشف مدل‌ها\n"
+    "/providers model <id> <model_id> [نام] — افزودن مدل از میانِ کاندیدها\n"
+    "/providers del <id> — حذف (اگر مدلی به آن وصل نباشد)"
+)
+
+
+def _pline(p, lang):
+    st = "✅" if p["last_test_ok"] else ("—" if not p["last_test_at"] else "⛔")
+    scope = "عمومی" if p["owner_id"] is None else ("شخصی #%s" % p["owner_id"] if lang != "en" else "own #%s" % p["owner_id"])
+    line = f"\n#{p['id']} <b>{esc(p['name'])}</b> · <code>{esc(p['base_url'])}</code> · {esc(p['kind'])} · {st} · {scope}"
+    if p["last_test_at"]:
+        line += f" · {esc(p['last_test_at'][:16])}"
+    if p["last_test_error"]:
+        line += f"\n   <code>{esc(redact(p['last_test_error'])[:120])}</code>"
+    return line
+
+
+async def cmd_providers(update, context):
+    """مدیریتِ رجیستریِ فراهم‌کننده — فقط مدیر کلان."""
+    uid = update.effective_user.id
+    if not is_super(uid): return
+    lang = L(update)
+    args = (context.args or [])
+    act = (args[0] if args else "").lower()
+    try:
+        if not act:
+            rows = await arun(providers.list_providers)
+            if not rows:
+                return await popup(update, context, "هیچ فراهم‌کننده‌ای ثبت نشده است.\n" + P_HELP)
+            n = await arun(providers.health_snapshot)
+            text = (f"فراهم‌کننده‌ها: {n['providers']} (فعال {n['enabled']} · ناموفق {n['failing']})"
+                    + "".join(await arun(_pline, p, lang) for p in rows))
+            return await render(update, context, text, [[B(tr(lang, "back"), "s:home")]])
+        if act == "add" and len(args) >= 4:
+            pid = await arun(providers.create_provider, args[1], args[2], " ".join(args[3:]))
+            await operation_status(context, "افزوده شد")
+            return await popup(update, context, "فراهم‌کننده #%s ثبت شد. با /providers test %s آزمایش کنید." % (pid, pid))
+        if act == "test" and len(args) >= 2:
+            out = await providers.test_connection(int(args[1]))
+            if out["ok"]:
+                return await popup(update, context, "%s در دسترس است · %d مدل" % (out["provider"], out["model_count"]))
+            return await popup(update, context, "ناموفق: " + redact(out["error"])[:150])
+        if act == "discover" and len(args) >= 2:
+            out = await providers.discover_models(int(args[1]))
+            if not out["ok"]:
+                return await popup(update, context, "ناموفق: " + redact(out["error"])[:150])
+            head = "%s — %d مدل:\n" % (out["provider"], len(out["ids"]))
+            body = "\n".join("<code>%s</code>" % esc(m) for m in out["ids"][:25])
+            more = "\n… (%d مدل دیگر)" % (len(out["ids"]) - 25) if len(out["ids"]) > 25 else ""
+            tail = "\n\nافزودن: <code>/providers model %s &lt;model_id&gt;</code>" % args[1]
+            return await render(update, context, head + body + more + tail, [[B(tr(lang, "back"), "s:home")]])
+        if act == "model" and len(args) >= 3:
+            name = args[3] if len(args) > 3 else ""
+            mid = await arun(providers.add_model_from_discovery, int(args[1]), args[2], name=name)
+            return await popup(update, context, "مدل #%s اضافه شد (فعلاً غیرفعال — اولویت را در /models تنظیم کنید)." % mid)
+        if act == "del" and len(args) >= 2:
+            await arun(providers.delete_provider, int(args[1]))
+            return await popup(update, context, "حذف شد.")
+    except (ValueError, TypeError) as e:
+        return await popup(update, context, str(e))
+    return await popup(update, context, P_HELP)
 
 def _code_version():
     """نسخهٔ کدِ در حال اجرا از git — تا کاربر مطمئن شود deploy شده است."""

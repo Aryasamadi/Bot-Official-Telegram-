@@ -8,6 +8,8 @@ ARCH-01 (فاز ۸): مسیرهای async هیچ کوئری‌ای را روی �
 """
 import asyncio, contextvars, functools, json, os, re, sqlite3, threading, time
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
+
 import httpx
 from newsbot import config, SCHEMA_VERSION   # DB-25: تک‌منبعِ نسخه — newsbot/__init__.py
 from newsbot.logutils import log
@@ -37,7 +39,8 @@ CREATE TABLE IF NOT EXISTS usage(admin_id INTEGER, day TEXT, posts INTEGER DEFAU
 CREATE TABLE IF NOT EXISTS articles(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, channel_id INTEGER, hash TEXT, url TEXT, title TEXT, source_id INTEGER, published_at TEXT, created_at TEXT, status TEXT, reason TEXT, send_fails INTEGER DEFAULT 0, score REAL, category TEXT, post_html TEXT, full_html TEXT, media TEXT, links TEXT, model TEXT, ai_state TEXT DEFAULT '', ai_attempts INTEGER DEFAULT 0, ai_last_error TEXT DEFAULT '', ai_last_attempt TEXT DEFAULT '', ai_next_retry TEXT DEFAULT '', ai_provider TEXT DEFAULT '', UNIQUE(channel_id, hash));
 CREATE TABLE IF NOT EXISTS posted(channel_id INTEGER, hash TEXT, posted_at TEXT, PRIMARY KEY(channel_id, hash));
 CREATE TABLE IF NOT EXISTS ch_tokens(token TEXT PRIMARY KEY, channel_id INTEGER, issued_to INTEGER, issued_at TEXT, expires_at TEXT, used_at TEXT);
-CREATE TABLE IF NOT EXISTS ai_models(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, kind TEXT, base_url TEXT, api_key TEXT, model TEXT, priority INTEGER DEFAULT 10, active INTEGER DEFAULT 1, status TEXT DEFAULT 'ok', fail_count INTEGER DEFAULT 0, last_error TEXT, last_ok TEXT, last_fail TEXT, next_try_after TEXT DEFAULT '', ok_count INTEGER DEFAULT 0, temperature REAL DEFAULT 0.5, max_tokens INTEGER DEFAULT 2500, owner_id INTEGER);
+CREATE TABLE IF NOT EXISTS ai_models(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, kind TEXT, base_url TEXT, api_key TEXT, model TEXT, priority INTEGER DEFAULT 10, active INTEGER DEFAULT 1, status TEXT DEFAULT 'ok', fail_count INTEGER DEFAULT 0, last_error TEXT, last_ok TEXT, last_fail TEXT, next_try_after TEXT DEFAULT '', ok_count INTEGER DEFAULT 0, temperature REAL DEFAULT 0.5, max_tokens INTEGER DEFAULT 2500, owner_id INTEGER, provider_id INTEGER);
+CREATE TABLE IF NOT EXISTS ai_providers(id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, name TEXT, kind TEXT, base_url TEXT, api_key TEXT, enabled INTEGER DEFAULT 1, last_test_at TEXT DEFAULT '', last_test_ok INTEGER DEFAULT 0, last_test_error TEXT DEFAULT '', created_at TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS deeplinks(key TEXT PRIMARY KEY, admin_id INTEGER, created_at TEXT, local_json TEXT);
 CREATE TABLE IF NOT EXISTS kv_cache(key TEXT PRIMARY KEY, value TEXT, cached_at TEXT);
 CREATE TABLE IF NOT EXISTS pub_journal(article_id INTEGER PRIMARY KEY, journal TEXT, updated_at TEXT);
@@ -154,6 +157,11 @@ MIGRATIONS += [("articles", "ai_state", "TEXT DEFAULT ''"),
                ("articles", "ai_last_attempt", "TEXT DEFAULT ''"),
                ("articles", "ai_next_retry", "TEXT DEFAULT ''"),
                ("articles", "ai_provider", "TEXT DEFAULT ''")]
+
+# ── فاز ۲: رجیستریِ فراهم‌کننده (ADR-۲) ─────────────────────────────────────────────
+# ستونِ افزایشیِ «کدام فراهم‌کننده» روی مدل‌ها. NULL = ردیفِ مهاجرت‌نشده (به base_url/api_key
+# خودش نگاه می‌کند) ⇒ عقب‌گرد بدونِ مهاجرتِ دوم ممکن است.
+MIGRATIONS += [("ai_models", "provider_id", "INTEGER")]
 
 # ── خواندنِ اسکیما: باید روی SQLite *و* Cloudflare D1 درست کار کند ────────────────────
 # DB-27 (رخداد تولید ۲۰۲۶-۱۰-۲۱): تشخیصِ ستون‌های موجود روی D1 خالی برمی‌گشت و
@@ -288,6 +296,55 @@ def _table_cols(conn, tbl):
 def _is_dup_col_error(e):
     """«ستون از قبل هست» — متنِ SQLite و متنِ JSON-شدهٔ D1 را هر دو می‌شناسد."""
     return "duplicate column name" in str(e).lower()
+
+
+# ── فاز ۲: مهاجرتِ داده (نه فقط ستون) — گروه‌بندیِ مدل‌ها زیر یک فراهم‌کننده ─────────
+def _backfill_providers(conn):
+    """هر ``(owner_id, base_url)`` یک ``ai_providers`` بساز و مدل‌هایش را به آن وصل کن.
+
+    idempotent است: اگر مدل ``provider_id`` دارد یا فراهم‌کننده‌ای با همان نشانی هست، رد می‌شود.
+    روی SQLite و D1 یکسان کار می‌کند (فقط INSERT/UPDATE با مقدار، بدونِ DDL).
+    """
+    try:
+        models = conn.execute(
+            "SELECT id, base_url, api_key, owner_id FROM ai_models "
+            "WHERE provider_id IS NULL AND base_url IS NOT NULL AND TRIM(base_url) <> ''"
+        ).fetchall()
+    except sqlite3.Error:
+        return  # ستون/جدول هنوز نیست (نسخهٔ قدیمیِ اسکیما) — مهاجرتِ ستون آن را می‌سازد
+    groups = {}
+    for m in models:
+        key = ((m["owner_id"] or 0), str(m["base_url"] or "").strip().rstrip("/"))
+        groups.setdefault(key, []).append(m)
+    made = 0
+    for (owner_id, base_url), rows in groups.items():
+        existing = conn.execute(
+            "SELECT id FROM ai_providers WHERE base_url=? AND " + ("owner_id=?" if owner_id else "owner_id IS NULL"),
+            (base_url, owner_id) if owner_id else (base_url,),
+        ).fetchone()
+        if existing:
+            pid = existing["id"]
+        else:
+            name = (urlparse(base_url).netloc or base_url).replace("www.", "")[:60]
+            kind = ("anthropic" if "anthropic.com" in base_url.lower()
+                    else "gemini" if "generativelanguage.googleapis.com" in base_url.lower() else "openai")
+            first_key = rows[0]["api_key"] or ""
+            cur = conn.execute(
+                "INSERT INTO ai_providers(owner_id,name,kind,base_url,api_key,enabled,created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (owner_id or None, name, kind, base_url, first_key, 1, now_iso()),
+            )
+            pid = cur.lastrowid if getattr(cur, "lastrowid", None) else _select_last_provider_id(conn)
+            made += 1
+        for m in rows:
+            conn.execute("UPDATE ai_models SET provider_id=? WHERE id=?", (pid, m["id"]))
+    if made:
+        log.info("provider backfill: %d provider(s) created from legacy ai_models rows", made)
+
+
+def _select_last_provider_id(conn):
+    row = conn.execute("SELECT MAX(id) AS m FROM ai_providers").fetchone()
+    return int(row["m"]) if row and row["m"] else None
 
 def _missing_migration_columns(conn):
     """ستون‌های MIGRATIONS که هنوز در جدولِ مربوطه وجود ندارند — [(tbl, col, decl), …]."""
@@ -770,6 +827,8 @@ def _ensure_schema_d1(conn):
         raise SystemExit(f"database schema_version {_sv} is newer than this build ({SCHEMA_VERSION}); run the newer build or restore a backup")
     # ── فاز B: ستون‌های جاافتاده (اتمیک) ──
     _apply_migrations(conn)
+    # ── فاز B2: مهاجرتِ دادهٔ فاز ۲ (هر (owner, میزبان) ⇒ یک فراهم‌کننده) ──
+    _backfill_providers(conn)
     # ── خواندنِ دادهٔ لازم برای فاز C ──
     legacy = _legacy_wallet_rows(conn)
     dups, idx_stmts = [], []

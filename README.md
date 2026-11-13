@@ -83,10 +83,10 @@
 - مسیرهای متصل: پستِ متنیِ کانال · «نسخهٔ کامل» در ربات · کپیِ دیپ‌لینک · همهٔ اعلان‌ها
 
 > آزمونِ زنده (پیام‌های نمونه به چتِ مدیر کلان + بررسیِ ساختارِ رندرشده):
-> `python tools/rich_live_test.py --env-file /opt/bot-official-telegram/.env`
+> `python tools/rich_live_test.py --env-file /etc/newsbot/env`
 >
 > آزمونِ زندهٔ **تولیدِ محتوا با AI** (یک تولیدِ واقعی با کلیدِ واقعی + مصرفِ توکن):
-> `python tools/ai_live_test.py --env-file /opt/bot-official-telegram/.env`
+> `python tools/ai_live_test.py --env-file /etc/newsbot/env`
 
 </td>
 <td width="50%" valign="top">
@@ -394,7 +394,9 @@ stateDiagram-v2
 ## 🧪 تست‌ها
 
 ```bash
-pytest -q                              # ۸۵۰ تست
+pytest -q --cov=newsbot --cov-report=term-missing   # ۸۵۰ تست
+ruff check newsbot tests tools run.py        # lint (قوانین در pyproject.toml)
+mypy newsbot                                 # بررسیِ نوع
 python -m pyflakes newsbot tools run.py tests   # نگهبان ایستا
 python tools/final_verification.py     # راستی‌آزمایی مستقل (۱۷ بررسی)
 python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08 · docs/PERFORMANCE.md)
@@ -418,7 +420,7 @@ python tools/benchmark.py --ops 2000   # بنچمارک پایهٔ بار (QA-08
 | `test_phase15_watchdog.py` | `Restart=always` · حذف start-limit · sd_notify/READY/STOPPING · watchdog loop |
 | `test_rich_messages.py` | موتور قالب‌بندی · جدول بومی · RTL · **fallback بدون حذف محتوا** · نگاشت خطای Bot API · ژورنال انتشار |
 
-> **«تست‌نشده = رد‌شده».** هیچ تستی برای سبز شدن تغییر نکرده است.
+> **«تست‌نشده = رد‌شده».** هیچ تستی برای سبز شدن تغییر نکرده و هیچ `except` خالی‌ای خطا را پنهان نمی‌کند.
 
 ---
 
@@ -475,11 +477,14 @@ newsbot/
 
 ### 🚀 خودکار (توصیه‌شده)
 
-`push` به `main` → ورک‌فلوی `deploy-vps.yml` خودش بکاپ می‌گیرد، کد را می‌کشد،
-`run.py --check` را اجرا می‌کند و اگر سالم بود سرویس را restart می‌کند.
+`push` به `main` ← CI (`ci.yml`) سبز ← ورک‌فلوی `deploy-vps.yml`:
+
+بکاپِ آنلاین ← ایمیجِ immutable با تگِ SHA ← دروازهٔ پیش از restart **روی همان
+ایمیج** ← تخلیهٔ ایمن ← بازساختِ کانتینر ← healthcheck. شکست ⇒ rollback خودکار به
+تگِ قبلی.
 
 > اگر sshd فقط روی IPv6 باشد یا VPS پشت NAT باشد، رانرهای IPv4-only به آن نمی‌رسند؛
-> از مسیر دستی/کنسول و راهنمای `docs/DEPLOY_RUNBOOK.md` استفاده کنید.
+> از مسیر دستی/کنسول و راهنمای `docs/VPS_DEPLOYMENT.md` استفاده کنید.
 
 </div>
 
@@ -488,12 +493,36 @@ Secretهای لازم در **Settings → Secrets and variables → Actions**:
 | Secret | مقدار |
 |---|---|
 | `VPS_HOST` | IP یا دامنهٔ VPS |
-| `VPS_SSH_PRIVATE_KEY` | کلید خصوصی SSH |
+| `VPS_SSH_PRIVATE_KEY` | کلید خصوصی SSH (کاربرِ `deploy`) |
+| `VPS_HOST_FINGERPRINT` | خروجیِ `ssh-keyscan` (برای بررسیِ هویتِ میزبان) |
+| `VPS_SSH_PORT` | اختیاری — پورتِ SSH (پیش‌فرض `22`) |
+| `VPS_USER` | اختیاری — کاربرِ SSH (پیش‌فرض `deploy`، **نه** root) |
 
-### 🔧 دستی
+### 🐳 Production = Docker + Compose
+
+مرجعِ کامل: **[`docs/VPS_DEPLOYMENT.md`](docs/VPS_DEPLOYMENT.md)**
 
 ```bash
-cd /opt/bot-ai-automatic
+# یک‌بار روی سرور (با root): کاربرِ اختصاصیِ استقرار + قاعدهٔ sudoers
+bash deploy/setup-deploy-user.sh --key-file /root/newsbot_deploy_ed25519.pub
+
+# ساختِ ایمیجِ immutable و اجرایِ محلی برای آزمون
+docker build --build-arg NEWSBOT_VERSION=$(git rev-parse HEAD) \
+  -f deploy/Dockerfile -t newsbot:latest .
+docker compose -f docker-compose.yml up -d
+```
+
+* `docker-compose.yml` تنها منبعِ حقیقتِ Compose است: `read_only` · `cap_drop: ALL`
+  · `no-new-privileges` · `mem_limit 512m` · tmpfsِ `/tmp` · healthcheck ·
+  دادهٔ ماندگار در `/opt/newsbot-data`.
+* کد داخلِ ایمیج است (**بدونِ** bind-mount) ⇒ آنچه اجرا می‌شود همان commitِ
+  مستقرشده است.
+* حالتِ `systemd` **LEGACY** است (`deploy/systemd/README.md`).
+
+### 🔧 دستی (LEGACY — systemd)
+
+```bash
+cd /opt/Bot-Official-Telegram
 
 mkdir -p /opt/backups
 [ -f newsbot.db ] && cp newsbot.db "/opt/backups/newsbot-$(date +%Y%m%d-%H%M%S).db"
@@ -505,17 +534,13 @@ systemctl restart bot-ai-automatic
 systemctl is-active bot-ai-automatic
 ```
 
+> این مسیر تخلیهٔ ایمن و ایمیجِ immutable ندارد؛ برای Production از
+> `docs/VPS_DEPLOYMENT.md` استفاده کنید.
+
 پس از استقرار، drop-inهای پایداری را طبق **`docs/DEPLOY_RUNBOOK.md` §۹** نصب کنید:
 اول `10-restart-always.conf` (سازگار با هر کد) و بعد از کد فاز ۱۵، `20-watchdog.conf`.
 
 راهنمای کامل (شامل dry-run و rollback): **[`DEPLOY-VPS-UPDATE.md`](DEPLOY-VPS-UPDATE.md)**
-
-### 🐳 Docker
-
-```bash
-docker build -f deploy/Dockerfile -t newsbot .
-docker run -d --env-file .env -v newsbot-data:/app/data newsbot
-```
 
 ---
 

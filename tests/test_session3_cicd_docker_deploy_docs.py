@@ -585,12 +585,20 @@ class TestDocsConsistency:
 
     def test_readme_badges_and_sections_are_current(self):
         readme = _src("README.md")
-        assert "tests-844%20passing" in readme
+        # عددِ نشان هاردکد نمی‌شود: قالب باید باشد و با «# N تست»ِ بخشِ تست‌ها
+        # یکی باشد؛ تطابقِ دقیق با تعدادِ واقعیِ جمع‌آوری‌شده در
+        # tests/test_phase1_10_state_alignment.py قفل شده است.
+        badge = re.search(r"tests-(\d+)%20(collected|passing)", readme)
+        assert badge, "نشانِ تست در README نیست"
+        counter = re.search(r"#\s*([\d۰-۹]{3,})\s*تست", readme)
+        assert counter, "شمارِ تست در بخشِ تست‌های README نیست"
+        assert int(badge.group(1)) == int(counter.group(1)), (
+            "نشانِ تست (%s) با شمارِ بخشِ تست‌ها (%s) یکی نیست" % (badge.group(1), counter.group(1))
+        )
         assert "Python-3.13%2B" in readme
         assert "22.8%2B" in readme
         assert "docker-compose.yml" in readme
         assert "docs/VPS_DEPLOYMENT.md" in readme
-        assert "۸۴۴ تست" in readme
         assert "--cov=newsbot" in readme
 
     def test_deploy_runbook_has_the_session3_update_but_keeps_history(self):
@@ -602,7 +610,11 @@ class TestDocsConsistency:
 
     def test_audit_status_docs_are_updated_without_deleting_history(self):
         ms = _src("docs/audit/MASTER_STATUS.md")
-        assert "Phase C" in ms or "PH-C" in ms
+        # این نگاشت اکنون HISTORICAL است (P1-1): برچسبِ انگلیسیِ «Phase C» جایش را
+        # به بنرِ تاریخی + اشاره به فایلِ مرجع داده، ولی خودِ تاریخچه حذف نشده است.
+        assert "HISTORICAL DOCUMENT" in ms
+        assert "docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md" in ms
+        assert "2026-11-06" in ms and "فاز C" in ms, "تاریخچهٔ Session 3 نباید حذف شود"
         assert "08bc87655dc910a98076acd749ddf8f3e6bdca2c" in ms, "baselineِ原 audit باید حفظ شود"
         st = json.loads(_src("docs/audit/status.json"))
         assert "session3" in st["summary"]

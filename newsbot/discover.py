@@ -32,6 +32,7 @@ def clean_url(u):
     try:
         p = urlparse(str(u).strip())
         qs = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if not k.lower().startswith(_TRACK_PARAMS)]
+        qs.sort()   # PIPE-014: ترتیبِ پارامترها بی‌اثر است؛ ?a=1&b=2 و ?b=2&a=1 باید یک hash بدهند
         netloc = p.netloc
         try:
             host = (p.hostname or "").lower().rstrip(".")

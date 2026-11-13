@@ -44,7 +44,7 @@ def set_referral_cfg(percent=None, cap_amount=None):
         try:
             return float(str(v).translate(config._FA_DIGITS).replace(",", "").strip())
         except (TypeError, ValueError):
-            raise ValueError("عدد معتبر وارد کنید.")
+            raise ValueError("عدد معتبر وارد کنید.") from None
 
     if percent is not None:
         p = num(percent)

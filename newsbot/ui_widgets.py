@@ -92,7 +92,7 @@ def await_expired(st):
 # ══════════════════════════════════════════════════════════════════════════
 # پیام‌های موقت (یک sweeper رویدادمحور برای همه)
 # ══════════════════════════════════════════════════════════════════════════
-_temp_messages = {}      # (chat_id, message_id) → (مهلت پاک‌سازی monotonic | None اگر زمان‌بندی نشده، bot)
+_temp_messages: dict = {}      # (chat_id, message_id) → (مهلت پاک‌سازی monotonic | None اگر زمان‌بندی نشده، bot)
 _temp_sweeper = None
 _temp_wake = None
 
@@ -413,7 +413,7 @@ async def run_user_operation(update, context, kind, channel, work, show_status=F
             await popup(update, context, operation_text(lang, "busy"))
             return
         op = Operation(uid, channel, kind, update.effective_chat.id, replaced_status=replaced_status)
-        op.oid = secrets.token_hex(2); 
+        op.oid = secrets.token_hex(2);
         from newsbot.logutils import log_ctx
         log_ctx(op=op.oid)   # همهٔ لاگ‌های این عملیات با همین شناسه می‌آیند
         context.user_data.pop("status_message_id", None)  # clear stale status message from prior operation

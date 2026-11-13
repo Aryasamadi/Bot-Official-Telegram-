@@ -615,7 +615,13 @@ def test_archive_pruning_keeps_the_newest_snapshots_and_other_files(sandbox):
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 DOCKER_STUB = '''#!/usr/bin/env python3
-"""استابِ docker: کانتینری که /app آن bind-mountِ پوشهٔ برنامه روی میزبان است."""
+"""استابِ docker: کانتینری که /app آن bind-mountِ پوشهٔ برنامه روی میزبان است.
+
+DEVOPS-03: استقرار از روی ایمیجِ immutable انجام می‌شود (build → run/compose up)
+و کانتینر از همان ایمیج بالا می‌آید؛ بنابراین استاب باید build/run/compose/stop را
+هم شبیه‌سازی کند و پروتکلِ «تخلیهٔ ایمن» (پرچمِ draining ⇒ پرچمِ drained) را
+هم بازتولید کند.
+"""
 import os
 import subprocess
 import sys
@@ -626,7 +632,20 @@ with open(os.environ["STUB_LOG"], "a", encoding="utf-8") as fh:
 
 CONTAINER = os.environ.get("CONTAINER_NAME", "bot-official-telegram")
 APP = os.environ["APP_DIR"]
+DATA = os.environ.get("NEWSBOT_DATA_DIR", os.path.join(os.environ["STUB_DIR"], "data"))
 MOUNT = "/app"
+DATA_MOUNT = "/app/data"
+# «/tmp» داخلِ کانتینر (tmpfs) ⇒ روی میزبان یک پوشهٔ جداگانه است.
+CTMP = os.path.join(os.environ["STUB_DIR"], "container-tmp")
+os.makedirs(CTMP, exist_ok=True)
+os.makedirs(DATA, exist_ok=True)
+
+
+def cpath(value):
+    """مسیرِ داخلِ کانتینر ⇒ مسیرِ همان فایل روی میزبانِ تست."""
+    if value.startswith("/tmp/"):
+        return os.path.join(CTMP, value[len("/tmp/"):])
+    return value
 
 
 def host_path(value):
@@ -660,8 +679,29 @@ if args and args[0] == "inspect":
         print("0")
     elif ".Mounts" in fmt:
         print(APP + "\\t" + MOUNT)
+        print(DATA + "\\t" + DATA_MOUNT)
     elif ".Config.Env" in fmt:
         print("BOT_TOKEN=stub")
+    sys.exit(0)
+
+if args and args[0] == "build":
+    sys.exit(0)
+
+if args and args[0] == "image" and len(args) > 1 and args[1] == "inspect":
+    sys.exit(0)
+
+if args and args[0] == "compose":
+    if "version" in args:
+        print("Docker Compose version v2.29.7")
+    sys.exit(0)
+
+if args and args[0] == "run":
+    sys.exit(0)
+
+if args and args[0] == "rm":
+    sys.exit(0)
+
+if args and args[0] == "stop":
     sys.exit(0)
 
 if args and args[0] == "exec":
@@ -675,8 +715,9 @@ if args and args[0] == "exec":
     cmd = list(rest[1:])
     if not cmd:
         sys.exit(0)
-    env = dict(os.environ)
-    env["PYTHONPATH"] = APP
+    # محیطِ کانتینر، محیطِ میزبان نیست ⇒ DB_FILE و … از محیطِ تست ارث برده نمی‌شوند.
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "/root"),
+           "LANG": "C.UTF-8", "BOT_TOKEN": "stub", "PYTHONPATH": APP}
     if cmd[:2] == ["python", "-"]:
         cmd[0] = sys.executable
         # اسکریپتِ داخلِ کانتینر اجرا می‌شود: مسیرِ برنامه به میزبان نگاشت می‌شود،
@@ -689,6 +730,17 @@ if args and args[0] == "exec":
         code = code.replace("import os\\n", helper, 1)
         code = code.replace("os.path.isfile(path)", "os.path.isfile(_host_path(path))")
         sys.exit(subprocess.run(cmd, cwd=APP, env=env, input=code, text=True).returncode)
+    if cmd[0] == "python" and len(cmd) > 1 and cmd[1] == "-c":
+        # پروتکلِ تخلیه: نوشتنِ پرچمِ draining ⇒ رباتِ قلابی پرچمِ drained را می‌نویسد.
+        script = cmd[2]
+        script_args = [cpath(a) for a in cmd[3:]]
+        rc = subprocess.run([sys.executable, "-c", script, *script_args], cwd=APP, env=env).returncode
+        drain_flag = os.path.join(CTMP, "newsbot_draining")
+        drained_flag = os.path.join(CTMP, "newsbot_drained")
+        if os.path.exists(drain_flag) and not os.path.exists(drained_flag):
+            with open(drained_flag, "w", encoding="utf-8") as fh:
+                fh.write("drained")
+        sys.exit(rc)
     if cmd[0] == "pip":
         sys.exit(0)
     if cmd[0] == "python":
@@ -714,6 +766,14 @@ def docker_sandbox(sandbox):
     os.chmod(str(stub), 0o755)
     sandbox.env["CONTAINER_NAME"] = "bot-official-telegram"
     sandbox.env["DOCKER_SETTLE_SECONDS"] = "0"
+    # DEVOPS-03: حجمِ دادهٔ ماندگار + فایلِ env (مثل compose روی VPS)
+    data_dir = sandbox.tmp / "newsbot-data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    sandbox.env["NEWSBOT_DATA_DIR"] = str(data_dir).replace("\\", "/")
+    sandbox.env["NEWSBOT_ENV_FILE"] = str(sandbox.tmp / "newsbot.env").replace("\\", "/")
+    Path(sandbox.env["NEWSBOT_ENV_FILE"]).write_text("BOT_TOKEN=stub\\n", encoding="utf-8")
+    # پرچم‌های تخلیه داخلِ «tmpfs» کانتینر (پوشهٔ جداگانه در استاب)
+    sandbox.env["DRAIN_TIMEOUT"] = "3"
     return sandbox
 
 
@@ -724,8 +784,16 @@ def _docker_calls(sandbox):
     return [line for line in log.read_text(encoding="utf-8").splitlines() if line.startswith("docker ")]
 
 
+def _recreate_count(sandbox):
+    """تعدادِ بارهایی که کانتینر از روی ایمیجِ تازه بازساخته شده است."""
+    calls = _docker_calls(sandbox)
+    compose_up = sum(1 for c in calls if c.startswith("docker compose ") and " up " in f" {c} ")
+    run_up = sum(1 for c in calls if c.startswith("docker run -d "))
+    return compose_up + run_up
+
+
 def test_docker_runtime_deploys_through_the_container(docker_sandbox):
-    """سرویسِ کانتینری: بکاپ + gate + restart همه از راهِ docker."""
+    """سرویسِ کانتینری: بکاپ + ایمیجِ immutable + دروازه + بازسازیِ کانتینر."""
     sha = docker_sandbox.commit_push("feature.txt", "hello docker\n")
     r = docker_sandbox.deploy(sha, check=True)
 
@@ -736,9 +804,13 @@ def test_docker_runtime_deploys_through_the_container(docker_sandbox):
     assert "deploy complete" in r.stdout
 
     calls = _docker_calls(docker_sandbox)
-    assert any("pip install" in c for c in calls), "نیازمندی‌ها باید داخل کانتینر نصب شوند"
-    assert any("run.py --check" in c for c in calls), "دروازه باید داخل کانتینر اجرا شود"
-    assert sum(1 for c in calls if c.startswith("docker restart ")) == 1, "سرویس باید یک‌بار restart شود"
+    # DEVOPS-03: ایمیج با تگِ SHA ساخته می‌شود و کانتینر از همان ایمیج بالا می‌آید.
+    assert any(c.startswith("docker build ") and f"newsbot:{sha}" in c for c in calls), \
+        "ایمیج باید با تگِ SHA ساخته شود"
+    assert not any("pip install" in c for c in calls), \
+        "دیگر نباید چیزی داخلِ کانتینرِ زنده نصب شود (ایمیج immutable است)"
+    assert any("run.py --check" in c for c in calls), "دروازه باید روی ایمیجِ تازه اجرا شود"
+    assert _recreate_count(docker_sandbox) == 1, "کانتینر باید یک‌بار از روی ایمیجِ تازه بازساخته شود"
     assert not any(line.startswith("systemctl restart") for line in
                    Path(docker_sandbox.env["STUB_LOG"]).read_text(encoding="utf-8").splitlines()), \
         "در حالت docker نباید systemctl صدا زده شود"
@@ -768,7 +840,7 @@ def test_docker_runtime_refuses_to_deploy_without_the_container(docker_sandbox):
 
 
 def test_docker_runtime_health_failure_rolls_back_the_container(docker_sandbox):
-    """کانتینر پس از restart سالم بالا نیامد ⇒ rollback + restart دوم."""
+    """کانتینر پس از بازسازی سالم بالا نیامد ⇒ rollback + بازسازیِ دوم با نسخهٔ قبلی."""
     sha = docker_sandbox.commit_push("feature.txt", "v2\n")
     Path(docker_sandbox.env["STUB_DIR"], "inactive").write_text("1")
     r = docker_sandbox.deploy(sha)
@@ -777,19 +849,19 @@ def test_docker_runtime_health_failure_rolls_back_the_container(docker_sandbox):
     head, prev, _ = docker_sandbox.rollback_files()
     assert head == docker_sandbox.head0, "کد باید به SHA قبلی برگردد"
     assert prev == docker_sandbox.head0
-    assert sum(1 for c in _docker_calls(docker_sandbox) if c.startswith("docker restart ")) == 2, \
-        "restart اول + restart کد قبلی بعد از شکست"
+    assert _recreate_count(docker_sandbox) == 2, \
+        "بازسازیِ اول + بازسازیِ کد قبلی بعد از شکست"
     assert not (docker_sandbox.app / ".deployed_sha").exists()
 
 
 def test_docker_runtime_catches_a_crash_right_after_the_restart(docker_sandbox):
-    """کانتینر بعد از restart زودتر از «مکثِ سنجش» می‌میرد ⇒ سلامت شکست می‌خورد."""
+    """کانتینر بعد از بازسازی زودتر از «مکثِ سنجش» می‌میرد ⇒ سلامت شکست می‌خورد."""
     sha = docker_sandbox.commit_push("feature.txt", "v2\n")
     Path(docker_sandbox.env["STUB_DIR"], "flaky").write_text("1")
     r = docker_sandbox.deploy(sha)
 
-    assert r.returncode != 0, "کرشِ بلافاصله پس از restart باید deploy را شکست دهد"
+    assert r.returncode != 0, "کرشِ بلافاصله پس از بازسازی باید deploy را شکست دهد"
     head, prev, _ = docker_sandbox.rollback_files()
     assert head == docker_sandbox.head0, "کد باید به SHA قبلی برگردد"
-    assert sum(1 for c in _docker_calls(docker_sandbox) if c.startswith("docker restart ")) == 2, \
-        "restart اول + restart کد قبلی بعد از شکست"
+    assert _recreate_count(docker_sandbox) == 2, \
+        "بازسازیِ اول + بازسازیِ کد قبلی بعد از شکست"

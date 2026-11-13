@@ -11,7 +11,7 @@ from newsbot import config
 AI_SEM = asyncio.Semaphore(config.AI_CONCURRENCY)
 FETCH_SEM = asyncio.Semaphore(config.FETCH_CONCURRENCY)
 CYCLE_SEM = asyncio.Semaphore(config.CYCLE_CONCURRENCY)
-_PUBLISH_SEMS = weakref.WeakKeyDictionary()
+_PUBLISH_SEMS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def publish_sem():
@@ -27,13 +27,13 @@ _LOCK_HARD_LIMIT = 512
 _LOCK_TTL_SEC = 900
 _PRUNE_EVERY = 64
 
-_ch_locks = {}
-_model_locks = {}
-_user_op_locks = {}
-_ch_last_used = {}
-_model_last_used = {}
-_user_op_last_used = {}
-_prune_calls = {}
+_ch_locks: dict = {}
+_model_locks: dict = {}
+_user_op_locks: dict = {}
+_ch_last_used: dict = {}
+_model_last_used: dict = {}
+_user_op_last_used: dict = {}
+_prune_calls: dict = {}
 
 
 def _prune(store, last_used, calls_key, keep_key):

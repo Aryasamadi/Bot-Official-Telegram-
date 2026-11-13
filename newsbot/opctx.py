@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 import time
 
 _current_operation = ContextVar("current_operation", default=None)
-_operations, _user_controls = {}, {}
+_operations: dict = {}
+_user_controls: dict = {}
 CLEANUP_HOOKS = []     # هوک‌های پاک‌سازی دوره‌ای (ui_widgets sweeper خودش را ثبت می‌کند)
 
 

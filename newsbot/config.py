@@ -259,6 +259,16 @@ PAY_STUCK_MIN = _env_int("PAY_STUCK_MIN", 10)        # بازیابی پرداخ
 # ── ماندگاری محدودیت نرخ حساس ──
 RATE_PERSIST_PREFIXES = ("test:", "req:", "rcpt:", "tok:", "cmd:", "sup:", "srcadd:", "srcr:", "dl:", "disc:", "mtest:")
 
+# ── تخلیهٔ ایمن (DEVOPS-08 / Graceful Drain) ─────────────────────────────────────
+# پیش از ری‌استارت، اسکریپتِ استقرار فایلِ «در حالِ تخلیه» را می‌سازد تا ربات کارِ تازه
+# را شروع نکند؛ ربات هم پس از پایانِ انتشارهای جاری فایلِ «تخلیه شد» را می‌نویسد.
+# مسیرها باید داخلِ یک FS نوشتنی باشند (در Compose: tmpfs روی /tmp).
+DRAIN_FLAG_FILE = os.getenv("DRAIN_FLAG_FILE", "/tmp/newsbot_draining")
+DRAINED_FLAG_FILE = os.getenv("DRAINED_FLAG_FILE", "/tmp/newsbot_drained")
+# سقفِ انتظار برای پایانِ انتشارهای در حالِ پرواز (ثانیه) — هم‌راستا با مهلتِ
+# `docker stop --time 30` در deploy/deploy.sh.
+DRAIN_TIMEOUT_SEC = _env_int("DRAIN_TIMEOUT_SEC", 30, 5, 120)
+
 # UISEC-06 (فاز ۶): مهلت state فرم‌های ورودی — پس از این مدت state منقضی و ورودی بعدی رد می‌شود
 AWAIT_TTL_SEC = _env_int("AWAIT_TTL_SEC", 1800)
 

@@ -119,7 +119,7 @@ def test_cancelled_operation_flags_are_set_for_checkpoints():
     W._operations[uid] = op
     tok = _current_operation.set(op)
     try:
-        operation_checkpoint(); assert False, "باید CancelledError بدهد"
+        operation_checkpoint(); raise AssertionError("باید CancelledError بدهد")
     except asyncio.CancelledError:
         pass
     finally:

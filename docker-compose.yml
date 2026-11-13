@@ -1,0 +1,67 @@
+# NewsBot — Production Compose (DEVOPS-03 / immutable image deployment)
+#
+# منبعِ حقیقتِ اجرای کانتینری. این فایل همراهِ `deploy/deploy.sh` است و هر دو باید
+# با هم هم‌خوان بمانند (تستِ هم‌خوانیِ مستندات، این را بررسی می‌کند).
+#
+# اصولِ حاکم:
+#   * کد و وابستگی‌ها **داخلِ ایمیج** پخته می‌شوند؛ هیچ bind-mountِ کدی وجود ندارد
+#     (کدِ روی میزبان هرگز داخلِ کانتینر «زنده» نصب/ویرایش نمی‌شود).
+#   * ایمیج با تگِ SHAِ کامیت ساخته و اجرا می‌شود ⇒ استقرار تکرارپذیر و rollback
+#     سریع (فقط عوض‌کردنِ تگ).
+#   * فایل‌سیستمِ ریشه فقط‌خواندنی است؛ فقط /tmp (tmpfs) و حجمِ داده نوشتنی‌اند.
+#   * دیتابیس در یک حجمِ ماندگار روی میزبان است و مسیرش همیشه
+#     /app/data/newsbot.db است (همان DB_FILE در deploy/Dockerfile).
+#
+# متغیرهای محیطی (همه اختیاری، پیش‌فرض‌ها برای Production هستند):
+#   NEWSBOT_IMAGE        ایمیجِ اجراشده (پیش‌فرض: newsbot:latest — deploy.sh تگِ SHA می‌گذارد)
+#   NEWSBOT_DATA_DIR     پوشهٔ داده روی میزبان (پیش‌فرض: /opt/newsbot-data)
+#   NEWSBOT_BACKUP_DIR   پوشهٔ بکاپ روی میزبان (پیش‌فرض: /opt/backups — فقط‌خواندنی)
+#   NEWSBOT_ENV_FILE     فایلِ env (پیش‌فرض: /etc/newsbot/env)
+
+name: newsbot
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    # تگِ SHA کامیت را deploy.sh می‌گذارد؛ برای اجرای دستی، latest کافی است.
+    image: ${NEWSBOT_IMAGE:-newsbot:latest}
+    container_name: bot-official-telegram
+    restart: unless-stopped
+    # محیطِ برنامه از یک فایلِ واحد روی میزبان می‌آید (نه از داخلِ ایمیج).
+    env_file:
+      - ${NEWSBOT_ENV_FILE:-/etc/newsbot/env}
+    environment:
+      DB_FILE: /app/data/newsbot.db
+      PYTHONUNBUFFERED: "1"
+      DRAIN_FLAG_FILE: /tmp/newsbot_draining
+      DRAINED_FLAG_FILE: /tmp/newsbot_drained
+    volumes:
+      # دادهٔ ماندگار: دیتابیس + آرشیوِ مقاله‌ها. کد اینجا mount نمی‌شود.
+      - ${NEWSBOT_DATA_DIR:-/opt/newsbot-data}:/app/data
+      # بکاپ‌های بیرونی (فقط‌خواندنی — ربات نباید بکاپِ خود را پاک کند).
+      - ${NEWSBOT_BACKUP_DIR:-/opt/backups}:/opt/backups:ro
+    # ── سخت‌سازی ────────────────────────────────────────────────────────────────
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python", "-m", "newsbot.healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 40s

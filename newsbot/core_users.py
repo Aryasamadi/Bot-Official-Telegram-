@@ -54,7 +54,7 @@ def can_admin(uid): return role_of(uid) in ("admin", "super")
 
 # ── کش کوتاه‌مدت سهمیه‌ها (یک تیک/تعامل) تا کاهش ترافیک read در حلقه‌های scheduler/publish ──
 _LIMITS_TTL = 60.0
-_limits_cache = {}
+_limits_cache: dict = {}
 
 def admin_limits_cached(uid, max_age=_LIMITS_TTL):
     ent = _limits_cache.get(uid)
@@ -69,14 +69,15 @@ def admin_limits_invalidate(uid=None):
 def admin_limits(uid):
     from newsbot.core_plans import get_plan   # lazy: جلوگیری از وابستگی دایره‌ای core_users <-> core_plans
     if is_super(uid):
-        return dict(daily_posts=None, max_sources=None, max_channels=None, daily_tests=None, plan=None, plan_id=None, expires=None, active=True, next_plan=None)
+        return {"daily_posts": None, "max_sources": None, "max_channels": None, "daily_tests": None,
+                "plan": None, "plan_id": None, "expires": None, "active": True, "next_plan": None}
     u = get_user(uid); p = get_plan(u["plan_id"]) if u and u["plan_id"] else None
     exp = parse_dt(u["plan_expires"]) if u else None
     active = bool(p and exp and exp > now_utc() and not u["banned"])
-    return dict(daily_posts=p["daily_posts"] if p else 0, max_sources=p["max_sources"] if p else 0,
-                max_channels=p["max_channels"] if p else 0, daily_tests=p["daily_tests"] if p else 0,
-                plan=p, plan_id=p["id"] if p else None, expires=exp, active=active,
-                next_plan=get_plan(u["next_plan_id"]) if u and u["next_plan_id"] else None)
+    return {"daily_posts": p["daily_posts"] if p else 0, "max_sources": p["max_sources"] if p else 0,
+            "max_channels": p["max_channels"] if p else 0, "daily_tests": p["daily_tests"] if p else 0,
+            "plan": p, "plan_id": p["id"] if p else None, "expires": exp, "active": active,
+            "next_plan": get_plan(u["next_plan_id"]) if u and u["next_plan_id"] else None}
 
 def admin_offset(uid):
     """آفست جاریِ منطقهٔ کانال نخستِ ادمین — ARCH-10: از نام IANA (یا آفست قدیمی) برای همین لحظه مشتق می‌شود."""

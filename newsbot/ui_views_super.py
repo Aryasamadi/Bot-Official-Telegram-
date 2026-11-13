@@ -192,6 +192,11 @@ async def cmd_health(update, context):
 
 def _code_version():
     """نسخهٔ کدِ در حال اجرا از git — تا کاربر مطمئن شود deploy شده است."""
+    # DEVOPS-03: در ایمیجِ immutable (بدون .git) نسخه از متغیرِ محیطی می‌آید که
+    # هنگامِ build با SHAِ کامیت پر می‌شود.
+    injected = (os.getenv("NEWSBOT_VERSION") or "").strip()
+    if injected and injected != "unknown":
+        return injected[:12]
     _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # newsbot/ → ریشهٔ مخزن
     try:
         import subprocess

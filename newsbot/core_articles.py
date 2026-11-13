@@ -295,7 +295,7 @@ def _legacy_transient_reason(reason):
     """آیا دلیلِ یک ردیفِ قدیمی (پیش از ستونِ ai_state) خطای گذرا بوده است؟"""
     r = str(reason or "").strip()
     if not r: return False
-    if r.startswith("ai:") or r.startswith("ai_"): return True
+    if r.startswith(("ai:", "ai_")): return True
     if r == "send_fails" or r.startswith("send:"): return True   # خطای تحویل (نه تصمیمِ محتوا)
     return r in ("extract_failed", "deadline")
 

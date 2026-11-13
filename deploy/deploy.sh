@@ -32,6 +32,18 @@
 #   OPS-29  a rollback takes a verified backup of the current database first and
 #            changes nothing when that backup fails.
 #
+# Session 3 / فاز C (2026-11-06):
+#   DEVOPS-03  the container is rebuilt from an *immutable* image tagged with the commit
+#              SHA (docker-compose.yml at the repository root). No source bind-mount, no
+#              `pip install` into a live container, and the database moves to the
+#              standard persistent volume /opt/newsbot-data ⇒ /app/data/newsbot.db;
+#   DEVOPS-06  an anti-downgrade gate refuses a SHA that is older than what is already
+#              deployed (the workflow_run queue race), and the local changes of the
+#              server are saved as a patch before `git reset --hard`;
+#   DEVOPS-08  before the container is stopped the bot is put into "graceful drain"
+#              mode: it stops starting new publications and waits for the in-flight
+#              ones, so nothing lands in `delivery_unknown`.
+#
 # Overridable for tests: APP_DIR, BACKUP_DIR, SERVICE, KEEP_BACKUPS, HEALTH_TRIES.
 # DB resolution (OPS-27): the deploy never guesses between data/newsbot.db and
 # newsbot.db. DB_FILE/DB_BACKEND are read from $APP_DIR/.env with the application's
@@ -42,6 +54,14 @@
 #   DEPLOY_DB_BACKEND    explicit backend, overrides DB_BACKEND from .env
 #   DEPLOY_WORKING_DIR   explicit service cwd, replaces the systemd WorkingDirectory lookup
 #   ALLOW_MISSING_DB=1   allow a first deploy with no database (skips the backup, loudly)
+#
+# Session-3 knobs:
+#   ALLOW_OLDER_SHA=1    bypass the anti-downgrade gate (explicit operator override)
+#   IMAGE_REPO           docker image repository (default: newsbot)
+#   NEWSBOT_DATA_DIR     persistent data directory on the host (default: /opt/newsbot-data)
+#   NEWSBOT_ENV_FILE     env file for compose (default: /etc/newsbot/env)
+#   COMPOSE_FILE         compose file (default: $APP_DIR/docker-compose.yml)
+#   DRAIN_TIMEOUT        seconds to wait for the in-flight publications (default: 30)
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/Bot-Official-Telegram}"   # مسیرِ واقعیِ Production (نامِ پوشه با حروفِ بزرگ)
@@ -49,12 +69,23 @@ BACKUP_DIR="${BACKUP_DIR:-/opt/backups}"
 SERVICE="${SERVICE:-newsbot.service}"
 KEEP_BACKUPS="${KEEP_BACKUPS:-7}"
 # ── Runtime: systemd یا docker ───────────────────────────────────────────────────
-# Production واقعی یک *کانتینر* است (نه یونیتِ systemd): سرویس با `python run.py` بالا
-# می‌آید، کدِ میزبان در APP_DIR است و به /app داخلِ کانتینر bind-mount می‌شود.
-# حالتِ systemd دست‌نخورده می‌ماند و «auto» خودش را تشخیص می‌دهد.
+# Production واقعی یک *کانتینر* است (نه یونیتِ systemd). از فاز C کانتینر از روی
+# یک ایمیجِ immutable با تگِ SHA اجرا می‌شود (docker-compose.yml) و دیتابیس در یک
+# حجمِ ماندگار روی میزبان است. حالتِ systemd دست‌نخورده می‌ماند و «auto» خودش را
+# تشخیص می‌دهد.
 RUNTIME="${RUNTIME:-auto}"          # auto | systemd | docker
 CONTAINER="${CONTAINER:-bot-official-telegram}"
 CONTAINER_WORKDIR=""
+
+# ── Session 3: ایمیجِ immutable، حجمِ داده و تخلیهٔ ایمن ─────────────────────────
+IMAGE_REPO="${IMAGE_REPO:-newsbot}"
+DATA_DIR="${NEWSBOT_DATA_DIR:-/opt/newsbot-data}"
+ENV_FILE="${NEWSBOT_ENV_FILE:-/etc/newsbot/env}"
+COMPOSE_FILE="${COMPOSE_FILE:-$APP_DIR/docker-compose.yml}"
+DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-30}"
+DRAIN_FLAG="${DRAIN_FLAG:-/tmp/newsbot_draining}"
+DRAINED_FLAG="${DRAINED_FLAG:-/tmp/newsbot_drained}"
+IMAGE_CURRENT=""                   # تگِ ایمیجی که قرار است اجرا شود (docker)
 
 # بودجهٔ سلامت: برابرِ TimeoutStartSec یونیت (پیش‌فرض ۱۸۰ ثانیه). با Type=notify
 # سرویس تا دریافتِ READY=1 در حالتِ activating می‌ماند، پس ۱۰ ثانیه کافی نبود.
@@ -83,6 +114,258 @@ detect_runtime() {
 }
 
 container_workdir() { docker inspect "$CONTAINER" --format '{{.Config.WorkingDir}}' 2>/dev/null | head -n 1; }
+
+# ── Session 3 (DEVOPS-03): ابزارهای ایمیجِ immutable ────────────────────────────
+# آیا پلاگینِ compose روی میزبان هست؟ (خروجیِ واقعی باید شاملِ «version» باشد،
+# وگرنه یک استابِ بی‌خروجی هم «موجود» تلقی می‌شود.)
+compose_available() {
+  local out
+  out="$(docker compose version 2>/dev/null || true)"
+  printf '%s' "$out" | grep -qi 'version'
+}
+
+# محیطِ واقعیِ کانتینرِ در حال اجرا → یک فایلِ env موقت (برای اجرای دروازه روی ایمیجِ تازه)
+container_env_file() {
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/newsbot-env.XXXXXX")" || return 1
+  chmod 600 "$tmp" || return 1
+  docker inspect "$CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+    | grep -vE '^(PATH|HOME|HOSTNAME|PYTHON_VERSION|PYTHON_SHA256|LANG)=' > "$tmp" || true
+  printf '%s\n' "$tmp"
+}
+
+# ساختِ ایمیجِ immutable با تگِ SHA. وابستگی‌ها داخلِ ایمیج پخته می‌شوند؛
+# نصبِ وابستگی در کانتینرِ زنده دیگر انجام نمی‌شود (DEVOPS-03).
+build_image() {
+  local sha="$1"
+  [ -f "$APP_DIR/deploy/Dockerfile" ] || { err "missing $APP_DIR/deploy/Dockerfile"; return 1; }
+  log "building the immutable image $IMAGE_REPO:$sha"
+  docker build \
+    --build-arg "NEWSBOT_VERSION=$sha" \
+    -t "$IMAGE_REPO:$sha" -t "$IMAGE_REPO:latest" \
+    -f "$APP_DIR/deploy/Dockerfile" "$APP_DIR" || return 1
+  docker image inspect "$IMAGE_REPO:$sha" >/dev/null 2>&1 || {
+    err "the image $IMAGE_REPO:$sha was not created"; return 1; }
+  IMAGE_CURRENT="$IMAGE_REPO:$sha"
+  log "image ready: $IMAGE_REPO:$sha"
+  return 0
+}
+
+# آیا ایمیجِ این تگ روی میزبان موجود است؟ (برای rollback سریع)
+image_exists() {
+  docker image inspect "$1" >/dev/null 2>&1
+}
+
+# ── DEVOPS-03/06: اجرای اسکریپتِ متناظر با کامیتِ هدف ──────────────────────────
+# اگر اسکریپتِ در حالِ اجرا با «deploy/deploy.sh»ِ کامیتِ هدف یکی نباشد، نسخهٔ هدف
+# در یک فایلِ موقت (که root آن را ساخته ⇒ قابل‌دستکاری از سوی کاربر نیست) نوشته
+# و همان اجرا می‌شود. نتیجه: همیشه *همان* منطقِ کامیتِ هدف اجرا می‌شود، حتی اگر
+# اسکریپتِ روی سرور از نسخهٔ قبلی باشد.
+reexec_target_script() {
+  local sha="$1" tmp expected current
+  expected="$(git rev-parse --verify -q "${sha}:deploy/deploy.sh" 2>/dev/null || true)"
+  if [ -z "$expected" ]; then
+    log "the target commit has no deploy/deploy.sh — keeping the running script"
+    return 0
+  fi
+  current="$(git hash-object "$0" 2>/dev/null || true)"
+  if [ -n "$current" ] && [ "$current" = "$expected" ]; then
+    return 0   # همین حالا نسخهٔ درست اجرا می‌شود
+  fi
+  tmp="$(mktemp "${TMPDIR:-/tmp}/newsbot-deploy-XXXXXX.sh")" || return 1
+  if ! git show "${sha}:deploy/deploy.sh" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  chmod 0700 "$tmp"
+  log "re-executing the deploy script of $sha (the running copy is a different revision)"
+  exec bash "$tmp" deploy "$sha"
+}
+
+# ── DEVOPS-06: دروازهٔ ضدِ عقب‌گرد (Anti-Downgrade Gate) ─────────────────────────
+# صفِ workflow_run ترتیبِ زمانیِ کامیت‌ها را تضمین نمی‌کند ⇒ یک CIِ قدیمی‌تر که
+# دیرتر تمام می‌شود می‌تواند نسخهٔ جدیدتر را روی سرور بنویسد. این دروازه چنین
+# استقراری را رد می‌کند (Escape hatch صریح: ALLOW_OLDER_SHA=1).
+anti_downgrade_gate() {
+  local target="$1" current="$2" origin_main="$3"
+  if [ "${ALLOW_OLDER_SHA:-0}" = "1" ]; then
+    log "WARNING: ALLOW_OLDER_SHA=1 — the anti-downgrade gate is DISABLED (target=$target)"
+    return 0
+  fi
+  if [ -n "$origin_main" ] && [ "$target" = "$origin_main" ]; then
+    return 0   # هدف، نوکِ main است ⇒ به‌روزترین نسخه
+  fi
+  if [ -n "$origin_main" ] && git merge-base --is-ancestor "$target" "$origin_main" 2>/dev/null; then
+    err "REFUSED: $target is older than origin/main ($origin_main) — deploying it would roll the server back."
+    err "         Re-run the deploy for the newest green SHA, or set ALLOW_OLDER_SHA=1 explicitly."
+    return 1
+  fi
+  if git merge-base --is-ancestor "$target" "$current" 2>/dev/null; then
+    err "REFUSED: $target is an ancestor of the deployed commit ($current) — deploying it would roll the server back."
+    err "         Re-run the deploy for the newest green SHA, or set ALLOW_OLDER_SHA=1 explicitly."
+    return 1
+  fi
+  if ! git merge-base --is-ancestor "$current" "$target" 2>/dev/null; then
+    err "REFUSED: $target does not descend from the deployed commit ($current) — the history diverged."
+    err "         Resolve the history on the server first, or set ALLOW_OLDER_SHA=1 explicitly."
+    return 1
+  fi
+  return 0
+}
+
+# ── DEVOPS-06: حفظِ تغییراتِ محلیِ سرور پیش از `git reset --hard` ───────────────
+# یک hotfixِ دستیِ اپراتور نباید برای همیشه پاک شود: قبل از reset، وضعیت و patch
+# در /opt/backups/dirty-tree-<timestamp>.patch نگه داشته می‌شود.
+preserve_dirty_tree() {
+  cd "$APP_DIR" || return 1
+  local status
+  status="$(git status --porcelain 2>/dev/null || true)"
+  [ -n "$status" ] || return 0
+  mkdir -p "$BACKUP_DIR" || return 1
+  local patch="$BACKUP_DIR/dirty-tree-$(date +%Y%m%d-%H%M%S).patch"
+  {
+    echo "# NewsBot dirty working tree captured before a deploy ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+    echo "# HEAD=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    echo "# git status --porcelain:"
+    printf '%s\n' "$status"
+    echo
+  } >> "$patch" || return 1
+  git diff >> "$patch" 2>/dev/null || true
+  git diff --cached >> "$patch" 2>/dev/null || true
+  local untracked
+  untracked="$(git ls-files --others --exclude-standard 2>/dev/null || true)"
+  if [ -n "$untracked" ]; then
+    {
+      echo "# untracked files:"
+      printf '%s\n' "$untracked"
+    } >> "$patch"
+  fi
+  chmod 600 "$patch" || return 1
+  log "WARNING: the working tree has local changes — they were saved to $patch"
+  return 0
+}
+
+# ── DEVOPS-08: تخلیهٔ ایمن پیش از توقفِ سرویس ─────────────────────────────────
+# پرچمِ «در حالِ تخلیه» را در همان محیطی می‌سازد که ربات در آن اجرا می‌شود و
+# منتظرِ پرچمِ «تخلیه کامل شد» می‌ماند (یعنی: هیچ انتشاری در حالِ پرواز نمانده).
+drain_service() {
+  local budget="$DRAIN_TIMEOUT"
+  if [ "$RUNTIME" = "docker" ]; then
+    local flag="$DRAIN_FLAG" drained="$DRAINED_FLAG"
+    # مسیرِ نشانگر از محیطِ خودِ کانتینر خوانده می‌شود تا با برنامه یکی باشد.
+    local env_dump
+    env_dump="$(docker inspect "$CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null || true)"
+    case "$env_dump" in
+      *DRAIN_FLAG_FILE=*) flag="${env_dump##*DRAIN_FLAG_FILE=}"; flag="${flag%%$'\n'*}" ;;
+    esac
+    case "$env_dump" in
+      *DRAINED_FLAG_FILE=*) drained="${env_dump##*DRAINED_FLAG_FILE=}"; drained="${drained%%$'\n'*}" ;;
+    esac
+    log "graceful drain: asking the container to stop starting new publications"
+    docker exec "$CONTAINER" python -c \
+      'import pathlib,sys; pathlib.Path(sys.argv[1]).write_text("drain")' "$flag" \
+      || err "WARNING: could not create the drain flag inside the container"
+    local i
+    for i in $(seq 1 "$budget"); do
+      if docker exec "$CONTAINER" python -c \
+          'import pathlib,sys; sys.exit(0 if pathlib.Path(sys.argv[1]).exists() else 1)' "$drained"; then
+        log "graceful drain: the bot reports no publication in flight"
+        return 0
+      fi
+      sleep 1
+    done
+    err "WARNING: the graceful drain did not finish within ${budget}s — a publication may be interrupted"
+    return 0
+  fi
+  # systemd: ربات روی خودِ میزبان اجرا می‌شود ⇒ نشانگر در همان FS است.
+  log "graceful drain: asking the service to stop starting new publications"
+  printf 'drain\n' > "$DRAIN_FLAG" 2>/dev/null \
+    || err "WARNING: could not create the drain flag at $DRAIN_FLAG"
+  local i
+  for i in $(seq 1 "$budget"); do
+    if [ -f "$DRAINED_FLAG" ]; then
+      log "graceful drain: the bot reports no publication in flight"
+      return 0
+    fi
+    sleep 1
+  done
+  err "WARNING: the graceful drain did not finish within ${budget}s — a publication may be interrupted"
+  return 0
+}
+
+# پاک‌کردنِ نشانگرِ تخلیه (بهترین‌تلاش): اگر ربات هنوز بالا باشد نباید در حالتِ
+# «همیشه در حالِ تخلیه» گیر کند. در حالتِ docker نشانگر داخلِ کانتینر است.
+clear_drain_flag() {
+  if [ "$RUNTIME" = "docker" ]; then
+    docker exec "$CONTAINER" python -c \
+      'import os,sys
+for p in sys.argv[1:]:
+    try: os.unlink(p)
+    except OSError: pass' "$DRAIN_FLAG" "$DRAINED_FLAG" >/dev/null 2>&1 || true
+    return 0
+  fi
+  rm -f "$DRAIN_FLAG" "$DRAINED_FLAG" 2>/dev/null || true
+  return 0
+}
+
+# توقفِ کنترل‌شدهٔ سرویس (قبل از جابه‌جاییِ دیتابیس و ساختِ نسخهٔ جدید)
+stop_service() {
+  if [ "$RUNTIME" = "docker" ]; then
+    log "stopping the container '$CONTAINER' (grace period ${DOCKER_STOP_TIMEOUT:-30}s)"
+    docker stop --time "${DOCKER_STOP_TIMEOUT:-30}" "$CONTAINER" >/dev/null \
+      || { err "docker stop failed for '$CONTAINER'"; return 1; }
+    return 0
+  fi
+  return 0
+}
+
+# ── DEVOPS-03: مهاجرتِ امنِ مسیرِ دیتابیس به حجمِ استاندارد ─────────────────────
+# مسیرِ استاندارد: /opt/newsbot-data (میزبان) ⇒ /app/data/newsbot.db (کانتینر).
+# فایل‌های ‎-wal/-shm هم همراهِ دیتابیس منتقل می‌شوند و مالکیت (uid 10001) حفظ می‌شود.
+migrate_db_path() {
+  [ "$RUNTIME" = "docker" ] || return 0
+  [ "$DB_BACKEND_EFFECTIVE" = "d1" ] && return 0
+  local current="${DB_PATH_EFFECTIVE:-}"
+  local std_db="$DATA_DIR/newsbot.db"
+  [ -n "$current" ] || return 0
+  if [ "$current" = "$std_db" ]; then
+    log "database path is already standard: $std_db"
+    return 0
+  fi
+  mkdir -p "$DATA_DIR" || return 1
+  chown 10001:10001 "$DATA_DIR" 2>/dev/null || true
+  local suffix src dst moved=0
+  for suffix in "" "-wal" "-shm"; do
+    src="${current}${suffix}"; dst="${std_db}${suffix}"
+    [ -e "$src" ] || continue
+    if [ -e "$dst" ]; then
+      log "database migration: $dst already exists — the source $src is left untouched"
+      continue
+    fi
+    if ! mv -f "$src" "$dst"; then
+      err "failed to move $src to $dst — refusing to continue (no data may be lost)"
+      return 1
+    fi
+    moved=1
+  done
+  # پوشهٔ آرشیوِ مقاله‌ها هم کنارِ دیتابیس است ⇒ همان‌جا منتقل می‌شود.
+  local src_archive dst_archive
+  src_archive="$(dirname "$current")/backups"; dst_archive="$(dirname "$std_db")/backups"
+  if [ -d "$src_archive" ] && [ ! -e "$dst_archive" ]; then
+    mv -f "$src_archive" "$dst_archive" || {
+      err "failed to move the article archive $src_archive"; return 1; }
+    log "article archive moved: $src_archive -> $dst_archive"
+  fi
+  if [ "$moved" -eq 0 ]; then
+    log "no database file to migrate at $current"
+    return 0
+  fi
+  chown 10001:10001 "$std_db" 2>/dev/null || true
+  chmod 600 "$std_db" 2>/dev/null || true
+  log "database migrated: $current -> $std_db"
+  DB_PATH_EFFECTIVE="$std_db"
+  return 0
+}
 
 # مسیرِ داخلِ کانتینر ⇒ همان مسیر روی میزبان (بر اساسِ bind-mountها)
 host_path_for() {
@@ -154,8 +437,7 @@ resolve_db_config() {
     # کانتینر: محیط از همان .envِ برنامه خوانده می‌شود ⇒ همان parser (python-dotenv)
     unit_env="$(docker inspect "$CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -E '(^|[[:space:]])DB_(FILE|BACKEND)=' || true)"
     if [ -n "$unit_env" ]; then
-      err "WARNING: the container sets DB_FILE/DB_BACKEND in its environment — set DEPLOY_DB_FILE / DEPLOY_DB_BACKEND"
-      err "         so the deploy and the service use exactly the same value."
+      log "the container environment defines DB_FILE/DB_BACKEND — the deploy follows exactly those values"
     fi
   else
   unit_env="$(systemctl show -p Environment "$SERVICE" 2>/dev/null || true)"
@@ -170,12 +452,17 @@ resolve_db_config() {
   fi
   fi
   local status="" backend="" path="" message=""
+  # در حالتِ docker، محیطِ خودِ کانتینر *همان* محیطِ برنامه است ⇒ DB_FILE/DB_BACKEND
+  # نباید حذف شوند (وگرنه مقدارِ واقعیِ کانتینر نادیده گرفته می‌شود). در حالتِ
+  # systemd، محیطِ این شل با محیطِ یونیت فرق دارد ⇒ باید حذف شود تا حدس نزنیم.
+  local pop_env=1
+  [ "$RUNTIME" = "docker" ] && pop_env=0
   {
     IFS= read -r -d '' status || true
     IFS= read -r -d '' backend || true
     IFS= read -r -d '' path || true
     IFS= read -r -d '' message || true
-  } < <(cd "$APP_DIR" && service_python - "$(service_app_dir)" "$workdir" "${DEPLOY_DB_FILE:-}" "${DEPLOY_DB_BACKEND:-}" <<'PY'
+  } < <(cd "$APP_DIR" && service_python - "$(service_app_dir)" "$workdir" "${DEPLOY_DB_FILE:-}" "${DEPLOY_DB_BACKEND:-}" "$pop_env" <<'PY'
 import os
 import sys
 
@@ -186,14 +473,17 @@ def emit(status, backend, path, message):
     )
 
 
-app_dir, workdir, dep_file, dep_backend = sys.argv[1:5]
+app_dir, workdir, dep_file, dep_backend, pop_env = sys.argv[1:6]
 sys.path.insert(0, app_dir)
 # The service's environment comes from systemd, not from this SSH shell; a DB_FILE
 # that happens to be exported in the deploy shell must not silently win over the
 # unit's own configuration. systemd-injected DB_* values are reported as a warning
 # by the caller and can be pinned with DEPLOY_DB_FILE / DEPLOY_DB_BACKEND.
-for _key in ("DB_FILE", "DB_BACKEND"):
-    os.environ.pop(_key, None)
+# In docker mode the container's own environment IS the application's environment
+# (pop_env=0) ⇒ its DB_FILE/DB_BACKEND are the source of truth.
+if pop_env == "1":
+    for _key in ("DB_FILE", "DB_BACKEND"):
+        os.environ.pop(_key, None)
 try:
     from newsbot import config
 except Exception:
@@ -406,8 +696,11 @@ prune_archive_backups() {
 sync_to() {
   local sha="$1"
   cd "$APP_DIR" || return 1
-  git fetch -q origin main || return 1
+  # fetch کامل (نه فقط main) تا merge-base بتواند تاریخچه را مقایسه کند.
+  git fetch -q --prune origin || return 1
   git cat-file -e "${sha}^{commit}" 2>/dev/null || return 1
+  # DEVOPS-06: تغییراتِ محلیِ سرور (hotfixِ دستی) پیش از reset حفظ می‌شوند.
+  preserve_dirty_tree || return 1
   git reset -q --hard "$sha" || return 1
   # OPS-02: HEAD باید عیناً همان SHA محرک deploy باشد
   [ "$(git rev-parse HEAD)" = "$sha" ] || return 1
@@ -416,11 +709,13 @@ sync_to() {
 
 install_deps() {
   cd "$APP_DIR" || return 1
-  log "installing pinned requirements"
   if [ "$RUNTIME" = "docker" ]; then
-    docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER" pip install --quiet -r requirements.txt || return 1
+    # DEVOPS-03: در حالتِ docker هیچ چیزی داخلِ کانتینرِ زنده نصب نمی‌شود؛
+    # وابستگی‌هایِ پین‌شده داخلِ ایمیج پخته شده‌اند (build_image).
+    log "dependencies are baked into the image ($IMAGE_REPO) — nothing is installed in the live container"
     return 0
   fi
+  log "installing pinned requirements"
   "$VENV_DIR/bin/pip" install --quiet -r requirements.txt || return 1
   return 0
 }
@@ -429,8 +724,16 @@ install_deps() {
 gate() {
   cd "$APP_DIR" || return 1
   if [ "$RUNTIME" = "docker" ]; then
-    docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER" python -m compileall -q newsbot run.py || return 1
-    docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER" python run.py --check || return 1
+    # دروازه روی *ایمیجِ تازه* اجرا می‌شود (نه روی کانتینرِ قدیمی که هنوز
+    # کدِ قبلی را اجرا می‌کند) ⇒ همان چیزی که واقعاً بالا خواهد آمد آزمایش می‌شود.
+    local image="$IMAGE_CURRENT" env_file
+    [ -n "$image" ] || { err "no image was built — cannot run the pre-restart gate"; return 1; }
+    env_file="$(container_env_file)" || { err "cannot snapshot the container environment"; return 1; }
+    docker run --rm --env-file "$env_file" --entrypoint python "$image" \
+      -m compileall -q newsbot run.py || { rm -f "$env_file"; return 1; }
+    docker run --rm --env-file "$env_file" --entrypoint python "$image" \
+      run.py --check || { rm -f "$env_file"; return 1; }
+    rm -f "$env_file"
     return 0
   fi
   "$VENV_DIR/bin/python" -m compileall -q newsbot run.py || return 1
@@ -438,11 +741,43 @@ gate() {
   return 0
 }
 
+# بالا آوردنِ سرویس از روی ایمیجِ SHA-tagged (DEVOPS-03) یا ری‌استارتِ یونیت.
+# compose اگر هست ⇒ کانتینر از روی همان ایمیج بازساخته می‌شود؛ وگرنه fallback
+# با `docker run` (همان محدودیت‌های امنیتی، بدونِ bind-mountِ کد).
+recreate_container() {
+  local image="$1"
+  [ -n "$image" ] || { err "no image tag given"; return 1; }
+  if compose_available; then
+    log "recreating the container from $image (docker compose)"
+    NEWSBOT_IMAGE="$image" \
+    NEWSBOT_DATA_DIR="$DATA_DIR" \
+    NEWSBOT_ENV_FILE="$ENV_FILE" \
+    NEWSBOT_BACKUP_DIR="$BACKUP_DIR" \
+      docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-build || return 1
+    return 0
+  fi
+  log "recreating the container from $image (docker run — the compose plugin is not available)"
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  docker run -d --name "$CONTAINER" --restart unless-stopped \
+    --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
+    --cap-drop ALL --security-opt no-new-privileges:true \
+    --memory 512m --cpus 1.0 --pids-limit 256 \
+    --env-file "$ENV_FILE" \
+    -e DB_FILE=/app/data/newsbot.db \
+    -e PYTHONUNBUFFERED=1 \
+    -v "$DATA_DIR:/app/data" \
+    -v "$BACKUP_DIR:/opt/backups:ro" \
+    --health-cmd "python -m newsbot.healthcheck" \
+    --health-interval 60s --health-timeout 10s --health-retries 3 --health-start-period 30s \
+    "$image" || return 1
+  return 0
+}
+
 start_service() {
   RESTART_EPOCH="$(date +%s)"
   if [ "$RUNTIME" = "docker" ]; then
-    if ! docker restart "$CONTAINER" >/dev/null; then
-      err "docker restart failed for '$CONTAINER'"
+    if ! recreate_container "$IMAGE_CURRENT"; then
+      err "failed to start the container from $IMAGE_CURRENT"
       return 1
     fi
     RESTARTED=1
@@ -517,14 +852,23 @@ rollback_and_die() {
   # OPS-06: فقط برگرداندنِ کد کافی نیست — کتابخانه‌ها هم باید نسخهٔ قبلی باشند،
   # وگرنه کدِ قدیمی روی وابستگی‌هایِ جدید اجرا می‌شود.
   install_deps || err "WARNING: could not restore the previous dependency set"
-  if [ "$RESTARTED" -eq 1 ]; then
-    if [ "$RUNTIME" = "docker" ]; then
-      docker restart "$CONTAINER" >/dev/null || true
-    else
-      systemctl restart "$SERVICE" || true
+  if [ "$RUNTIME" = "docker" ]; then
+    # DEVOPS-03: rollback به تگِ ایمیجِ قبلی (بدون ساختِ دوباره اگر موجود باشد).
+    local prev_image="$IMAGE_REPO:$prev"
+    if ! image_exists "$prev_image"; then
+      log "the previous image $prev_image is not on the host — rebuilding it from $prev"
+      build_image "$prev" || err "WARNING: could not rebuild the previous image"
+      prev_image="$IMAGE_REPO:$prev"
     fi
+    recreate_container "$prev_image" || err "WARNING: could not restart the container on the previous image"
+    log "service restarted on previous image $prev_image"
+    exit 1
+  fi
+  if [ "$RESTARTED" -eq 1 ]; then
+    systemctl restart "$SERVICE" || true
     log "service restarted on previous code $prev"
   fi
+  clear_drain_flag
   exit 1
 }
 
@@ -544,13 +888,35 @@ do_deploy() {
     log "deploy complete (no change): $prev"
     exit 0
   fi
+  # ── DEVOPS-06: دروازهٔ ضدِ عقب‌گرد (پیش از هر تغییری روی سرور) ────────────────
+  git fetch -q --prune origin || die "cannot fetch from origin"
+  # ── همیشه با اسکریپتِ *همان کامیتِ هدف* ادامه بده ─────────────────────────────
+  # اسکریپتی که در حالِ اجراست ممکن است نسخهٔ قبلی باشد (مثلاً در اولین استقرارِ
+  # این نسخه). اگر نسخهٔ هدف فرق دارد، همان را (به‌صورت یک فایلِ موقتِ root-owned)
+  # اجرا می‌کنیم ⇒ دروازهٔ ضدِ عقب‌گرد و تخلیهٔ ایمنِ همین نسخه واقعاً اجرا می‌شوند.
+  reexec_target_script "$target" || die "cannot extract the deploy script of $target"
+  local origin_main=""
+  origin_main="$(git rev-parse --verify -q origin/main 2>/dev/null || true)"
+  anti_downgrade_gate "$target" "$prev" "$origin_main" \
+    || die "anti-downgrade gate refused the deployment (ALLOW_OLDER_SHA=1 overrides it)"
   printf '%s\n' "$prev" > "$APP_DIR/.deployed_sha.prev" || die "cannot record previous sha"
   backup_db || die "database backup failed — aborting before any change"
   sync_to "$target" || die "code sync to $target failed — aborting (service not touched)"
+  # ── DEVOPS-03: ایمیجِ immutable با تگِ SHA ───────────────────────────────────
+  if [ "$RUNTIME" = "docker" ]; then
+    build_image "$target" || rollback_and_die "image build failed"
+  fi
   install_deps || rollback_and_die "dependency install failed"
   gate || rollback_and_die "pre-restart gate failed"
+  # ── DEVOPS-08: تخلیهٔ ایمن ⇒ هیچ انتشارِ در حالِ پروازی قطع نمی‌شود ───────────
+  if [ "$RUNTIME" = "docker" ]; then
+    drain_service || err "WARNING: the graceful drain failed"
+    stop_service || die "could not stop the container"
+    migrate_db_path || die "database path migration failed — aborting before the new container starts"
+  fi
   # OPS-26: شکستِ restart هم باید rollback واقعی بسازد، نه خروجِ خام
   start_service || rollback_and_die "service restart failed"
+  clear_drain_flag
   health || rollback_and_die "post-restart health check failed"
   printf '%s\n' "$target" > "$APP_DIR/.deployed_sha" || die "cannot record deployed sha"
   log "deploy complete: $prev -> $target"
@@ -569,8 +935,20 @@ do_rollback() {
   # current database first (from the same resolved path as the deploy), so a failed
   # backup leaves both the database and the active version untouched.
   backup_db || die "database backup failed — refusing to roll back without a backup"
+  preserve_dirty_tree || die "cannot preserve the local changes of the working tree"
   git reset -q --hard "$back" || die "git reset to $back failed"
   [ "$(git rev-parse HEAD)" = "$back" ] || die "rollback verification failed (HEAD != $back)"
+  # DEVOPS-03: نسخهٔ قبلی باید از روی همان ایمیجِ SHA-tagged بالا بیاید.
+  if [ "$RUNTIME" = "docker" ]; then
+    local prev_image="$IMAGE_REPO:$back"
+    if ! image_exists "$prev_image"; then
+      log "the previous image $prev_image is not on the host — rebuilding it from $back"
+      build_image "$back" || die "could not rebuild the previous image $back"
+    fi
+    IMAGE_CURRENT="$prev_image"
+    drain_service || err "WARNING: the graceful drain failed"
+    stop_service || die "could not stop the container during the rollback"
+  fi
   install_deps || die "could not restore the previous dependency set"
   start_service || die "service restart failed during rollback"
   health || die "health check failed after rollback — inspect manually"

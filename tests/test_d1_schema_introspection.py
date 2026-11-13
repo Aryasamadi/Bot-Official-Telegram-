@@ -154,7 +154,7 @@ class FakeD1:
             meta = {"changes": changes}
             if changes and not self.omit_last_row_id: meta["last_row_id"] = self._rid
             return _Resp({"success": True, "result": [{"results": [], "meta": meta}]})
-        if u.startswith("UPDATE") or u.startswith("DELETE"):
+        if u.startswith(("UPDATE", "DELETE")):
             self.applied.append(sql)
             return _Resp({"success": True, "result": [{"results": [], "meta": {"changes": 1}}]})
         if u.startswith("SELECT"):

@@ -34,9 +34,28 @@ def test_state_file_exists_and_names_the_current_phase():
     # فیلد واقعی «Current phase» را می‌سنجیم، نه وجودِ رشتهٔ IN_PROGRESS در جدول وضعیت
     m = re.search(r"\|\s*\*\*Current phase\*\*\s*\|\s*([^\n|]+)", body)
     assert m, "فیلد «Current phase» در فایل وضعیت پیدا نشد"
-    assert re.search(r"Phase\s*1\b", m.group(1)), (
-        "فاز جاری باید Phase 1 باشد، نه «%s»" % m.group(1).strip()
-    )
+    # فازِ جاری = اولین فازی که در جدولِ رودمپ COMPLETED نیست؛ این نگهبان با پیشرویِ
+    # فازها سخت‌کد نمی‌شود (قبلاً «Phase 1» هاردکد بود و با بستنِ فاز ۱ دروغ می‌شد).
+    phases = []
+    for line in body.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 4 or not cells[0].isdigit():
+            continue
+        status = cells[3].replace("*", "").replace("`", "").strip().split()[0] if cells[3].strip() else ""
+        phases.append((int(cells[0]), status))
+    assert phases, "جدول رودمپ ۱۰ فازی با ستونِ وضعیت پیدا نشد"
+    open_phases = [(n, s) for n, s in phases if s != "COMPLETED"]
+    if open_phases:
+        first = open_phases[0][0]
+        assert re.search(r"Phase\s*%s\b" % first, m.group(1)), (
+            "فاز جاری باید Phase %s باشد (اولین فازِ نا تمامِ رودمپ)، نه «%s»" % (first, m.group(1).strip())
+        )
+    else:
+        assert re.search(r"COMPLETED", m.group(1)), (
+            "همهٔ فازها COMPLETED هستند؛ فیلد «Current phase» باید این را اعلام کند، نه «%s»" % m.group(1).strip()
+        )
     # مقادیر وضعیت باید در بخش راهنما تعریف شده باشند
     for token in ("NOT_STARTED", "IN_PROGRESS", "BLOCKED", "COMPLETED"):
         assert token in body, "حالت وضعیت «%s» تعریف نشده است" % token

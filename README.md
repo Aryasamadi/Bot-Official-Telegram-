@@ -540,7 +540,7 @@ systemctl is-active bot-ai-automatic
 پس از استقرار، drop-inهای پایداری را طبق **`docs/DEPLOY_RUNBOOK.md` §۹** نصب کنید:
 اول `10-restart-always.conf` (سازگار با هر کد) و بعد از کد فاز ۱۵، `20-watchdog.conf`.
 
-راهنمای کامل (شامل dry-run و rollback): **[`DEPLOY-VPS-UPDATE.md`](DEPLOY-VPS-UPDATE.md)**
+راهنمای کامل (شامل dry-run و rollback): **[`docs/VPS_DEPLOYMENT.md`](docs/VPS_DEPLOYMENT.md)**
 
 ---
 

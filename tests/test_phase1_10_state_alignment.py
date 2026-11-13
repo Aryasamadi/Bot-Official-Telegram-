@@ -149,10 +149,20 @@ def test_audit_status_files_declare_their_age():
     for rel, marker in (
         ("docs/audit/ROADMAP.md", "HISTORICAL DOCUMENT"),
         ("ROADMAP.md", "مرجعِ واحد و زندهٔ وضعیت"),
-        ("PHASE1-10-FINAL-REPORT.md", "سند تاریخی"),
     ):
         body = _src(rel)
         assert marker in body, "%s باید به‌عنوان سند تاریخی علامت‌گذاری شود" % rel
+
+    # #47 دو سندِ ریشه را بازنشسته کرد؛ بنرِ تاریخیِ آن‌ها نباید گم شود: متنش در
+    # §3.1 فایلِ وضعیت حفظ شده و خودِ فایل‌ها دیگر نباید وجود داشته باشند.
+    state = _src("docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md")
+    assert "3.1 Retired documents" in state and "سند تاریخی" in state, (
+        "بنرِ PHASE1-10-FINAL-REPORT.md باید در §3.1 فایلِ وضعیت حفظ شود"
+    )
+    for retired in ("PHASE1-10-FINAL-REPORT.md", "DEPLOY-VPS-UPDATE.md"):
+        assert not os.path.exists(os.path.join(ROOT, retired)), (
+            "%s باید بازنشسته (حذف) شده باشد؛ محتوایش در §3.1 و تاریخِ گیت است" % retired
+        )
 
     data = json.loads(_src("docs/audit/status.json"))
     rec = data.get("reconciliation", {})

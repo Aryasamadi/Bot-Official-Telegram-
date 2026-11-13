@@ -73,10 +73,30 @@ canonical state file, open and merge its PR. Nothing else may start without a ne
 
 | ID | Decision | Alternatives rejected | Why |
 |---|---|---|---|
-| ADR-1 | Single state file: this one. `ROADMAP.md` (root), `docs/audit/ROADMAP.md`, `docs/audit/MASTER_STATUS.md`, `docs/audit/status.json` and `PHASE1-10-FINAL-REPORT.md` are **historical** (all now carry a banner) | Multiple status files | Contradictory state files were already the cause of a wrong picture of the project |
+| ADR-1 | Single state file: this one. `ROADMAP.md` (root), `docs/audit/ROADMAP.md`, `docs/audit/MASTER_STATUS.md` and `docs/audit/status.json` are **historical** (all carry a banner). `PHASE1-10-FINAL-REPORT.md` and `DEPLOY-VPS-UPDATE.md` were **retired in PR #47**; their banner text is preserved in §3.1 | Multiple status files | Contradictory state files were already the cause of a wrong picture of the project |
 | ADR-2 | Provider model = new `ai_providers` table + additive `ai_models.provider_id` | Reuse a text column on `ai_models` | A text column cannot carry discovery, per-provider keys or grouping |
 | ADR-3 | Rotation cursor persisted in DB with CAS (`version` column) | In-memory cursor; `ORDER BY RANDOM()` | Restart/multi-worker safe; random is not "round-robin" |
 | ADR-4 | Round-robin is **not** failover: a provider error does not advance within the same request | Current `_try_models` behaviour | Explicit product requirement; must be flagged and tested |
+
+### 3.1 Retired documents — banner preservation
+
+PR #47 deleted two root-level documents that described an older cycle and no longer matched
+the repository:
+
+| File | Why it was retired |
+|---|---|
+| `PHASE1-10-FINAL-REPORT.md` | Report of the previous 10-phase cycle (161 tests, working tree `eb4753b`); every number in it is stale, and it was already marked "historical" by P1-1 |
+| `DEPLOY-VPS-UPDATE.md` | One-off systemd deploy guide, superseded by `docs/VPS_DEPLOYMENT.md` (immutable image + compose + safe drain) |
+
+The P1-1 banner that lived at the top of `PHASE1-10-FINAL-REPORT.md` is preserved here verbatim:
+
+> **سند تاریخی (بازنگری ۲۰۲۶-۱۱-۱۲).** این گزارش مربوط به دور پیشین اصلاحات است. **وضعیت فعلی
+> `docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md` است** و این فایل «تکمیل‌شده» را منعکس نمی‌کند.
+> به‌کاررفتن این فایل به‌عنوان وضعیت فعلی ممنوع است.
+
+Nothing is lost: the full text remains in git history
+(`git log --diff-filter=D -- PHASE1-10-FINAL-REPORT.md DEPLOY-VPS-UPDATE.md`), and the audit
+history it belonged to stays in `docs/audit/FINDINGS.md`.
 
 ---
 

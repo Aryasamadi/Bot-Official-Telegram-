@@ -1,41 +1,25 @@
 # MASTER STATUS — Bot-Official-Telegram- Comprehensive Engineering Audit
 
-> This file is the single entry point for audit state. It always points to exactly one current
-> phase and one next permitted action. Read it first in every session.
+> **HISTORICAL DOCUMENT (reconciled 2026-11-12).** The remediation phases `PH-00…PH-11` recorded here
+> belong to the 2026-10 audit cycle and are largely merged into `main`. **The live source of truth is
+> `docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md`.** Read that first. This file is kept for the audit
+> history and the original findings register (`FINDINGS.md`).
+>
+> The fields below were updated on 2026-11-12 to remove claims that git no longer supports. The
+> per-phase narrative sections further down are **not** re-verified and must not be treated as current.
 
 | Field | Value |
 |---|---|
-| **Last audit timestamp** | 2026-10-20 (UTC) · **verification pass:** 2026-10-20 (phase `PH-00`) · **remediation update:** 2026-10-23 (`PH-06`) · **Session-3 update (phase C — CI/CD · Docker · deploy · docs):** 2026-11-06 |
+| **Last audit timestamp** | 2026-10-20 (UTC) · **verification pass:** 2026-10-20 (phase `PH-00`) · **reconciled:** 2026-11-12 |
 | **Audited repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Remote** | `https://github.com/Aryasamadi/Bot-Official-Telegram-.git` |
 | **Audited branch** | `main` |
-| **Audited commit SHA** | **Baseline (original audit):** `08bc87655dc910a98076acd749ddf8f3e6bdca2c` ("Fix referral invitation copy and fallback", 2026-10-19T20:03:08Z) · **current `main` audited in Session 3:** `d0efb7e0692ec0b32c83e86a05b664ace315cded` ("fix: PTB 20+ Bot.bot is a User — the native rich path was never used", 2026-10-31T06:50:44Z) |
-| **Production commit SHA** | **UNKNOWN — NOT VERIFIED.** (unchanged since the original audit) No VPS/host access was available: this environment has **no `~/.ssh`, no ssh config, no `gh` CLI and no VPS environment variables**. The repository contains no deployment ledger; `.deployed_sha` is written on the host and never committed. The only in-repo evidence of the running SHA is the super-admin `/health` panel (`newsbot/ui_views_super.py:36-60`). See `FINDINGS.md` §13.1. |
-| **Audit workspace** | `C:\Users\Mustafa\AppData\Local\Temp\opencode\audit-newsbot` (clean clone of `main` @ `08bc876`; audit docs written here) |
-| **Overall project status** | **AMBER / DEGRADED-RISK** — core engine is sound (exactly-once publishing, atomic payment approval, layered SSRF/prompt-injection defences, WAL-safe backups, CI gate, real rollback). However **2 CRITICAL** defects (FIN-001 financial + OPS-033 restart loop), **26 HIGH** defects, and an **unverified production state** mean the system must not be considered production-hardened. |
-| **Audit completion** | **~94 %** (all 20 audit domains inspected; a second verification pass executed the FIN-001 reproduction and re-ran the suite; production runtime verification unavailable) |
-| **Current phase** | **Phase C (`S3`) — CI/CD · Docker/Compose · VPS deploy · documentation** — completed 2026-11-06: 7 findings (TEST-01, DEVOPS-01/03/05/06/07/08) + 4 doc/config drifts **all remediated** (11/11). Report: `docs/audit/MASTER_AUDIT_AND_REMEDIATION_REPORT.md` · `docs/REPOSITORY_AUDIT_REPORT.md` · `docs/audit/parts/01..04-*.md`. Previous phase (`PH-07`) and its history remain below. |
-| **Current phase status** | **Phase C complete and verified locally:** 844 tests pass · coverage 70 % (9158 stmts / 2704 miss) · `pyflakes` / `ruff` / `mypy newsbot` / `py_compile` clean · `pip-audit` clean · `bash -n deploy/*.sh` clean · GitHub branch+environment protection verified **live** via the API (`tools/verify_github_protection.py` → exit 0). **Live VPS deployment not executed** (no network route to the host from this environment) — the first production run must go through GitHub Actions. |
-| **Next permitted action** | `AWAIT_OWNER_AUTHORIZATION` — after Phase C is merged, the next permitted actions are: (1) run `deploy/setup-deploy-user.sh` on the VPS and switch the workflow to the `deploy` user, (2) the first real deployment via `workflow_dispatch`, (3) then PH-09 → PH-10 → PH-11, only on explicit instruction |
-| **Owner approval required** | `true` |
-
----
-
-## به‌روزرسانی 2026-11-06 — Session 3 / فاز C (CI/CD · Docker · استقرار · مستندات)
-
-> این بخش **اضافه** شده و هیچ بخشِ قبلی تغییر یا حذف نشده است. وضعیتِ جاری در
-> جدولِ بالا به‌روزرسانی شد؛ تاریخچهٔ زیر دست‌نخورده ماند.
-
-| | |
-|---|---|
-| **دامنه** | ۷ یافتهٔ ممیزی: TEST-01، DEVOPS-01، DEVOPS-03، DEVOPS-05، DEVOPS-06، DEVOPS-07، DEVOPS-08 + ۴ ناسازگاریِ مستند/پیکربندی (D-1…D-4) |
-| **نتیجه** | **۱۱ از ۱۱ رفع شد** (۱۰۰٪)، هرکدام با شاهدِ اجرایی |
-| **سنجشِ واقعی** | ۸۴۴ تست سبز · پوشش ۷۰٪ (۹۱۵۸ دستور / ۲۷۰۴ miss) · `pyflakes`، `ruff`، `mypy newsbot` (۴۴ فایل)، `py_compile`، `pip-audit`، `bash -n deploy/*.sh` همگی پاک · `tools/final_verification.py` سبز |
-| **حفاظتِ مخزن (زنده)** | پیش از این فاز: `{"message":"Branch not protected"}` · اکنون: `main` حفاظت‌شده (۱ بازبینیِ PR + checkِ `test` به‌صورت strict + `enforce_admins`) و محیطِ `production` با reviewerِ اجباری — راستی‌آزمایی‌شده با API (`tools/verify_github_protection.py` ⇒ exit 0) |
-| **آنچه انجام *نشد*** | استقرارِ واقعی روی VPS (دسترسیِ شبکه به میزبان در این محیط نیست) · مهاجرتِ دیتابیسِ واقعی · نصبِ قاعدهٔ sudoers روی سرور. تمامِ سنجش‌های استقرار روی sandboxِ واقعیِ git/systemd/docker انجام شده‌اند. |
-| **گزارش‌ها** | `docs/REPOSITORY_AUDIT_REPORT.md` · `docs/audit/MASTER_AUDIT_AND_REMEDIATION_REPORT.md` · `docs/audit/parts/01..04-*.md` · `docs/VPS_DEPLOYMENT.md` |
-| **فایل‌های تازه** | `docker-compose.yml` · `deploy/setup-deploy-user.sh` · `deploy/ssh-forced-command.sh` · `deploy/systemd/README.md` · `newsbot/healthcheck.py` · `tools/verify_github_protection.py` · `pyproject.toml` · `tests/test_session3_cicd_docker_deploy_docs.py` |
-| **فایل‌های تغییرکرده** | `deploy/deploy.sh` · `deploy/Dockerfile` · `.github/workflows/ci.yml` · `.github/workflows/deploy-vps.yml` · `newsbot/runtime.py` · `newsbot/publish.py` · `newsbot/scheduler.py` · `newsbot/cycle.py` · `newsbot/app.py` · `newsbot/config.py` · `newsbot/ui_views_super.py` · `requirements*.txt` · `README.md` · `docs/DEPLOY_RUNBOOK.md` · `docs/audit/status.json` |
+| **Audited commit SHA (historical)** | `08bc87655dc910a98076acd749ddf8f3e6bdca2c` ("Fix referral invitation copy and fallback", 2026-10-19T20:03:08Z) — **superseded** |
+| **Current `main` (verified 2026-11-12)** | `d0efb7e0692ec0b32c83e86a05b664ace315cded` (2026-10-31 06:50:44 +0000) |
+| **Production commit SHA** | **UNKNOWN — NOT VERIFIED.** No VPS/host access is available from this environment. The repository contains no deployment ledger; `.deployed_sha` is written on the host and never committed. The only in-repo evidence of the running SHA is the super-admin `/health` panel (`newsbot/ui_views_super.py:36-60`). The latest recorded deployment run for `d0efb7e` was `skipped`. |
+| **Current state of record** | `docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md` (phase 1 of 10, `IN_PROGRESS`) |
+| **Remediation status at reconciliation** | `PH-01…PH-08` are merged into `main` (PRs #20–#36). Their narrative sections below describe the *state at the time of implementation*, not the current code. |
+| **Next permitted action** | Per the owner's explicit instruction for each phase; Phase 1 is authorized. |
 
 ---
 
@@ -46,7 +30,7 @@
 | | |
 |---|---|
 | **نشانه** | پنل VPS (vyce.cloud): CPU روی ۱۰۰٪ به‌صورت دندانه‌ای؛ ربات کار نمی‌کند؛ سرور ~۴ ساعت قبل از اسکرین‌شات خاموش و ~۵۱ ثانیه قبلش روشن شده بود |
-| **رد شد (واقعیت، نه حدس)** | ۱) **کدِ من نیست:** `main` هنوز `08bc876` است و **هیچ‌کدام** از PRهای #20…#25 merge نشده‌اند ⇒ کدِ فازها هرگز به سرور نرسیده. ۲) **استقرارهای اخیر نیست:** اجراهای #42، #43 و #44 همگی در **۱۲ تا ۱۵ ثانیه** شکست خوردند، یعنی پیش از هر SSH/SCP ⇒ سرور اصلاً به‌روزرسانی نشد. |
+| **رد شد (واقعیت، نه حدس)** | ۱) **کدِ من نیست:** در آن تاریخ `main` هنوز `08bc876` بود و **هیچ‌کدام** از PRهای #20…#25 merge نشده بودند ⇒ کدِ فازها هرگز به سرور نرسیده بود. ۲) **استقرارهای اخیر نیست:** اجراهای #42، #43 و #44 همگی در **۱۲ تا ۱۵ ثانیه** شکست خوردند، یعنی پیش از هر SSH/SCP ⇒ سرور اصلاً به‌روزرسانی نشده بود. |
 | **علتِ تأییدشده (۲۰۲۶-۱۰-۲۱، بعداً)** | **DB-27**: خطای بحرانیِ استارتاپ روی D1 — «`D1 HTTP 400 … duplicate column name: next_plan_id`» — یعنی برنامه در هر بار بالا آمدن می‌افتاد ⇒ با `Restart=always` **حلقهٔ ۱۰۰٪ CPU**. ریشه: `_table_cols()` روی D1 مجموعهٔ خالی برمی‌گرداند (PRAGMA در D1 no-op بود و خطای واقعی پنهان می‌شد) ⇒ migration ستونِ موجود را دوباره اضافه می‌کرد. اصلاح: **PR #26** (کامیت `3393596`، merge شده). |
 | **اصلاحِ کد** | **PR #26** (ادغام‌نشده): مهاجرت اکنون **بسته‌ای** (مصرف حافظهٔ کران‌دار)، **قابلِ ادامه** (checkpoint هر ستون، commit‌شده بیرون از تراکنشِ اسکیما) و drop-inِ systemd سقفِ ری‌استارت دارد ⇒ حلقهٔ بی‌پایان متوقف می‌شود. |
 | **اصلاحِ فوری روی سرور** | چون مسیرِ استقرار خودش خراب است (۱۳ ثانیه)، اصلاح باید **دستی** اعمال شود — دستورها در گزارشِ همین نوبت آمده است. |
@@ -411,8 +395,10 @@ All under `docs/audit/` in the audit workspace
 "start phase PH-00"
 
 # Read the current state
-"read docs/audit/MASTER_STATUS.md"
+"read docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md"
 ```
 
-**Reminder for future sessions:** always read `docs/audit/MASTER_STATUS.md` and `docs/audit/status.json`
-first, then compare the current Git commit against the recorded baseline (`08bc876`) before acting.
+**Reminder for future sessions (updated 2026-11-12):** do **not** treat this file as current state.
+Read `docs/PROJECT_ROADMAP_AND_EXECUTION_STATE.md` first; it is the single source of truth.
+The audit below was built against `main` @ `08bc876`; `main` is now `d0efb7e` and contains the
+merged `PH-01…PH-08` work, so the per-phase narrative here is history, not the present.

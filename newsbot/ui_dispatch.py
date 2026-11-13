@@ -14,7 +14,7 @@ from newsbot.db import q, gget, gset, arun
 from newsbot.timeutils import today_str, local_clock, TZ_ZONES, offset_now
 from newsbot.ratelimit import rate_ok, rate_free, rate_left, rate_mark, rate_clear, global_rate_ok
 from newsbot.concurrency import ch_lock
-from newsbot.core_users import (admin_limits, admin_offset, usage_reset, is_super, user_lang,
+from newsbot.core_users import (admin_limits, admin_offset, usage_reset, carry_usage_day, is_super, user_lang,
                                 can_admin, get_user, list_users)
 from newsbot.core_channels import (get_settings, update_settings, channel_owned,
                                    publication_pending, reset_channel_queue, del_channel,
@@ -250,9 +250,8 @@ async def _dispatch(update, context, data):
             old_day, new_day = today_str(s.get("tz") or s["utc_offset"]), today_str(iana)
             update_settings(cid, tz=iana, utc_offset=offset_now(iana))
             if old_day != new_day:      # جابه‌جایی مرزِ روز نباید سهمیهٔ امروز را صفر کند (سوءاستفاده و بی‌اعتباری شمارش)
-                prev = await arun(q, "SELECT posts,tests FROM usage WHERE admin_id=? AND day=?", (uid, old_day), one=True)
-                if prev: await arun(q, "INSERT INTO usage(admin_id,day,posts,tests) VALUES(?,?,?,?) ON CONFLICT(admin_id,day) DO UPDATE SET posts=MAX(posts,?), tests=MAX(tests,?)",
-                                   (uid, new_day, prev["posts"], prev["tests"], prev["posts"], prev["tests"]), commit=True)
+                await arun(carry_usage_day, uid, old_day, new_day)   # PIPE-018: posts + tests + ai
+                await arun(carry_usage_day, -int(cid), old_day, new_day)   # PIPE-017: شمارندهٔ رزرو خودِ کانال
             await popup(update, context, tr(lang, "tz_set", city=tz_city(iana, lang), tz=off_label_safe(iana), loc=local_clock(iana))); return await view_sched(update, context, cid)
         if b == "con": return await view_content(update, context, cid)
         if b == "cat": return await view_cats(update, context, cid, int(d) if d.isdigit() else 0)

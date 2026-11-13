@@ -119,6 +119,18 @@ def ai_claim(uid):
         return cur.rowcount > 0
     return bool(_trx(_go))
 
+def carry_usage_day(uid, old_day, new_day):
+    """PIPE-018: انتقال همهٔ شمارنده‌های سهمیهٔ روزانه (posts/tests/ai) هنگام جابه‌جایی مرز روز
+    (تغییر منطقهٔ زمانی). قبلاً ستون ai منتقل نمی‌شد ⇒ با عوض کردن timezone سقف AI صفر می‌شد.
+    ادغام با MAX است تا هیچ‌وقت مقدار موجودِ روز مقصد کم نشود. True اگر ردیفی منتقل شد."""
+    if old_day == new_day: return False
+    def _go(conn):
+        prev = conn.execute("SELECT posts,tests,ai FROM usage WHERE admin_id=? AND day=?", (uid, old_day)).fetchone()
+        if not prev: return False
+        p, t, a = (int(prev[0] or 0), int(prev[1] or 0), int(prev[2] or 0))
+        conn.execute("INSERT INTO usage(admin_id,day,posts,tests,ai) VALUES(?,?,?,?,?) ON CONFLICT(admin_id,day) DO UPDATE SET posts=MAX(posts,excluded.posts), tests=MAX(tests,excluded.tests), ai=MAX(ai,excluded.ai)", (uid, new_day, p, t, a))
+        return True
+    return bool(_trx(_go))
 _RESET_FIELDS = ("tests", "posts", "ai")
 
 def usage_reset(uid, field="tests"):
@@ -171,7 +183,12 @@ def remaining(uid, field="posts", cid=None):
                 ch_off = ch_st.get("tz") or ch_st.get("utc_offset")
             except Exception: ch_off = None
             if ch_off is None: ch_off = admin_offset(uid)
-            ch_left = max(0, int(ch_cap) - channel_posts_today(cid, ch_off))
+            ch_used = channel_posts_today(cid, ch_off)
+            try:
+                r = q("SELECT posts FROM usage WHERE admin_id=? AND day=?", (-int(cid), today_str(ch_off)), one=True)
+                if r and r["posts"]: ch_used = max(ch_used, int(r["posts"]))
+            except Exception: pass
+            ch_left = max(0, int(ch_cap) - ch_used)
             left = ch_left if left is None else min(left, ch_left)
     return left
 

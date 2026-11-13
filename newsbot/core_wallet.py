@@ -139,3 +139,25 @@ def wallet_debit(uid, cur, amount, reason="debit", ref=None):
         raise WalletError(f"non-spendable currency: {cur!r}")
     amt = abs(float(amount or 0))
     return _trx(lambda conn: _apply(conn, uid, cur, -amt, reason, ref))
+
+
+def wallet_allocate_legacy(uid, target_cur, ref=None):
+    """FIN-025: تخصیصِ صریح و اتمیکِ موجودیِ منجمدِ سطلِ ``legacy`` به یک واحدِ قابل‌خرج (``toman`` یا ``usd``).
+
+    * فقط به واحدهای قابل‌خرج اجازهٔ انتقال می‌دهد؛
+    * در یک تراکنش: سطلِ ``legacy`` صفر می‌شود (با رسیدِ ``legacy_allocate_out``) و همان مقدار
+      به ``target_cur`` افزوده می‌شود (با رسیدِ ``legacy_allocate``) تا دفترِ هر واحد با موجودی‌اش
+      همیشه برابر بماند؛
+    * idempotent: اگر موجودیِ ``legacy`` صفر باشد، ``0.0`` برمی‌گرداند و هیچ رسیدی نمی‌نویسد.
+    """
+    if not target_cur or not is_spendable(target_cur):
+        raise WalletError(f"non-spendable target currency: {target_cur!r}")
+    def _go(conn):
+        row = conn.execute("SELECT amount FROM wallet WHERE user_id=? AND cur=?", (uid, CUR_LEGACY)).fetchone()
+        amt = round(float(row["amount"] or 0), 2) if row else 0.0
+        if amt <= 0:
+            return 0.0
+        _apply(conn, uid, CUR_LEGACY, -amt, "legacy_allocate_out", ref or f"to:{target_cur}")
+        _apply(conn, uid, target_cur, amt, "legacy_allocate", ref or "from:legacy")
+        return amt
+    return _trx(_go)

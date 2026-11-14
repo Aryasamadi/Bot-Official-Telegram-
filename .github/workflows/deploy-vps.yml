@@ -101,7 +101,7 @@ jobs:
       # OPS-04: checkout باید روی همان SHA باشد تا «اسکریپتِ استقرار» و «کدِ مستقرشده»
       # از یک کامیت بیایند (قبلاً اسکریپت از headِ شاخهٔ پیش‌فرض برداشته می‌شد).
       # fetch-depth: 0 ⇒ تاریخچهٔ کامل برای بررسیِ «عقب‌گرد» لازم است.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TARGET_SHA }}
           fetch-depth: 0

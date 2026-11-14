@@ -10,8 +10,6 @@
 
 هیچ تستی به شبکه دست نمی‌زند و هیچ راز/کلیدی در فیکسچرها نیست.
 """
-import asyncio
-
 import pytest
 
 
@@ -75,3 +73,63 @@ def test_order_pool_treats_a_missing_priority_as_lowest():
 
     pool = [{"id": 1, "priority": None}, {"id": 2, "priority": 1}, {"id": 3}]
     assert [m["id"] for m in order_pool(pool)] == [2, 1, 3]
+
+
+# ── Task 3: advanceِ پایدار با CAS، fail-open، و خودترمیمی ─────────────────────────
+def test_advance_moves_the_cursor_once_per_call(isolated_db):
+    from newsbot import rotation
+
+    pool = [{"id": i, "priority": 10} for i in range(1, 4)]
+    m1, i1, v1 = rotation.advance("public", pool)
+    m2, i2, v2 = rotation.advance("public", pool)
+    assert [m1["id"], m2["id"]] == [1, 2]
+    assert (i1, i2) == (0, 1)
+    assert v2 == v1 + 1
+
+
+def test_advance_is_safe_when_several_callers_race(isolated_db):
+    """ADR-۳: باختِ مسابقه باید تلاشِ دوباره بدهد، نه اینکه advance را گم کند."""
+    import threading
+
+    from newsbot import rotation
+
+    pool = [{"id": i, "priority": 10} for i in range(1, 4)]
+    seen, errors = [], []
+
+    def worker():
+        try:
+            for _ in range(5):
+                m, _i, _v = rotation.advance("public", pool)
+                seen.append(m["id"])
+        except Exception as e:                      # فقط با باگِ واقعی
+            errors.append(repr(e))
+
+    ts = [threading.Thread(target=worker) for _ in range(4)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert not errors
+    assert len(seen) == 20
+    assert rotation.rotation_get("public")["version"] == 20     # هر فراخوانی دقیقاً یک advance
+
+
+def test_advance_on_a_missing_row_self_heals(isolated_db):
+    from newsbot import rotation
+    from newsbot.db import q
+
+    q("DELETE FROM ai_rotation WHERE scope='public'", commit=True)
+    m, _i, _v = rotation.advance("public", [{"id": 9, "priority": 10}])
+    assert m["id"] == 9
+    assert rotation.rotation_get("public") is not None
+
+
+def test_advance_on_an_empty_pool_writes_nothing(isolated_db):
+    from newsbot import rotation
+    from newsbot.db import q
+
+    q("DELETE FROM ai_rotation WHERE scope='public'", commit=True)
+    m, idx, ver = rotation.advance("public", [])
+    assert (m, idx) == (None, 0)
+    row = rotation.rotation_get("public")
+    assert row["cursor"] == 0 and row["version"] == 0      # بدونِ advance

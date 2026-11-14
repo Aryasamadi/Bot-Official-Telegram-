@@ -58,19 +58,27 @@ def rotation_log_recent(scope, limit=20):
 def rotation_stats(scope):
     row = rotation_get(scope) or {}
     n = q("SELECT COUNT(*) AS n FROM ai_rotation_log WHERE scope=?", (scope,), one=True)
-    return {"cursor": int(row.get("cursor") or 0), "version": int(row.get("version") or 0),
+    return {"cursor": int(_field(row, "cursor") or 0), "version": int(_field(row, "version") or 0),
             "log_rows": int(n["n"]) if n else 0}
 
 
 # ── انتخابِ محض (بدونِ دیتابیس، بدونِ شبکه) ────────────────────────────────────────
+def _field(m, name, default=None):
+    """خواندنِ یک فیلد از dict یا sqlite3.Row (Row متدِ ``.get`` ندارد)."""
+    try:
+        return m[name]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
 def order_pool(models):
     """ترتیبِ چرخش: اول ``priority`` (کم‌تر = زودتر)، بعد ``id`` — قطعی و قابلِ پیش‌بینی.
 
     ``priority`` گم‌شده/None به‌عنوان «کم‌ترین اولویت» (۹۹) گرفته می‌شود تا یک ردیفِ
-    ناقص، کلِ چرخش را به‌هم نریزد.
+    ناقص، کلِ چرخش را به‌هم نریزد. ورودی می‌تواند dict یا sqlite3.Row باشد.
     """
-    return sorted(models, key=lambda m: (m["priority"] if m.get("priority") is not None else 99,
-                                         m["id"]))
+    return sorted(models, key=lambda m: (_field(m, "priority", 99) if _field(m, "priority", 99) is not None else 99,
+                                         _field(m, "id")))
 
 
 def pick_rotation(pool, cursor):
@@ -84,3 +92,45 @@ def pick_rotation(pool, cursor):
         return None, 0
     idx = int(cursor) % len(ordered)
     return ordered[idx], idx
+
+
+def advance(scope, models):
+    """مکان‌نما را **یک بار** جلو می‌برد و مدلِ همین درخواست را برمی‌گرداند.
+
+    ``(model, index, version)`` — و در استخرِ خالی ``(None, 0, version)`` بدونِ advance.
+
+    ADR-۳: مکان‌نما در دیتابیس و با CAS است. خواندن و نوشتن در **یک** تراکنش انجام می‌شود
+    (``db.write``): اگر SELECT و UPDATE جدا بروند، دو worker می‌توانند نسخه را جابه‌جا کنند
+    و یک advance گم شود. CAS هم می‌ماند (برای ایمنی در برابرِ write از مسیرِ دیگر).
+
+    اگر پس از چند تلاش هم record قابلِ advance نبود، **fail-open** می‌کنیم: انتخابِ محلی
+    برمی‌گردد ولی مکان‌نما جلو نمی‌رود — چرخش هرگز نباید نشر را متوقف کند.
+
+    این تابع هم‌گام است (DB خالص)؛ صدازدنِ آن از مسیرِ async با ``await arun(advance, ...)``.
+    """
+    from newsbot.db import write
+
+    def _rmw(conn):
+        cur = conn.execute("SELECT cursor, version FROM ai_rotation WHERE scope=?", (scope,)).fetchone()
+        if cur is None:
+            conn.execute("INSERT OR IGNORE INTO ai_rotation(scope, cursor, version, updated_at) VALUES(?,0,0,?)",
+                         (scope, now_iso()))
+            cur = conn.execute("SELECT cursor, version FROM ai_rotation WHERE scope=?", (scope,)).fetchone()
+        cursor = int(cur["cursor"]); version = int(cur["version"])
+        if not models:
+            return None, 0, cursor, version
+        model, idx = pick_rotation(models, cursor)
+        conn.execute("UPDATE ai_rotation SET cursor=?, version=version+1, updated_at=? WHERE scope=? AND version=?",
+                     (cursor + 1, now_iso(), scope, version))
+        return model, idx, cursor + 1, version + 1
+
+    for _ in range(_ADVANCE_RETRIES):
+        try:
+            model, idx, _cursor, version = write(_rmw)
+            return model, idx, version
+        except Exception:
+            continue
+    # fail-open: انتخابِ محلی بدونِ advance (چرخش نباید نشر را متوقف کند)
+    row = rotation_ensure(scope)
+    model, idx = pick_rotation(models, int(row["cursor"])) if models else (None, 0)
+    return model, idx, int(row["version"])

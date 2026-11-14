@@ -1042,6 +1042,41 @@ def q(sql, params=(), one=False, commit=False):
             except Exception: pass
             raise
 
+def write(fn):
+    """اجرای یک «خواندن-تغییر-نوشتن» اتمیک زیر همان قفلِ نوشتنِ ``q`` و سپس commit.
+
+    ``fn(conn)`` باید ``conn.execute`` را صدا بزند و مقدار دلخواه برگرداند. برایِ CAS لازم
+    است: اگر SELECT و UPDATE در دو تراکنشِ جدا بروند، دو worker می‌توانند نسخه‌ها را
+    جابه‌جا کنند و یک advance گم شود (فاز ۳، ADR-۳).
+    """
+    on_loop = _on_event_loop_thread()
+    if on_loop and _LOOP_GUARD_STRICT:
+        raise RuntimeError("blocking DB call on the event-loop thread; use 'await arun(...)' instead")
+    for attempt in range(5):
+        try:
+            conn = db()
+            with _lock:
+                out = fn(conn)
+                conn.commit()
+                return out
+        except sqlite3.OperationalError as e:
+            msg = str(e).lower()
+            try:
+                _c = getattr(_tls, "conn", None)
+                if _c is not None: _c.rollback()
+            except Exception: pass
+            if attempt == 4 or ("locked" not in msg and "busy" not in msg): raise
+            if on_loop:
+                raise RuntimeError("database is busy and write() was called on the event-loop thread; use 'await arun(...)'") from e
+            time.sleep(0.02 * (2 ** attempt))
+        except sqlite3.Error:
+            try:
+                _c = getattr(_tls, "conn", None)
+                if _c is not None: _c.rollback()
+            except Exception: pass
+            raise
+
+
 def qrow(sql, params=()):
     """اجرای یک نوشتن و برگرداندنِ ``rowcount`` — برایِ CAS.
 

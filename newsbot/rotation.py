@@ -8,6 +8,8 @@ ADR-۳ می‌گوید مکان‌نما باید **در دیتابیس و با 
 این ماژول فقط همین دو چیز را می‌داند: «کجا هستیم» (ai_rotation) و «چه شد» (ai_rotation_log).
 انتخابِ مدل و مسیرِ نشر در ai_models/generate می‌مانند.
 """
+import sqlite3
+
 from newsbot.db import q, qrow
 from newsbot.timeutils import now_iso
 
@@ -16,6 +18,14 @@ from newsbot.timeutils import now_iso
 ROTATION_SCOPES = ("public",)
 
 _ADVANCE_RETRIES = 5      # تلاشِ دوباره روی باختِ مسابقهٔ CAS
+
+
+class RotationCASMiss(Exception):
+    """CAS باخت: ردیفِ مکان‌نما با ``version``ِ خوانده‌شده جور نبود (کسی زودتر advance کرده).
+
+    این یک خطای «باید دوباره تلاش کنم» است، نه یک باگ — و نباید با خطاهای واقعی (مثلاً
+    اسکیمای خراب) یکی گرفته شود، وگرنه یک باگ تا ابد زیرِ fail-open پنهان می‌ماند.
+    """
 
 
 def rotation_get(scope):
@@ -110,27 +120,41 @@ def advance(scope, models):
     """
     from newsbot.db import write
 
-    def _rmw(conn):
-        cur = conn.execute("SELECT cursor, version FROM ai_rotation WHERE scope=?", (scope,)).fetchone()
-        if cur is None:
-            conn.execute("INSERT OR IGNORE INTO ai_rotation(scope, cursor, version, updated_at) VALUES(?,0,0,?)",
-                         (scope, now_iso()))
-            cur = conn.execute("SELECT cursor, version FROM ai_rotation WHERE scope=?", (scope,)).fetchone()
-        cursor = int(cur["cursor"]); version = int(cur["version"])
-        if not models:
-            return None, 0, cursor, version
-        model, idx = pick_rotation(models, cursor)
-        conn.execute("UPDATE ai_rotation SET cursor=?, version=version+1, updated_at=? WHERE scope=? AND version=?",
-                     (cursor + 1, now_iso(), scope, version))
-        return model, idx, cursor + 1, version + 1
-
     for _ in range(_ADVANCE_RETRIES):
         try:
-            model, idx, _cursor, version = write(_rmw)
+            model, idx, _cursor, version = write(lambda conn: _advance_rmw(conn, scope, models))
             return model, idx, version
-        except Exception:
-            continue
+        except RotationCASMiss:
+            continue                                # مسابقه را باخت: دوباره بخوان و تلاش کن
+        except sqlite3.OperationalError:
+            continue                                # busy/locked: همان retryِ کوتاه
     # fail-open: انتخابِ محلی بدونِ advance (چرخش نباید نشر را متوقف کند)
     row = rotation_ensure(scope)
     model, idx = pick_rotation(models, int(row["cursor"])) if models else (None, 0)
     return model, idx, int(row["version"])
+
+
+def _advance_rmw(conn, scope, models):
+    """یک «خواندن-تغییر-نوشتن» روی مکان‌نما: ``(model, idx, cursor, version)``.
+
+    از ``advance`` جدا شده تا **قابلِ سنجش** باشد: با یک کانکشنِ جعلی می‌توان دقیقاً همان
+    حالتی را ساخت که در آن UPDATE هیچ ردیفی عوض نمی‌کند (باختِ مسابقه) و مطمئن شد که
+    تابع آن را «موفق» گزارش نمی‌کند.
+
+    rowcountِ UPDATE این همان چیزی است که در نسخه‌های اول نادیده گرفته می‌شد:
+    مکان‌نما جلو نمی‌رفت ولی تابع version+۱ برمی‌گرداند و یک advance گم می‌شد.
+    """
+    cur = conn.execute("SELECT cursor, version FROM ai_rotation WHERE scope=?", (scope,)).fetchone()
+    if cur is None:
+        conn.execute("INSERT OR IGNORE INTO ai_rotation(scope, cursor, version, updated_at) VALUES(?,0,0,?)",
+                     (scope, now_iso()))
+        cur = conn.execute("SELECT cursor, version FROM ai_rotation WHERE scope=?", (scope,)).fetchone()
+    cursor = int(cur["cursor"]); version = int(cur["version"])
+    if not models:
+        return None, 0, cursor, version
+    model, idx = pick_rotation(models, cursor)
+    upd = conn.execute("UPDATE ai_rotation SET cursor=?, version=version+1, updated_at=? WHERE scope=? AND version=?",
+                       (cursor + 1, now_iso(), scope, version))
+    if int(getattr(upd, "rowcount", 0) or 0) != 1:
+        raise RotationCASMiss("advance lost the race for scope=%s" % scope)
+    return model, idx, cursor + 1, version + 1

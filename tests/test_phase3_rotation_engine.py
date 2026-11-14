@@ -176,3 +176,114 @@ def test_rotation_command_is_super_admin_only(transport, monkeypatch):
     _add("rot-a")
     text = _run_cmd(monkeypatch, 2)
     assert text == "", "غیرِ مدیر کلان نباید چیزی ببیند"
+
+
+# ── بازبینیِ فاز ۳: سه نقصِ واقعی که این فایل قفل می‌کند ─────────────────────────
+def test_the_cas_predicate_is_actually_checked(transport):
+    """UPDATE با ``WHERE version=?`` اگر ردیفی عوض نکند، advance **باید** تلاشِ دوباره بدهد.
+
+    نسخه‌های اولِ کد rowcount را نادیده می‌گرفتند: در باختِ مسابقه، مکان‌نما جلو نمی‌رفت ولی
+    تابع «موفقیت» و version+۱ برمی‌گرداند — یک advance گم‌شده که کسی هم خبردار نمی‌شد.
+    """
+    from newsbot import rotation
+
+    class _Cur:
+        def __init__(self, rows, rowcount):
+            self._rows, self.rowcount = rows, rowcount
+
+        def fetchone(self):
+            return self._rows[0]
+
+    class _Conn:
+        def __init__(self, rowcount):
+            self.rowcount, self.sqls = rowcount, []
+
+        def execute(self, sql, params=()):
+            self.sqls.append(sql.split()[0].upper())
+            if sql.lstrip().upper().startswith("SELECT"):
+                return _Cur([{"cursor": 4, "version": 9}], 1)
+            return _Cur([], self.rowcount)
+
+    pool = [{"id": 1, "priority": 10}, {"id": 2, "priority": 10}]
+
+    conn = _Conn(0)                                   # مسابقه باخت: هیچ ردیفی عوض نشد
+    try:
+        rotation._advance_rmw(conn, "public", pool)
+        raised = False
+    except rotation.RotationCASMiss:
+        raised = True
+    assert raised, "rowcount=0 یعنی CAS باخت؛ نباید «موفق» گزارش شود"
+
+    conn = _Conn(1)                                   # CAS برد
+    m, idx, cursor, version = rotation._advance_rmw(conn, "public", pool)
+    assert (cursor, version) == (5, 10) and m["id"] in (1, 2) and idx in (0, 1)
+
+
+def test_a_lost_race_is_retried_not_reported_as_success(transport, monkeypatch):
+    """باختِ CAS در ``advance`` باید به تلاشِ دوباره (یا fail-open) برسد، نه به یک عددِ جعلی."""
+    from newsbot import rotation
+
+    rotation.rotation_ensure("public")
+    real = rotation._advance_rmw
+    calls = {"n": 0}
+
+    def flaky(conn, scope, models):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise rotation.RotationCASMiss()
+        return real(conn, scope, models)
+
+    monkeypatch.setattr(rotation, "_advance_rmw", flaky)
+    m, _idx, version = rotation.advance("public", [{"id": 7, "priority": 10}])
+    row = rotation.rotation_get("public")
+    assert m is not None and calls["n"] >= 2, "باید بعد از باختِ مسابقه دوباره تلاش کند"
+    assert version == int(row["version"]), "نسخه باید همان چیزی باشد که در دیتابیس است"
+    assert int(row["cursor"]) == 1, "فقط یک advance باید ثبت شود"
+    q("DELETE FROM ai_rotation WHERE scope='public'", commit=True)
+
+
+def test_a_permanently_stuck_cursor_fails_open_without_lying(transport, monkeypatch):
+    """اگر مکان‌نما هرگز advance نشود، انتخاب انجام می‌شود ولی version از خودش ساخته نمی‌شود."""
+    from newsbot import rotation
+
+    rotation.rotation_ensure("public")
+    monkeypatch.setattr(rotation, "_advance_rmw",
+                        lambda conn, scope, models: (_ for _ in ()).throw(rotation.RotationCASMiss()))
+    m, idx, version = rotation.advance("public", [{"id": 3, "priority": 10}, {"id": 4, "priority": 10}])
+    row = rotation.rotation_get("public")
+    assert m is not None and idx in (0, 1), "fail-open باید یک مدلِ قابلِ استفاده برگرداند"
+    assert version == int(row["version"]), "نباید نسخه‌ای که در دیتابیس نیست گزارش شود"
+    assert int(row["cursor"]) == 0, "مکان‌نما نباید جلو رفته باشد"
+    q("DELETE FROM ai_rotation WHERE scope='public'", commit=True)
+
+
+def test_a_broken_rotation_never_stops_publishing(transport, monkeypatch):
+    """ADR-۳: چرخش هرگز نباید نشر را متوقف کند — خطای advance فقط به failoverِ عادی برمی‌گردد."""
+    from newsbot import rotation
+
+    def boom(scope, models):                 # هم‌گام، چون arun آن را در تردِ DB اجرا می‌کند
+        raise RuntimeError("rotation backend exploded")
+
+    s = _settings()
+    _add("rot-a")
+    _add("rot-b")
+    monkeypatch.setattr(rotation, "advance", boom)
+    _j, model, err = asyncio.run(gen_mod.generate(s, _article("r-hard")))
+    assert err is None and model in ("rot-a", "rot-b")
+
+
+def test_the_audit_row_only_names_a_model_that_was_really_called(transport, monkeypatch):
+    """اگر مدلِ نوبتی busy/در دسترس‌نبودنی باشد، آن درخواست آن را «برنداشت» ⇒ نباید ردیف بگیرد.
+
+    ردیفِ audit یعنی «این درخواست مدلِ X را از چرخش برداشت». اگر X صدا زده نشد و failover
+    مدلِ دیگری را برداشت، ردیفِ به‌نامِ X یک دروغ است؛ پس هیچ ردیفی نوشته نمی‌شود.
+    """
+    s = _settings()
+    _add("rot-a")
+    _add("rot-b")
+    monkeypatch.setattr(amod, "model_busy", lambda mid: amod.get_model(mid)["name"] == "rot-a")
+
+    _j, model, err = asyncio.run(gen_mod.generate(s, _article("r-busy")))
+    assert err is None and model == "rot-b", "failover باید مدلِ آزاد را بردارد"
+    assert rotation.rotation_log_recent("public", limit=5) == [], "مدلی که صدا زده نشد نباید audit بگیرد"
+    assert rotation.rotation_get("public")["version"] == 1, "advance یک بار انجام شده است"

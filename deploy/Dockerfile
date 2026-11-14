@@ -6,7 +6,7 @@
 # استقرار = build با تگِ SHA + اجرای کانتینر از همان تگ (docker-compose.yml).
 # 2026-11-06: bumped to a newer 3.13-slim digest (Debian 13.7, apt 3.0.4 => CVE-2026-109518 fixed;
 # pip 26.2.2 with vendored certifi 2026.10.19 => GHSA-6q48-6c7w-9gw2 fixed).
-FROM python:3.13-slim@sha256:09a17cad02668ae61ece136b4fd36ac3849e14f670ebedb637ea3e15580525bc
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 WORKDIR /app
 

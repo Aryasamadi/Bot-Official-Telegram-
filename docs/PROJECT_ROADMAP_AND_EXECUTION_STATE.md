@@ -332,6 +332,9 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-14 | `phase3/observability-and-db` | full `pytest -q` (local, Windows) | **911 passed, 19 failed in 615.91s** — same §5.1 baseline |
 | 2026-11-14 | `phase3/observability-and-db` | GitHub CI `test` on PR #54 | first run **FAILED** on `test_readme_test_count_matches_collection` (917 vs 912); README fixed → **SUCCESS** |
 | 2026-11-14 | `main` @ `51bb8d2` | `pytest` the 5 Phase 3 files + the 2 state/integrity guards | 31 passed · 937 collected |
+| 2026-11-14 | `phase3/rotation-review-fixes` | self-review of `2f3d969..9f0ffb9` against 5 defect classes (concurrency, exception safety, event-loop blocking, secrets, failover interaction) | **3 real defects found**: CAS `rowcount` ignored (lost advance reported as success), broad `except Exception` hiding bugs, unguarded `advance()` able to stop publishing — plus an audit row written before the busy check |
+| 2026-11-14 | `phase3/rotation-review-fixes` | 5 new tests (one per defect, red before the fix) + full Phase 3 set | 21 passed on the branch · 30 with the state/integrity guards · `ruff`/`pyflakes` clean · CI `test` **SUCCESS** |
+| 2026-11-14 | `main` @ `3f78e51` | `pytest` the 5 Phase 3 files + the 2 guards | 39 passed · 942 collected |
 
 **Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
 deployment verification, real Telegram integration, Cloudflare D1 live migration.
@@ -375,7 +378,7 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | **Phase 1 closes with** | **PR #58 — MERGED** as `0f4b90a` (2026-11-13), CI `test: SUCCESS`, review gate lifted for the merge only and restored with all 15 fields verified identical |
 | Phase 2 commits on `main` | `16a7353` (#51) · `886e19d` (#52) · `bf34390` (#53) · `bf73b39` (#60 provider registry) |
 | Phase 2 result | **COMPLETE** — every Phase 2 PR (#51, #52, #53, #60) is merged; §4.2 is satisfied |
-| Phase 3 commits on `main` | `7f48ec4` (#54 observability + DB-007) · `51bb8d2` (#62 rotation engine) |
+| Phase 3 commits on `main` | `7f48ec4` (#54 observability + DB-007) · `51bb8d2` (#62 rotation engine) · `3f78e51` (#66 review fixes) |
 | Phase 3 result | **COMPLETE** except the repo-hygiene PR, blocked on the owner's licence choice (**B-6**); §4.3 is satisfied. #55 → **#64** (auto-close recovery recorded in §1 and §4.1) |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**

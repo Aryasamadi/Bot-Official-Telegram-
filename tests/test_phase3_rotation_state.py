@@ -38,3 +38,40 @@ def test_rotation_log_rows_are_written_and_read_back_newest_first(isolated_db):
     rows = rotation.rotation_log_recent("public", limit=5)
     assert [r["model_id"] for r in rows] == [9, 7]
     assert rows[0]["idx"] == 1 and rows[0]["pool_size"] == 3
+
+
+# ── Task 2: انتخابِ محض — این درخواست کدام مدل را می‌گیرد؟ ─────────────────────────
+def test_pick_rotation_is_stable_ordered_and_wraps():
+    from newsbot.rotation import order_pool, pick_rotation
+
+    pool = [{"id": 3, "priority": 10}, {"id": 1, "priority": 10}, {"id": 2, "priority": 5}]
+    assert [m["id"] for m in order_pool(pool)] == [2, 1, 3]      # اول priority، بعد id
+    assert pick_rotation(pool, 0)[0]["id"] == 2
+    assert pick_rotation(pool, 1)[0]["id"] == 1
+    assert pick_rotation(pool, 2)[0]["id"] == 3
+    assert pick_rotation(pool, 3)[0]["id"] == 2                  # دور می‌زند
+
+
+def test_pick_rotation_survives_a_shrinking_pool():
+    """ADR-۳: کوچک‌شدنِ استخر نباید مدل را رد کند یا دو بار انتخاب کند (modulo با طولِ فعلی)."""
+    from newsbot.rotation import pick_rotation
+
+    big = [{"id": i, "priority": 10} for i in range(1, 6)]
+    assert pick_rotation(big, 4)[0]["id"] == 5
+    small = big[:2]
+    assert pick_rotation(small, 4)[1] == 0        # ۴ % ۲ == ۰
+    assert pick_rotation(small, 4)[0]["id"] == 1
+    assert pick_rotation(small, 5)[1] == 1        # ۵ % ۲ == ۱
+
+
+def test_pick_rotation_on_empty_pool_returns_none():
+    from newsbot.rotation import pick_rotation
+
+    assert pick_rotation([], 7) == (None, 0)
+
+
+def test_order_pool_treats_a_missing_priority_as_lowest():
+    from newsbot.rotation import order_pool
+
+    pool = [{"id": 1, "priority": None}, {"id": 2, "priority": 1}, {"id": 3}]
+    assert [m["id"] for m in order_pool(pool)] == [2, 1, 3]

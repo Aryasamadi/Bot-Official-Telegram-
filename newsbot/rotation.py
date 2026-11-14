@@ -60,3 +60,27 @@ def rotation_stats(scope):
     n = q("SELECT COUNT(*) AS n FROM ai_rotation_log WHERE scope=?", (scope,), one=True)
     return {"cursor": int(row.get("cursor") or 0), "version": int(row.get("version") or 0),
             "log_rows": int(n["n"]) if n else 0}
+
+
+# ── انتخابِ محض (بدونِ دیتابیس، بدونِ شبکه) ────────────────────────────────────────
+def order_pool(models):
+    """ترتیبِ چرخش: اول ``priority`` (کم‌تر = زودتر)، بعد ``id`` — قطعی و قابلِ پیش‌بینی.
+
+    ``priority`` گم‌شده/None به‌عنوان «کم‌ترین اولویت» (۹۹) گرفته می‌شود تا یک ردیفِ
+    ناقص، کلِ چرخش را به‌هم نریزد.
+    """
+    return sorted(models, key=lambda m: (m["priority"] if m.get("priority") is not None else 99,
+                                         m["id"]))
+
+
+def pick_rotation(pool, cursor):
+    """مدلِ این درخواست و اندیسِ آن در استخرِ **مرتب‌شده**.
+
+    اندیس با ``cursor % len(pool)`` گرفته می‌شود، نه با یک اندیسِ مطلقِ ذخیره‌شده: اگر
+    مدلی غیرفعال/در backoff شود، نباید یک مدل رد شود یا دو بار انتخاب شود (ADR-۳).
+    """
+    ordered = order_pool(pool)
+    if not ordered:
+        return None, 0
+    idx = int(cursor) % len(ordered)
+    return ordered[idx], idx

@@ -945,11 +945,25 @@ def _ensure_schema(conn):
         _SCHEMA_READY = True
 
 def db():
-    """کانکشن مخصوص همین ترد؛ هر ترد فقط با کانکشن خودش کار می‌کند."""
+    """کانکشن مخصوص همین ترد؛ هر ترد فقط با کانکشن خودش کار می‌کند.
+
+    اگر مسیرِ فایلِ دیتابیس بین دو تماس عوض شود (تست‌ها، یا تغییرِ تنظیمات در زمانِ اجرا)،
+    کانکشنِ کش‌شدهٔ همین ترد بسته و از نو ساخته می‌شود؛ وگرنه تردهای استخر تا ابد روی
+    فایلِ قبلی می‌نویسند و تغییرات در دیتابیسِ فعلی دیده نمی‌شود.
+    """
     conn = getattr(_tls, "conn", None)
+    want = None if config.DB_BACKEND == "d1" else str(config.DB_FILE)
+    if conn is not None and getattr(_tls, "path", want) != want:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        conn = None
+        _tls.conn = None
     if conn is None:
         conn = _init_conn()
         _tls.conn = conn
+        _tls.path = want
         _ensure_schema(conn)
     return conn
 

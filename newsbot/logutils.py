@@ -4,7 +4,10 @@ FIX v4: توکن ربات (قالب 123456789:AA...) هم ماسک می‌شود
 FIX v5 (SEC-02/OPS-14): ماسک رازها روی RecordFactory سراسری اجرا می‌شود —
 همهٔ فراخوان‌های log.* (نه فقط log_event) و متن استثناها/stack پیش از هر handler ماسک می‌شوند."""
 import hashlib
+import json
 import logging
+from logging.handlers import RotatingFileHandler
+import os
 import re
 import traceback
 from contextvars import ContextVar
@@ -56,6 +59,12 @@ def _redact_record(*args, **kwargs):
             original = rec.getMessage()
         except Exception:
             original = str(rec.msg)
+        # OBS-003: همهٔ فراخوانی‌های مستقیمِ log.* هم شناسهٔ همبستگی (_logctx) را دریافت می‌کنند.
+        ctx_d = _logctx.get() or {}
+        if ctx_d and getattr(rec, "name", "") == "core" and "[op=" not in original and "[channel=" not in original:
+            ctx_str = " ".join(f"{k}={v}" for k, v in ctx_d.items() if v is not None)
+            if ctx_str:
+                original = f"[{ctx_str}] {original}"
         try:
             rec.msg = redact(original)
         except Exception:
@@ -86,6 +95,137 @@ _REDACT_FACTORY_FLAG = "_newsbot_redact_factory"
 if not getattr(logging, _REDACT_FACTORY_FLAG, False):
     logging.setLogRecordFactory(_redact_record)
     setattr(logging, _REDACT_FACTORY_FLAG, True)
+
+
+class JsonLogFormatter(logging.Formatter):
+    """OBS-003/OBS-008: قالبِ JSONِ خطی برای سینک‌های پایدار و جمع‌آوریِ ماشینی."""
+    def format(self, record):
+        payload = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%SZ"),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        ctx = _logctx.get() or {}
+        for k, v in ctx.items():
+            if v is not None:
+                payload[k] = v
+        if record.exc_text:
+            payload["exc"] = record.exc_text
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def configure_file_logging(log_file=None, fmt=None, max_bytes=5_242_880, backup_count=3):
+    """OBS-008: افزودنِ RotatingFileHandler با پشتیبانی از قالبِ متنی یا JSON (ماسک راز خودکار است)."""
+    from newsbot import config
+    target = (log_file if log_file is not None else getattr(config, "LOG_FILE", "")).strip()
+    if not target:
+        return None
+    mode = (fmt if fmt is not None else getattr(config, "LOG_FORMAT", "text")).strip().lower()
+    os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
+    h = RotatingFileHandler(target, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
+    if mode == "json":
+        h.setFormatter(JsonLogFormatter())
+    else:
+        h.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    log.addHandler(h)
+    return h
+
+
+def classify_error(err_or_text) -> str:
+    """OBS-010: نگاشتِ خطا به کلاسِ استاندارد برای پایش و هشدار."""
+    s = str(err_or_text or "").lower()
+    if any(k in s for k in ("401", "403", "auth", "unauthorized", "forbidden", "invalid api key", "api_key")):
+        return "auth"
+    if any(k in s for k in ("429", "rate", "busy", "flood", "too many requests", "retry_after")):
+        return "rate_limit"
+    if any(k in s for k in ("timeout", "timed out", "deadline", "504")):
+        return "timeout"
+    if any(k in s for k in ("quota", "insufficient", "billing", "credit")):
+        return "quota"
+    if any(k in s for k in ("connect", "network", "dns", "502", "503", "socket", "unreachable")):
+        return "network"
+    if any(k in s for k in ("parse", "json", "empty", "content", "400", "422")):
+        return "content"
+    return "unknown"
+
+
+def render_prometheus_metrics():
+    """OBS-001: خروجیِ استانداردِ متریک‌ها در قالبِ متنیِ Prometheus."""
+    from newsbot.db import gget
+    from newsbot.timeutils import parse_dt
+    d = gget("metrics") or _metrics
+    lines = [
+        "# HELP newsbot_posts_ok_total Total successfully published posts.",
+        "# TYPE newsbot_posts_ok_total counter",
+        f"newsbot_posts_ok_total {int(d.get('posts_ok', 0))}",
+        "# HELP newsbot_posts_fail_total Total failed post publish attempts.",
+        "# TYPE newsbot_posts_fail_total counter",
+        f"newsbot_posts_fail_total {int(d.get('posts_fail', 0))}",
+        "# HELP newsbot_source_fail_total Total source discovery failures.",
+        "# TYPE newsbot_source_fail_total counter",
+        f"newsbot_source_fail_total {int(d.get('source_fail', 0))}",
+        "# HELP newsbot_cycle_total Total channel cycles executed.",
+        "# TYPE newsbot_cycle_total counter",
+        f"newsbot_cycle_total {int(d.get('cycle_n', 0))}",
+        "# HELP newsbot_cycle_duration_ms_total Total channel cycle duration in milliseconds.",
+        "# TYPE newsbot_cycle_duration_ms_total counter",
+        f"newsbot_cycle_duration_ms_total {int(d.get('cycle_ms', 0))}",
+        "# HELP newsbot_queue_ready Current articles ready in queue.",
+        "# TYPE newsbot_queue_ready gauge",
+        f"newsbot_queue_ready {int(d.get('queue', 0))}",
+        "# HELP newsbot_model_fail_total Model failures by reason.",
+        "# TYPE newsbot_model_fail_total counter",
+    ]
+    for k, v in sorted((d.get("model_fail") or {}).items()):
+        safe_k = re.sub(r'[^a-zA-Z0-9_:-]', '_', str(k))
+        lines.append(f'newsbot_model_fail_total{{reason="{safe_k}"}} {int(v)}')
+    lines += [
+        "# HELP newsbot_rich_fallback_total Rich message fallbacks by reason.",
+        "# TYPE newsbot_rich_fallback_total counter",
+    ]
+    for k, v in sorted((d.get("rich_fallback") or {}).items()):
+        safe_k = re.sub(r'[^a-zA-Z0-9_:-]', '_', str(k))
+        lines.append(f'newsbot_rich_fallback_total{{reason="{safe_k}"}} {int(v)}')
+    try:
+        from newsbot.core_alerts import alert_counts
+        p_n, d_n = alert_counts()
+        lines += [
+            "# HELP newsbot_alerts_pending Pending super-admin alerts in durable outbox.",
+            "# TYPE newsbot_alerts_pending gauge",
+            f"newsbot_alerts_pending {int(p_n)}",
+            "# HELP newsbot_alerts_dead Dead-lettered super-admin alerts.",
+            "# TYPE newsbot_alerts_dead gauge",
+            f"newsbot_alerts_dead {int(d_n)}",
+        ]
+    except Exception:
+        pass
+    try:
+        lp = gget("last_successful_publish")
+        ts = int(parse_dt(lp).timestamp()) if lp and parse_dt(lp) else 0
+        lines += [
+            "# HELP newsbot_last_successful_publish_timestamp_seconds Unix timestamp of last settled publish.",
+            "# TYPE newsbot_last_successful_publish_timestamp_seconds gauge",
+            f"newsbot_last_successful_publish_timestamp_seconds {ts}",
+        ]
+    except Exception:
+        pass
+    return "\n".join(lines) + "\n"
+
+
+def export_prometheus_metrics(path=None):
+    """OBS-001: نوشتنِ اتمیکِ متریک‌های Prometheus روی دیسک (برای node_exporter textfile collector)."""
+    from newsbot import config
+    target = (path if path is not None else getattr(config, "METRICS_FILE", "")).strip()
+    if not target:
+        return None
+    body = render_prometheus_metrics()
+    os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
+    tmp = f"{target}.tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(body)
+    os.replace(tmp, target)
+    return target
 
 def log_ctx(**kw):
     """فیلدهای زمینه را برای لاگ‌های همین تسک می‌چسباند (ContextVar ⇒ بین کانال‌ها قاطی نمی‌شود)."""
@@ -121,12 +261,16 @@ def _actor_ref(admin_id):
 
 
 def log_event(level, msg, admin_id=None, exc_info=False, error_class=None):
-    """لاگِ ساختاریافته با زمینه؛ traceback اختیاری و کلاسِ خطا (OBS-004).
+    """لاگِ ساختاریافته با زمینه؛ traceback اختیاری و کلاسِ خطا (OBS-004 / OBS-010).
 
     ``exc_info=True`` را در بلوک ``except`` صدا بزنید تا stack trace (ماسک‌شده) ثبت شود.
     """
     d = _logctx.get() or {}
     ctx = " ".join(f"{k}={v}" for k, v in d.items())
+    if error_class is None and level in ("WARN", "ERROR"):
+        inferred = classify_error(msg)
+        if inferred != "unknown":
+            error_class = inferred
     tail = f" error_class={error_class}" if error_class else ""
     prefix = f"[{_actor_ref(admin_id)}]{f' [{ctx}]' if ctx else ''} {msg}{tail}"
     try:

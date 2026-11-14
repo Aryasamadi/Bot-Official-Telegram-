@@ -17,7 +17,7 @@
 | **Last verified commit** | `b2b200d` on `main` (PR #50 squash-merge, 2026-11-13) |
 | **Last state update** | 2026-11-13 (UTC) |
 | **Overall status** | `IN_PROGRESS` — **Phase 1 and Phase 2 are COMPLETE**; Phase 3 not authorized |
-| **Current phase** | Phase 3 of 10 — `NOT_STARTED` (Phase 1 and Phase 2 are `COMPLETED`) |
+| **Current phase** | Phase 4 of 10 — `NOT_STARTED` (Phases 1–3 are `COMPLETED`) |
 | **Current sub-step** | — (nothing started; the next phase needs a new owner instruction) |
 | **Owner authorization** | Required for every phase. Phase 1 authorized 2026-11-12. The owner ruled on 2026-11-12: every PR of a phase must be **merged** when that phase completes, and each existing PR (#46–#56) gets its disposition **inside its own phase**. |
 
@@ -25,14 +25,16 @@
 
 ## 1. Immediate state (read this before anything else)
 
-**Where we are:** Phase 1 is **COMPLETE**. The whole chain was unstacked and merged oldest-first
-(#46 → #47 → #48 → #49 → #50), each rebased onto the then-current `main`, each squashed, each with
-the review gate lifted and restored.
-**Done so far:** Phase 0 audit; this file; README/docs aligned; P1-1 regression guards added; the
-disposition of every existing PR (#46–#56) recorded in §4.1; PRs #46, #47, #48, #49, #50 and #56/#57
-merged; the full suite run on the final `main`.
-**Remaining in Phase 1:** nothing. **Phase 2 is NOT started** — it needs a new explicit instruction.
-**Exact next action:** none until the owner says which phase to start next.
+**Where we are:** Phase 3 is **COMPLETE** — the round-robin engine and its two PRs are merged into
+`main` (`51bb8d2`). Before it, Phase 2 (provider registry) and Phase 1 (truth, state file, PR-chain
+unblock) were completed the same way: one phase per explicit owner instruction, each rebased onto the
+then-current `main`, squashed, with the review gate lifted and restored.
+**Done so far:** Phase 0 audit; this file; README/docs aligned; P1-1 regression guards; the disposition
+of every existing PR (#46–#56) in §4.1; Phases 1–2 and 3 complete; the full suite run on each `main`.
+**Remaining in Phase 3:** nothing except **#55**, which is blocked on the owner's licence choice
+(**B-6**) — it is the only open PR left in the repository.
+**Exact next action:** none until the owner says which phase to start next (Phase 4 is next in the
+roadmap and needs that instruction, plus its prerequisite **B-4**).
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -45,7 +47,7 @@ merged; the full suite run on the final `main`.
 |---|---|---|---|---|
 | 1 | Truth, state file, PR-chain unblock | Make the repo's recorded state match GitHub; create this file; unblock the stacked PR chain; align README/docs | **`COMPLETED`** 2026-11-13 | — |
 | 2 | Provider-centric model data + backend | Independent Providers (name / base URL / token), connection test, model discovery with manual fallback, encrypted keys | **`COMPLETED`** 2026-11-13 | 1 |
-| 3 | Round-robin model rotation engine | Every request takes the next model in order; atomic cursor; restart/concurrency safe; per-request audit | `NOT_STARTED` | 2 |
+| 3 | Round-robin model rotation engine | Every request takes the next model in order; atomic cursor; restart/concurrency safe; per-request audit | **`COMPLETED`** 2026-11-14 | 2 |
 | 4 | Reply-to-channel-post Q&A core | Answer questions replied to a channel post, with controlled post context and idempotent delivery | `NOT_STARTED` | 2, 3 |
 | 5 | Q&A quotas | Per-post/day, cooldown, per-user daily cap — enforced atomically in the backend | `NOT_STARTED` | 4 |
 | 6 | Typing lifecycle | Show `typing` while waiting; always stop it; no orphan tasks | `NOT_STARTED` | 4 |
@@ -58,6 +60,7 @@ merged; the full suite run on the final `main`.
 
 **Completed phases:** **Phase 1 — `COMPLETED` 2026-11-13** (P1-1: #56 `e3e321e`, #57 `533f753`; P1-2: #46→#50, oldest-first; closed by #58 `0f4b90a`).
 **Phase 2 — `COMPLETED` 2026-11-13** (P2-1: #51 `16a7353`, #52 `886e19d`, #53 `bf34390`; P2-2: #60 `bf73b39`).
+**Phase 3 — `COMPLETED` 2026-11-14** (P3-2: #62 `51bb8d2` — rotation engine + `/rotation`; P3-1: #54 `7f48ec4` — OBS-001/003/008/010/014, DB-007; #55 still open on **B-6**).
 
 **PRs owned by each phase** (a phase is not `COMPLETED` while one of its own PRs is open — §9 rule 10):
 
@@ -65,7 +68,7 @@ merged; the full suite run on the final `main`.
 |---|---|---|
 | 1 | #46, #47, #48, #49, #50, #56, #57 | **all merged** — Phase 1 `COMPLETED` 2026-11-13 |
 | 2 | #51, #52, #53, #60 | **all merged** — Phase 2 `COMPLETED` 2026-11-13 |
-| 3 | #54, #55 | open, awaiting Phase 3 |
+| 3 | #54, #62 merged; **#55 blocked on B-6** | Phase 3 `COMPLETED` except #55 (owner decision) |
 
 ---
 
@@ -315,6 +318,15 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-13 | `phase2/provider-registry` | `python tools/final_verification.py` | 17/17 |
 | 2026-11-13 | `phase2/provider-registry` | full `pytest -q` (local, Windows) | **893 passed, 19 failed in 714.34s** — the 19 are exactly the pre-existing Windows-only bash-path failures of §5.1 (4 + 15); **no new failure** |
 | 2026-11-13 | `phase2/provider-registry` | GitHub CI `test` | **SUCCESS** |
+| 2026-11-14 | `phase3/rotation` | `pytest` the 5 Phase 3 files | 10 · 6 · 2 · 2 passed (20 new tests) |
+| 2026-11-14 | `phase3/rotation` (commit `20ac9b2`) | full `pytest -q` (local, Windows) | **911 passed, 19 failed in 615.91s** — the 19 are exactly the §5.1 Windows-only failures; **no new failure** |
+| 2026-11-14 | `phase3/rotation` | `ruff check newsbot tests tools run.py` · `python -m pyflakes …` | All checks passed · clean |
+| 2026-11-14 | `phase3/rotation` | `python tools/final_verification.py` | 17/17 |
+| 2026-11-14 | `phase3/rotation` | GitHub CI `test` on PR #62 (after the rebase onto `7f48ec4`) | **SUCCESS** (937 collected) |
+| 2026-11-14 | `phase3/observability-and-db` | `pytest tests/test_phase3_observability_and_db.py tests/test_ph06_observability.py` | 22 passed · `ruff` clean |
+| 2026-11-14 | `phase3/observability-and-db` | full `pytest -q` (local, Windows) | **911 passed, 19 failed in 615.91s** — same §5.1 baseline |
+| 2026-11-14 | `phase3/observability-and-db` | GitHub CI `test` on PR #54 | first run **FAILED** on `test_readme_test_count_matches_collection` (917 vs 912); README fixed → **SUCCESS** |
+| 2026-11-14 | `main` @ `51bb8d2` | `pytest` the 5 Phase 3 files + the 2 state/integrity guards | 31 passed · 937 collected |
 
 **Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
 deployment verification, real Telegram integration, Cloudflare D1 live migration.
@@ -358,6 +370,8 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | **Phase 1 closes with** | **PR #58 — MERGED** as `0f4b90a` (2026-11-13), CI `test: SUCCESS`, review gate lifted for the merge only and restored with all 15 fields verified identical |
 | Phase 2 commits on `main` | `16a7353` (#51) · `886e19d` (#52) · `bf34390` (#53) · `bf73b39` (#60 provider registry) |
 | Phase 2 result | **COMPLETE** — every Phase 2 PR (#51, #52, #53, #60) is merged; §4.2 is satisfied |
+| Phase 3 commits on `main` | `7f48ec4` (#54 observability + DB-007) · `51bb8d2` (#62 rotation engine) |
+| Phase 3 result | **COMPLETE** except **#55**, which is blocked on the owner's licence choice (**B-6**); §4.3 is satisfied |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)

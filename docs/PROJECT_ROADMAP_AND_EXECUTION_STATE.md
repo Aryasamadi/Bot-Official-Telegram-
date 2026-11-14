@@ -339,6 +339,9 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-14 | `phase3/rotation-review-fixes` | self-review of `2f3d969..9f0ffb9` against 5 defect classes (concurrency, exception safety, event-loop blocking, secrets, failover interaction) | **3 real defects found**: CAS `rowcount` ignored (lost advance reported as success), broad `except Exception` hiding bugs, unguarded `advance()` able to stop publishing — plus an audit row written before the busy check |
 | 2026-11-14 | `phase3/rotation-review-fixes` | 5 new tests (one per defect, red before the fix) + full Phase 3 set | 21 passed on the branch · 30 with the state/integrity guards · `ruff`/`pyflakes` clean · CI `test` **SUCCESS** |
 | 2026-11-14 | `main` @ `3f78e51` | `pytest` the 5 Phase 3 files + the 2 guards | 39 passed · 942 collected |
+| 2026-11-14 | `phase3/repo-hygiene-and-i18n` (rebased) | `pytest` the hygiene/i18n + integrity + state guards | 13 passed · README count 942 → 947 (the guard caught it before CI) |
+| 2026-11-14 | `main` @ `12cb8db` (final Phase 3 `main`) | full `pytest -q` (local, Windows) | **928 passed, 19 failed in 566.70s** — the 19 are exactly the §5.1 Windows-only failures; **no new failure** |
+| 2026-11-14 | `main` @ `12cb8db` | independent 15-field protection check against both backups | **IDENTICAL on all 15 fields** |
 
 **Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
 deployment verification, real Telegram integration, Cloudflare D1 live migration.

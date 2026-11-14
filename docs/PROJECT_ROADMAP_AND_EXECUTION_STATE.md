@@ -420,6 +420,7 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 | B-6 | PR #55 adds a `LICENSE` file — the licence type is the owner's choice and must not be assumed | needs owner decision before #55 merges |
 | D-1 | 18 unmerged stale branches, 37 remote branches total | deferred to Phase 10 |
 | D-2 | 19 Windows-only failing deploy tests (4 in `tests/test_deploy_script.py`, 15 in `tests/test_session3_cicd_docker_deploy_docs.py`) degrade the local signal; §5.1 records the exact cause and why CI is unaffected | deferred to Phase 10 |
+| D-3 | `tools/migrate_sqlite_to_d1.py` `TABLES` also omits `ai_providers` (Phase 2), so a sqlite → D1 migration loses provider rows the same way it lost the rotation tables in Phase 3 | deferred; Phase 3 fixed only its own two tables |
 
 ---
 

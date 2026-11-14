@@ -25,17 +25,21 @@
 
 ## 1. Immediate state (read this before anything else)
 
-**Where we are:** Phase 3 is **COMPLETE** — the round-robin engine and its two PRs are merged into
-`main` (`51bb8d2`). Before it, Phase 2 (provider registry) and Phase 1 (truth, state file, PR-chain
-unblock) were completed the same way: one phase per explicit owner instruction, each rebased onto the
-then-current `main`, squashed, with the review gate lifted and restored.
-**Done so far:** Phase 0 audit; this file; README/docs aligned; P1-1 regression guards; the disposition
-of every existing PR (#46–#56) in §4.1; Phases 1–2 and 3 complete; the full suite run on each `main`.
-**Remaining in Phase 3:** nothing except the repo-hygiene work, which is **open as #64** and blocked on
-the owner's licence choice (**B-6**). Note: **#55 was closed by GitHub**, not by a decision — merging #54
-with `--delete-branch` removed #55's base branch, and a PR whose base disappears is closed. It could not
-be reopened, so its content was rebased onto `main` and re-opened as **#64** (the comment on #55 records
-this). #64 is the only open PR in the repository.
+**Where we are:** Phase 3 is **COMPLETE** — every PR it owns is merged. The round-robin engine is #62
+(`51bb8d2`), the observability/DB-007 work is #54 (`7f48ec4`), the self-review fixes are #66 (`3f78e51`),
+and the repo-hygiene work is #64 (`fa7f25f`, which replaced #55). Before Phase 3, Phase 2 (provider
+registry) and Phase 1 (truth, state file, PR-chain unblock) were completed the same way: one phase per
+explicit owner instruction, each rebased onto the then-current `main`, squashed, with the review gate
+lifted and restored.
+**Done so far:** Phase 0 audit; this file; README/docs aligned; P1-1 regression guards; the disposition of
+every existing PR (#46–#56) in §4.1; Phases 1–3 complete; the full suite run on each `main`.
+**Remaining in Phase 3:** nothing. The licence question is settled by the owner: **proprietary / all
+rights reserved** (the text in `LICENSE`, merged with #64) — see **B-6**.
+Two operational notes. First, **#55 was closed by GitHub**, not by a decision: merging #54 with
+`--delete-branch` removed #55's base branch, and a PR whose base disappears is closed; it could not be
+reopened, so its content was rebased onto `main` and re-opened as **#64**. Second, `#64` also enabled
+Dependabot, which opened **#68–#75** (dependency bumps, several major). Those are recorded as **D-4** and
+are not part of Phase 3.
 **Exact next action:** none until the owner says which phase to start next (Phase 4 is next in the
 roadmap and needs that instruction, plus its prerequisite **B-4**).
 
@@ -63,7 +67,7 @@ roadmap and needs that instruction, plus its prerequisite **B-4**).
 
 **Completed phases:** **Phase 1 — `COMPLETED` 2026-11-13** (P1-1: #56 `e3e321e`, #57 `533f753`; P1-2: #46→#50, oldest-first; closed by #58 `0f4b90a`).
 **Phase 2 — `COMPLETED` 2026-11-13** (P2-1: #51 `16a7353`, #52 `886e19d`, #53 `bf34390`; P2-2: #60 `bf73b39`).
-**Phase 3 — `COMPLETED` 2026-11-14** (P3-2: #62 `51bb8d2` — rotation engine + `/rotation`; P3-1: #54 `7f48ec4` — OBS-001/003/008/010/014, DB-007; repo hygiene is open as **#64** on **B-6** — #55 was closed by GitHub when #54's base branch was deleted).
+**Phase 3 — `COMPLETED` 2026-11-14** (P3-2: #62 `51bb8d2` — rotation engine + `/rotation`; P3-1: #54 `7f48ec4` — OBS-001/003/008/010/014, DB-007; review fixes #66 `3f78e51`; repo hygiene #64 `fa7f25f`, which replaced #55 after GitHub auto-closed it). **Every Phase 3 PR is merged.**
 
 **PRs owned by each phase** (a phase is not `COMPLETED` while one of its own PRs is open — §9 rule 10):
 
@@ -71,7 +75,7 @@ roadmap and needs that instruction, plus its prerequisite **B-4**).
 |---|---|---|
 | 1 | #46, #47, #48, #49, #50, #56, #57 | **all merged** — Phase 1 `COMPLETED` 2026-11-13 |
 | 2 | #51, #52, #53, #60 | **all merged** — Phase 2 `COMPLETED` 2026-11-13 |
-| 3 | #54, #62 merged; **#55 closed by GitHub → replaced by #64 (blocked on B-6)** | Phase 3 `COMPLETED` except #64 (owner decision) |
+| 3 | #54, #62, #66, #64 all merged | Phase 3 **`COMPLETED`** 2026-11-14 |
 
 ---
 
@@ -378,8 +382,8 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | **Phase 1 closes with** | **PR #58 — MERGED** as `0f4b90a` (2026-11-13), CI `test: SUCCESS`, review gate lifted for the merge only and restored with all 15 fields verified identical |
 | Phase 2 commits on `main` | `16a7353` (#51) · `886e19d` (#52) · `bf34390` (#53) · `bf73b39` (#60 provider registry) |
 | Phase 2 result | **COMPLETE** — every Phase 2 PR (#51, #52, #53, #60) is merged; §4.2 is satisfied |
-| Phase 3 commits on `main` | `7f48ec4` (#54 observability + DB-007) · `51bb8d2` (#62 rotation engine) · `3f78e51` (#66 review fixes) |
-| Phase 3 result | **COMPLETE** except the repo-hygiene PR, blocked on the owner's licence choice (**B-6**); §4.3 is satisfied. #55 → **#64** (auto-close recovery recorded in §1 and §4.1) |
+| Phase 3 commits on `main` | `7f48ec4` (#54 observability + DB-007) · `51bb8d2` (#62 rotation engine) · `3f78e51` (#66 review fixes) · `fa7f25f` (#64 repo hygiene + `LICENSE`) |
+| Phase 3 result | **COMPLETE** — every Phase 3 PR (#54, #62, #66, #64) is merged; §4.3 is satisfied. #55 → **#64** (auto-close recovery recorded in §1 and §4.1). #68–#75 (Dependabot) are recorded as D-4 |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)
@@ -439,10 +443,11 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 | B-3 | A 350-minute GitHub-hosted run would leave only ~10 minutes of headroom against the hard 6-hour (360-minute) job cap; the cap cannot be raised | needs owner decision |
 | B-4 | Whether the bot is added to the channel discussion group (prerequisite for Phase 4) | needs owner action |
 | B-5 | A file **outside** this repository (the local `newsbot-deploy-pkg` folder) holds a bot token matching the BotFather format and a 64-char `SECRETS_KEY` in plain text (names/lengths only; values never read) | needs rotation |
-| B-6 | #64 (replacing #55) adds a `LICENSE` file, currently a **proprietary "all rights reserved"** notice — the licence type is the owner's choice and must not be assumed | needs owner decision before #64 merges |
+| B-6 | ~~licence choice for #64~~ — **RESOLVED 2026-11-14**: the owner chose **proprietary / all rights reserved**; `LICENSE` merged as part of #64 `fa7f25f` | closed |
 | D-1 | 18 unmerged stale branches, 37 remote branches total | deferred to Phase 10 |
 | D-2 | 19 Windows-only failing deploy tests (4 in `tests/test_deploy_script.py`, 15 in `tests/test_session3_cicd_docker_deploy_docs.py`) degrade the local signal; §5.1 records the exact cause and why CI is unaffected | deferred to Phase 10 |
 | D-3 | `tools/migrate_sqlite_to_d1.py` `TABLES` also omits `ai_providers` (Phase 2), so a sqlite → D1 migration loses provider rows the same way it lost the rotation tables in Phase 3 | deferred; Phase 3 fixed only its own two tables |
+| D-4 | Dependabot (enabled by #64) opened #68–#75: `python 3.13-slim → 3.15-slim`, `actions/checkout 4 → 7`, `setup-python 5 → 7`, `upload-artifact 4 → 7`, `gitleaks-action 2 → 3`, `appleboy/ssh-action 1.2.2 → 1.2.5`, `tzlocal → 5.4.5`, `soupsieve → 4.1`. Several are **major** bumps that change CI/deploy behaviour | deferred to Phase 10 (dependency and release hardening), one PR at a time with a real CI run |
 
 ---
 

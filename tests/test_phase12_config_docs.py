@@ -270,6 +270,6 @@ def test_readme_reflects_phase12_claims():
     assert re.search(r"AI_MAX_MODEL_ATTEMPTS` \| `2`", readme), "ردیف AI_MAX_MODEL_ATTEMPTS باید ۲ باشد (P0-C)"
 
 
-def test_schema_version_bumped_to_v10():
+def test_schema_version_bumped_to_v11():
     import newsbot
-    assert newsbot.SCHEMA_VERSION == 10, "فاز ۲: ai_providers + ai_models.provider_id ⇒ نسخه ۱۰"
+    assert newsbot.SCHEMA_VERSION == 11, "فاز ۳: ai_rotation + ai_rotation_log ⇒ نسخه ۱۱"

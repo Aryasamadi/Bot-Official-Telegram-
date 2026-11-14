@@ -12,6 +12,7 @@ from newsbot import config
 from newsbot import net_http as _net_http
 from newsbot.db import q, gget, gset, arun, _safe_fields
 from newsbot.secret_store import decrypt as _sec_decrypt, encrypt as _sec_encrypt   # SEC-09 (فاز ۱۲)
+from newsbot import rotation  # فاز ۳: چرخشِ round-robin و audit
 from newsbot.logutils import log, log_event, bump, redact
 from newsbot.timeutils import now_utc, now_iso, parse_dt
 from newsbot.concurrency import AI_SEM, model_lock, model_busy
@@ -653,7 +654,7 @@ def _validate_salvageable(text):
                 raise AIContentInvalid("invalid empty post")
     return text
 
-async def _try_models(groups, system, user, owner_id=None, on_queue=None, validate=None, explicit_id=None):
+async def _try_models(groups, system, user, owner_id=None, on_queue=None, validate=None, explicit_id=None, rotate=None):
     def _sort_key(m):
         fc = m["fail_count"] or 0; okc = m["ok_count"] or 0
         ratio = (okc + 1.0) / (okc + fc + 2.0)
@@ -662,6 +663,10 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
     for stage, models in groups:
         if stage == "test" and not models: await _ai_event("no_test")
         rest = sorted(models, key=_sort_key)
+        # فاز ۳ (ADR-۳): مدلِ انتخاب‌شدهٔ این درخواست **اول** می‌آید؛ بقیهٔ failover
+        # بدونِ تغییر می‌مانند (چرخش جای failover را نمی‌گیرد — ADR-۴).
+        if rotate and rotate.get("id") is not None:
+            rest = [m for m in rest if m["id"] == rotate["id"]] + [m for m in rest if m["id"] != rotate["id"]]
         while rest:
             if attempts >= config.AI_MAX_MODEL_ATTEMPTS:
                 log.warning("model attempt cap reached (%d) — not calling more providers", config.AI_MAX_MODEL_ATTEMPTS)
@@ -682,6 +687,10 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                 log.info("model %s skipped (quarantined for this cycle: %s)", m["name"], _qc)
                 continue
             tried.add(m["id"]); attempts += 1
+            # فاز ۳: audit «این درخواست کدام مدل را برداشت» — یک ردیف، بدونِ تکرار
+            if rotate and rotate.get("id") == m["id"]:
+                await arun(rotation.rotation_log_add, rotate.get("scope") or "public", m["id"],
+                           rotate.get("idx") or 0, rotate.get("pool") or len(models), rotate.get("version") or 0)
             label = _model_label(m, owner_id); content_fail = False
             if model_busy(m["id"]) or AI_SEM.locked():
                 await _ai_event("busy", label)
@@ -785,6 +794,16 @@ async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, 
     test_id = await arun(gget, "test_model_id")
     test = [m for m in shared if m["id"] == test_id]
     shared = [m for m in shared if m["id"] != test_id]
+    # فاز ۳ (ADR-۳/ADR-۴): یک advance در هر درخواست — مدلِ بعدیِ نوبت در صدرِ استخرِ
+    # عمومی می‌آید و مکان‌نما (با CAS، در دیتابیس) یک قدم جلو می‌رود. مدلِ شخصی و مدلِ
+    # تستِ پین‌شده عمداً چرخیده نمی‌شوند: انتخابِ صریح را چرخش بازنویسی نمی‌کند.
+    rotate = None
+    if shared:
+        rot_model, rot_idx, rot_ver = await arun(rotation.advance, rotation.ROTATION_SCOPES[0], shared)
+        if rot_model is not None:
+            shared = [rot_model] + [m for m in shared if m["id"] != rot_model["id"]]
+            rotate = {"id": rot_model["id"], "idx": rot_idx, "version": rot_ver,
+                      "pool": len(shared), "scope": rotation.ROTATION_SCOPES[0]}
     if not personal and not shared and not test:
         # مدل هست ولی همه در backoff ⇒ خطای «موقت» (نه «بدون مدل»): کاربر باید بداند
         # سرویس بعداً برمی‌گردد، نه اینکه پیکربندی خراب است.
@@ -793,7 +812,7 @@ async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, 
             log.warning("every AI model is in backoff — no provider call made")
             return None, None, "ai_busy"
     return await _try_models([("personal", personal), ("test", test), ("public", shared)], system, user,
-                             owner_id, on_queue, validate, selected_id)
+                             owner_id, on_queue, validate, selected_id, rotate=rotate)
 
 async def test_model(mid):
     m = get_model(mid); t = time.monotonic()

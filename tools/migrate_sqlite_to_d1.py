@@ -25,7 +25,8 @@ from newsbot.db import SCHEMA, DB_INDEXES, MIGRATIONS, REFERRAL_CREDIT_TRIGGER, 
 from newsbot.timeutils import now_iso, parse_dt
 
 TABLES = ["users", "plans", "discounts", "channels", "sources", "usage", "articles", "posted",
-          "ch_tokens", "ai_models", "deeplinks", "kv_cache", "pub_journal", "ai_cache", "dedup",
+          "ch_tokens", "ai_models", "ai_rotation", "ai_rotation_log", "deeplinks", "kv_cache",
+          "pub_journal", "ai_cache", "dedup",
           "settings", "support", "support_map", "plan_changes", "pay_requests", "referrals",
           "credit_log", "rate_limits", "meta"]
 SEM = asyncio.Semaphore(8)

@@ -175,6 +175,44 @@ branches of `resolve_endpoint`.
 
 ---
 
+## 4.3 Phase 3 — scope, decisions and acceptance criteria
+
+**Goal (from §2):** round-robin rotation across the shared model pool, with a cursor that survives
+restarts and workers, plus a per-request audit trail. Design of record:
+`docs/superpowers/plans/2026-11-14-phase3-round-robin-rotation.md`.
+
+**Task P3-1 — own PRs (rule 10).** **#54** (OBS-001/003/008/010/014, DB-007) rebased and merged
+after the feature PR. **#55** adds a `LICENSE` — blocked on the owner's licence choice (**B-6**).
+
+**Task P3-2 — the rotation engine.**
+
+| Item | Decision |
+|---|---|
+| Scope | one pool only: `public` (shared models). The personal model and the pinned test model are explicit choices and are **not** rotated |
+| Order | `order_pool` = `(priority or 99, id)` — deterministic, works on dicts and on `sqlite3.Row` |
+| Selection | `pick_rotation` index = `cursor % len(pool)`; a pool that shrinks never skips or repeats a model (ADR-3) |
+| Cursor | table `ai_rotation(scope, cursor, version, updated_at)`, moved by CAS on `version` (ADR-3) |
+| Advance | one per request, inside a single transaction via the new `db.write()` read-modify-write. A separate SELECT+UPDATE loses an advance under contention — the race test proves it |
+| Contention | up to 5 CAS retries, then **fail-open**: choose locally, do not advance. Rotation must never stop publishing |
+| Failover | unchanged. A provider error does **not** advance the cursor a second time (ADR-4) |
+| Audit | one `ai_rotation_log` row per request: `ts, scope, model_id, idx, pool_size, version`, indexed by scope |
+| Schema | **v11**: `ai_rotation`, `ai_rotation_log`, `idx_ai_rotation_log_scope`; `SCHEMA_VERSION = 11`, four schema guards bumped 10 → 11 |
+| Surface | super-admin command `/rotation`: cursor, version, audit count, last 20 requests |
+
+**Tests:** `tests/test_phase3_rotation_state.py` (10) — cursor/CAS/pure selection;
+`tests/test_phase3_rotation_engine.py` (6) — order across requests, a failed provider does not burn
+the cursor, the audit row names the chosen model, the probe path does not advance, `/rotation`
+read-out and its super-admin gate; `tests/test_phase3_db_connection_isolation.py` (1) — a thread's
+cached connection follows a changed `DB_FILE` (verified red before the fix).
+
+**Acceptance criteria**
+1. `pytest -q` has no new failures versus the recorded baseline (§5). — **MET**
+2. `ruff check newsbot tests tools run.py` clean. — **MET**
+3. Rotation never blocks publishing (fail-open path tested). — **MET**
+4. No secret in code, tests, docs, logs or this file. — **MET**
+
+---
+
 ## 4.1 Disposition of the existing PR chain (#46–#56) — binding
 
 > **Owner rule (2026-11-12):** every existing pull request gets its disposition **inside the phase
@@ -382,6 +420,7 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 | B-6 | PR #55 adds a `LICENSE` file — the licence type is the owner's choice and must not be assumed | needs owner decision before #55 merges |
 | D-1 | 18 unmerged stale branches, 37 remote branches total | deferred to Phase 10 |
 | D-2 | 19 Windows-only failing deploy tests (4 in `tests/test_deploy_script.py`, 15 in `tests/test_session3_cicd_docker_deploy_docs.py`) degrade the local signal; §5.1 records the exact cause and why CI is unaffected | deferred to Phase 10 |
+| D-3 | `tools/migrate_sqlite_to_d1.py` `TABLES` also omits `ai_providers` (Phase 2), so a sqlite → D1 migration loses provider rows the same way it lost the rotation tables in Phase 3 | deferred; Phase 3 fixed only its own two tables |
 
 ---
 

@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS posted(channel_id INTEGER, hash TEXT, posted_at TEXT,
 CREATE TABLE IF NOT EXISTS ch_tokens(token TEXT PRIMARY KEY, channel_id INTEGER, issued_to INTEGER, issued_at TEXT, expires_at TEXT, used_at TEXT);
 CREATE TABLE IF NOT EXISTS ai_models(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, kind TEXT, base_url TEXT, api_key TEXT, model TEXT, priority INTEGER DEFAULT 10, active INTEGER DEFAULT 1, status TEXT DEFAULT 'ok', fail_count INTEGER DEFAULT 0, last_error TEXT, last_ok TEXT, last_fail TEXT, next_try_after TEXT DEFAULT '', ok_count INTEGER DEFAULT 0, temperature REAL DEFAULT 0.5, max_tokens INTEGER DEFAULT 2500, owner_id INTEGER, provider_id INTEGER);
 CREATE TABLE IF NOT EXISTS ai_providers(id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, name TEXT, kind TEXT, base_url TEXT, api_key TEXT, enabled INTEGER DEFAULT 1, last_test_at TEXT DEFAULT '', last_test_ok INTEGER DEFAULT 0, last_test_error TEXT DEFAULT '', created_at TEXT DEFAULT '');
+-- فاز ۳ (ADR-۳): مکان‌نمای چرخش در دیتابیس + version برایِ CAS؛ و audit هر درخواست
+CREATE TABLE IF NOT EXISTS ai_rotation(scope TEXT PRIMARY KEY, cursor INTEGER DEFAULT 0, version INTEGER DEFAULT 0, updated_at TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS ai_rotation_log(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, scope TEXT, model_id INTEGER, idx INTEGER, pool_size INTEGER, version INTEGER);
 CREATE TABLE IF NOT EXISTS deeplinks(key TEXT PRIMARY KEY, admin_id INTEGER, created_at TEXT, local_json TEXT);
 CREATE TABLE IF NOT EXISTS kv_cache(key TEXT PRIMARY KEY, value TEXT, cached_at TEXT);
 CREATE TABLE IF NOT EXISTS pub_journal(article_id INTEGER PRIMARY KEY, journal TEXT, updated_at TEXT);
@@ -59,6 +62,7 @@ CREATE TABLE IF NOT EXISTS referrals(id INTEGER PRIMARY KEY AUTOINCREMENT, refer
 CREATE TABLE IF NOT EXISTS credit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, delta REAL, balance_after REAL, reason TEXT, ref TEXT, ts TEXT, cur TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS wallet(user_id INTEGER, cur TEXT, amount REAL DEFAULT 0, updated_at TEXT, PRIMARY KEY(user_id, cur));
 CREATE TABLE IF NOT EXISTS rate_limits(key TEXT PRIMARY KEY, ts REAL);
+CREATE INDEX IF NOT EXISTS idx_ai_rotation_log_scope ON ai_rotation_log(scope, id);
 CREATE INDEX IF NOT EXISTS idx_art_ch_status ON articles(channel_id, status);
 CREATE INDEX IF NOT EXISTS idx_art_created ON articles(created_at);
 CREATE INDEX IF NOT EXISTS idx_src_ch ON sources(channel_id);
@@ -941,11 +945,28 @@ def _ensure_schema(conn):
         _SCHEMA_READY = True
 
 def db():
-    """کانکشن مخصوص همین ترد؛ هر ترد فقط با کانکشن خودش کار می‌کند."""
+    """کانکشن مخصوص همین ترد؛ هر ترد فقط با کانکشن خودش کار می‌کند.
+
+    اگر مسیرِ فایلِ دیتابیسِ sqlite بین دو تماس عوض شود (تست‌ها، یا تغییرِ تنظیمات در زمانِ
+    اجرا)، کانکشنِ کش‌شدهٔ همین ترد بسته و از نو ساخته می‌شود؛ وگرنه تردهای استخر تا ابد روی
+    فایلِ قبلی می‌نوشتند و تغییرات در دیتابیسِ فعلی دیده نمی‌شد.
+
+    عوض‌شدنِ ``DB_BACKEND`` عمداً به کانکشن دست نمی‌زند: یک تماسِ گذرا (مثلاً سنجشِ سلامتِ D1)
+    نباید کانکشنِ جاری را دور بریزد و در نبودِ اعتبارنامه SystemExit بگیرد.
+    """
     conn = getattr(_tls, "conn", None)
+    want = str(config.DB_FILE) if config.DB_BACKEND != "d1" else None
+    if want is not None and conn is not None and getattr(_tls, "path", want) != want:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        conn = None
+        _tls.conn = None
     if conn is None:
         conn = _init_conn()
         _tls.conn = conn
+        _tls.path = want
         _ensure_schema(conn)
     return conn
 
@@ -1037,6 +1058,75 @@ def q(sql, params=(), one=False, commit=False):
                 if _c is not None: _c.rollback()
             except Exception: pass
             raise
+
+def write(fn):
+    """اجرای یک «خواندن-تغییر-نوشتن» اتمیک زیر همان قفلِ نوشتنِ ``q`` و سپس commit.
+
+    ``fn(conn)`` باید ``conn.execute`` را صدا بزند و مقدار دلخواه برگرداند. برایِ CAS لازم
+    است: اگر SELECT و UPDATE در دو تراکنشِ جدا بروند، دو worker می‌توانند نسخه‌ها را
+    جابه‌جا کنند و یک advance گم شود (فاز ۳، ADR-۳).
+    """
+    on_loop = _on_event_loop_thread()
+    if on_loop and _LOOP_GUARD_STRICT:
+        raise RuntimeError("blocking DB call on the event-loop thread; use 'await arun(...)' instead")
+    for attempt in range(5):
+        try:
+            conn = db()
+            with _lock:
+                out = fn(conn)
+                conn.commit()
+                return out
+        except sqlite3.OperationalError as e:
+            msg = str(e).lower()
+            try:
+                _c = getattr(_tls, "conn", None)
+                if _c is not None: _c.rollback()
+            except Exception: pass
+            if attempt == 4 or ("locked" not in msg and "busy" not in msg): raise
+            if on_loop:
+                raise RuntimeError("database is busy and write() was called on the event-loop thread; use 'await arun(...)'") from e
+            time.sleep(0.02 * (2 ** attempt))
+        except sqlite3.Error:
+            try:
+                _c = getattr(_tls, "conn", None)
+                if _c is not None: _c.rollback()
+            except Exception: pass
+            raise
+
+
+def qrow(sql, params=()):
+    """اجرای یک نوشتن و برگرداندنِ ``rowcount`` — برایِ CAS.
+
+    ``q`` فقط ``lastrowid`` را برمی‌گرداند، که برای «آیا این UPDATE ردیفی عوض کرد؟» بی‌معنی
+    است (در SQLite مقدارِ مشخصی نیست). چرخشِ مدل‌ها (ADR-۳) به همین پاسخ نیاز دارد.
+    """
+    on_loop = _on_event_loop_thread()
+    if on_loop and _LOOP_GUARD_STRICT:
+        raise RuntimeError("blocking DB call on the event-loop thread; use 'await arun(...)' instead")
+    for attempt in range(5):
+        try:
+            conn = db()
+            with _lock:
+                cur = conn.execute(sql, params)
+                conn.commit()
+                return int(getattr(cur, "rowcount", 0) or 0)
+        except sqlite3.OperationalError as e:
+            msg = str(e).lower()
+            try:
+                _c = getattr(_tls, "conn", None)
+                if _c is not None: _c.rollback()
+            except Exception: pass
+            if attempt == 4 or ("locked" not in msg and "busy" not in msg): raise
+            if on_loop:
+                raise RuntimeError("database is busy and qrow() was called on the event-loop thread; use 'await arun(...)'") from e
+            time.sleep(0.02 * (2 ** attempt))
+        except sqlite3.Error:
+            try:
+                _c = getattr(_tls, "conn", None)
+                if _c is not None: _c.rollback()
+            except Exception: pass
+            raise
+
 
 _COLS = {}
 def _safe_fields(table, f):

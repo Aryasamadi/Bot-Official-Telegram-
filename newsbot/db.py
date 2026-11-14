@@ -947,13 +947,16 @@ def _ensure_schema(conn):
 def db():
     """کانکشن مخصوص همین ترد؛ هر ترد فقط با کانکشن خودش کار می‌کند.
 
-    اگر مسیرِ فایلِ دیتابیس بین دو تماس عوض شود (تست‌ها، یا تغییرِ تنظیمات در زمانِ اجرا)،
-    کانکشنِ کش‌شدهٔ همین ترد بسته و از نو ساخته می‌شود؛ وگرنه تردهای استخر تا ابد روی
-    فایلِ قبلی می‌نویسند و تغییرات در دیتابیسِ فعلی دیده نمی‌شود.
+    اگر مسیرِ فایلِ دیتابیسِ sqlite بین دو تماس عوض شود (تست‌ها، یا تغییرِ تنظیمات در زمانِ
+    اجرا)، کانکشنِ کش‌شدهٔ همین ترد بسته و از نو ساخته می‌شود؛ وگرنه تردهای استخر تا ابد روی
+    فایلِ قبلی می‌نوشتند و تغییرات در دیتابیسِ فعلی دیده نمی‌شد.
+
+    عوض‌شدنِ ``DB_BACKEND`` عمداً به کانکشن دست نمی‌زند: یک تماسِ گذرا (مثلاً سنجشِ سلامتِ D1)
+    نباید کانکشنِ جاری را دور بریزد و در نبودِ اعتبارنامه SystemExit بگیرد.
     """
     conn = getattr(_tls, "conn", None)
-    want = None if config.DB_BACKEND == "d1" else str(config.DB_FILE)
-    if conn is not None and getattr(_tls, "path", want) != want:
+    want = str(config.DB_FILE) if config.DB_BACKEND != "d1" else None
+    if want is not None and conn is not None and getattr(_tls, "path", want) != want:
         try:
             conn.close()
         except Exception:

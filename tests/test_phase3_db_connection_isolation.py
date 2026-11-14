@@ -33,3 +33,26 @@ def test_a_thread_connection_follows_a_changed_db_file(tmp_path, monkeypatch):
         c.close()
     db._tls.conn = None
     monkeypatch.setattr(config, "DB_FILE", old)
+
+
+def test_a_transient_d1_backend_does_not_drop_the_cached_connection(tmp_path, monkeypatch):
+    """یک تماسِ گذرا با ``DB_BACKEND=d1`` نباید کانکشنِ جاری را دور بریزد.
+
+    باگِ واقعیِ همین فاز: نسخه‌های اولِ نگهبان، هنگامِ سنجشِ سلامتِ D1 کانکشن را می‌بست و
+    ``_init_conn`` بدونِ اعتبارنامه SystemExit می‌گرفت (۵ تستِ D1 و ۱ تستِ سلامت شکستند).
+    """
+    monkeypatch.setattr(config, "DB_FILE", str(tmp_path / "d1-guard.db"))
+    db._tls.conn = None
+    db.q("CREATE TABLE IF NOT EXISTS probe(v INTEGER)", commit=True)
+    conn_before = db.db()
+
+    monkeypatch.setattr(config, "DB_BACKEND", "d1")
+    assert db.db() is conn_before, "نباید کانکشن عوض شود"
+
+    monkeypatch.setattr(config, "DB_BACKEND", "sqlite")
+    assert db.db() is conn_before, "بازگشت به sqlite هم نباید کانکشن را عوض کند"
+
+    c = getattr(db._tls, "conn", None)
+    if c is not None:
+        c.close()
+    db._tls.conn = None

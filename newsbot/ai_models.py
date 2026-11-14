@@ -687,10 +687,6 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                 log.info("model %s skipped (quarantined for this cycle: %s)", m["name"], _qc)
                 continue
             tried.add(m["id"]); attempts += 1
-            # فاز ۳: audit «این درخواست کدام مدل را برداشت» — یک ردیف، بدونِ تکرار
-            if rotate and rotate.get("id") == m["id"]:
-                await arun(rotation.rotation_log_add, rotate.get("scope") or "public", m["id"],
-                           rotate.get("idx") or 0, rotate.get("pool") or len(models), rotate.get("version") or 0)
             label = _model_label(m, owner_id); content_fail = False
             if model_busy(m["id"]) or AI_SEM.locked():
                 await _ai_event("busy", label)
@@ -702,6 +698,15 @@ async def _try_models(groups, system, user, owner_id=None, on_queue=None, valida
                         await _ai_event("unavailable", label); continue
                     async with AI_SEM:
                         await _ai_event("start", label, stage)
+                        # فاز ۳: audit «این درخواست کدام مدل را برداشت» — بعد از عبور از
+                        # busy/availability و درست پیش از تماسِ واقعی، وگرنه مدلی که صدا زده
+                        # نشد هم یک ردیف می‌گرفت و audit دروغ می‌شد.
+                        if rotate and rotate.get("id") == current["id"]:
+                            try:
+                                await arun(rotation.rotation_log_add, rotate.get("scope") or "public", current["id"],
+                                           rotate.get("idx") or 0, rotate.get("pool") or len(models), rotate.get("version") or 0)
+                            except Exception as e:
+                                log.warning("rotation audit write failed (%s) — publishing continues", type(e).__name__)
                         raw_out, usage = await _call_model(current, system, user)
                         content_fail = True                       # از این نقطه هر خطا مربوط به محتواست نه provider
                         # بررسی ساختارِ خروجی هم «خطای محتوا» است: قبلاً پیش از این پرچم اجرا می‌شد و یک JSON
@@ -799,7 +804,13 @@ async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, 
     # تستِ پین‌شده عمداً چرخیده نمی‌شوند: انتخابِ صریح را چرخش بازنویسی نمی‌کند.
     rotate = None
     if shared:
-        rot_model, rot_idx, rot_ver = await arun(rotation.advance, rotation.ROTATION_SCOPES[0], shared)
+        # ADR-۳: چرخش هرگز نباید نشر را متوقف کند — هر خطایی این‌جا فقط یعنی
+        # «این درخواست با ترتیبِ عادیِ failover جلو می‌رود».
+        try:
+            rot_model, rot_idx, rot_ver = await arun(rotation.advance, rotation.ROTATION_SCOPES[0], shared)
+        except Exception as e:
+            log.warning("rotation advance failed (%s) — serving with the normal failover order", type(e).__name__)
+            rot_model = None
         if rot_model is not None:
             shared = [rot_model] + [m for m in shared if m["id"] != rot_model["id"]]
             rotate = {"id": rot_model["id"], "idx": rot_idx, "version": rot_ver,

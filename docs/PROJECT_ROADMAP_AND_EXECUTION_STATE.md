@@ -31,8 +31,11 @@ unblock) were completed the same way: one phase per explicit owner instruction, 
 then-current `main`, squashed, with the review gate lifted and restored.
 **Done so far:** Phase 0 audit; this file; README/docs aligned; P1-1 regression guards; the disposition
 of every existing PR (#46–#56) in §4.1; Phases 1–2 and 3 complete; the full suite run on each `main`.
-**Remaining in Phase 3:** nothing except **#55**, which is blocked on the owner's licence choice
-(**B-6**) — it is the only open PR left in the repository.
+**Remaining in Phase 3:** nothing except the repo-hygiene work, which is **open as #64** and blocked on
+the owner's licence choice (**B-6**). Note: **#55 was closed by GitHub**, not by a decision — merging #54
+with `--delete-branch` removed #55's base branch, and a PR whose base disappears is closed. It could not
+be reopened, so its content was rebased onto `main` and re-opened as **#64** (the comment on #55 records
+this). #64 is the only open PR in the repository.
 **Exact next action:** none until the owner says which phase to start next (Phase 4 is next in the
 roadmap and needs that instruction, plus its prerequisite **B-4**).
 
@@ -60,7 +63,7 @@ roadmap and needs that instruction, plus its prerequisite **B-4**).
 
 **Completed phases:** **Phase 1 — `COMPLETED` 2026-11-13** (P1-1: #56 `e3e321e`, #57 `533f753`; P1-2: #46→#50, oldest-first; closed by #58 `0f4b90a`).
 **Phase 2 — `COMPLETED` 2026-11-13** (P2-1: #51 `16a7353`, #52 `886e19d`, #53 `bf34390`; P2-2: #60 `bf73b39`).
-**Phase 3 — `COMPLETED` 2026-11-14** (P3-2: #62 `51bb8d2` — rotation engine + `/rotation`; P3-1: #54 `7f48ec4` — OBS-001/003/008/010/014, DB-007; #55 still open on **B-6**).
+**Phase 3 — `COMPLETED` 2026-11-14** (P3-2: #62 `51bb8d2` — rotation engine + `/rotation`; P3-1: #54 `7f48ec4` — OBS-001/003/008/010/014, DB-007; repo hygiene is open as **#64** on **B-6** — #55 was closed by GitHub when #54's base branch was deleted).
 
 **PRs owned by each phase** (a phase is not `COMPLETED` while one of its own PRs is open — §9 rule 10):
 
@@ -68,7 +71,7 @@ roadmap and needs that instruction, plus its prerequisite **B-4**).
 |---|---|---|
 | 1 | #46, #47, #48, #49, #50, #56, #57 | **all merged** — Phase 1 `COMPLETED` 2026-11-13 |
 | 2 | #51, #52, #53, #60 | **all merged** — Phase 2 `COMPLETED` 2026-11-13 |
-| 3 | #54, #62 merged; **#55 blocked on B-6** | Phase 3 `COMPLETED` except #55 (owner decision) |
+| 3 | #54, #62 merged; **#55 closed by GitHub → replaced by #64 (blocked on B-6)** | Phase 3 `COMPLETED` except #64 (owner decision) |
 
 ---
 
@@ -184,8 +187,10 @@ branches of `resolve_endpoint`.
 restarts and workers, plus a per-request audit trail. Design of record:
 `docs/superpowers/plans/2026-11-14-phase3-round-robin-rotation.md`.
 
-**Task P3-1 — own PRs (rule 10).** **#54** (OBS-001/003/008/010/014, DB-007) rebased and merged
-after the feature PR. **#55** adds a `LICENSE` — blocked on the owner's licence choice (**B-6**).
+**Task P3-1 — own PRs (rule 10).** **#54** (OBS-001/003/008/010/014, DB-007) rebased onto `main` and
+merged as `7f48ec4`. **#55** (repo hygiene + i18n parity) was **closed by GitHub** when #54's merge
+deleted its base branch; its content lives on as **#64**, rebased onto `main`, and is blocked on the
+owner's licence choice (**B-6**).
 
 **Task P3-2 — the rotation engine.**
 
@@ -259,7 +264,7 @@ the historical banners added in P1-1.
 | **#52** | fix(phase2): NET-003 DNS pinning, PIPE-011/014 extraction & URL canonicalization | **Phase 2** | **MERGE** — rebase onto `main` after #51; 17 new tests. It adds a new pinned-transport module under `newsbot/` — that module must be reviewed before merge (it is not yet in `main`). | 7 |
 | **#53** | fix(phase2): PIPE-013 discovery politeness & TEST-007/008/009/013/014 QA debt | **Phase 2** | **MERGE** — rebase onto `main` after #52; 11 new tests. | 8 |
 | **#54** | fix(phase3): OBS-001/003/008/010/014 observability & DB-007 orphan protection | **Phase 3** | **MERGE** — rebase onto `main` after #53; 6 new tests. Touches `newsbot/db.py`: confirm the orphan-protection change is additive and does not collide with the Phase 2 `ai_providers` migration. | 9 |
-| **#55** | fix(phase3): OPS-017/019/023/029 repo hygiene & TEST-010 semantic i18n parity | **Phase 3** | **MERGE** — rebase onto `main` after #54; 6 new tests. Adds `LICENSE`, `CHANGELOG.md`, `CODEOWNERS`, `dependabot.yml` — the owner must confirm the licence choice before merge (see B-6). | 10 |
+| **#55** | fix(phase3): OPS-017/019/023/029 repo hygiene & TEST-010 semantic i18n parity | **Phase 3** | **MERGE via #64** — #55 itself was closed by GitHub (its base branch was deleted by #54's merge), so its content was rebased onto `main` and re-opened as **#64**; adds `LICENSE`, `CHANGELOG.md`, `CODEOWNERS`, `dependabot.yml` — the owner must confirm the licence choice before that merge (see B-6). | 10 |
 
 **Count:** 11 PRs — all 11 **merged** (Phase 1: #46, #47, #48, #49, #50, #56, #57). The remaining
 #51–#55 are Phase 2 / Phase 3 and stay open until their own phase runs.
@@ -371,7 +376,7 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 2 commits on `main` | `16a7353` (#51) · `886e19d` (#52) · `bf34390` (#53) · `bf73b39` (#60 provider registry) |
 | Phase 2 result | **COMPLETE** — every Phase 2 PR (#51, #52, #53, #60) is merged; §4.2 is satisfied |
 | Phase 3 commits on `main` | `7f48ec4` (#54 observability + DB-007) · `51bb8d2` (#62 rotation engine) |
-| Phase 3 result | **COMPLETE** except **#55**, which is blocked on the owner's licence choice (**B-6**); §4.3 is satisfied |
+| Phase 3 result | **COMPLETE** except the repo-hygiene PR, blocked on the owner's licence choice (**B-6**); §4.3 is satisfied. #55 → **#64** (auto-close recovery recorded in §1 and §4.1) |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)
@@ -431,7 +436,7 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 | B-3 | A 350-minute GitHub-hosted run would leave only ~10 minutes of headroom against the hard 6-hour (360-minute) job cap; the cap cannot be raised | needs owner decision |
 | B-4 | Whether the bot is added to the channel discussion group (prerequisite for Phase 4) | needs owner action |
 | B-5 | A file **outside** this repository (the local `newsbot-deploy-pkg` folder) holds a bot token matching the BotFather format and a 64-char `SECRETS_KEY` in plain text (names/lengths only; values never read) | needs rotation |
-| B-6 | PR #55 adds a `LICENSE` file — the licence type is the owner's choice and must not be assumed | needs owner decision before #55 merges |
+| B-6 | #64 (replacing #55) adds a `LICENSE` file, currently a **proprietary "all rights reserved"** notice — the licence type is the owner's choice and must not be assumed | needs owner decision before #64 merges |
 | D-1 | 18 unmerged stale branches, 37 remote branches total | deferred to Phase 10 |
 | D-2 | 19 Windows-only failing deploy tests (4 in `tests/test_deploy_script.py`, 15 in `tests/test_session3_cicd_docker_deploy_docs.py`) degrade the local signal; §5.1 records the exact cause and why CI is unaffected | deferred to Phase 10 |
 | D-3 | `tools/migrate_sqlite_to_d1.py` `TABLES` also omits `ai_providers` (Phase 2), so a sqlite → D1 migration loses provider rows the same way it lost the rotation tables in Phase 3 | deferred; Phase 3 fixed only its own two tables |

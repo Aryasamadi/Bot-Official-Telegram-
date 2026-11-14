@@ -122,3 +122,57 @@ def test_the_probe_path_does_not_advance_the_public_cursor(transport):
     assert ok
     after = rotation.rotation_get("public")
     assert (after["version"] if after else 0) == (before["version"] if before else 0)
+
+
+# ── Task 5: خواندنِ audit از داخلِ ربات (/rotation) ──────────────────────────────
+class _User:
+    def __init__(self, uid):
+        self.id = uid
+
+
+class _Update:
+    def __init__(self, uid):
+        self.effective_user = _User(uid)
+
+
+class _Context:
+    def __init__(self, args=None):
+        self.args = list(args or [])
+
+
+def _run_cmd(monkeypatch, uid, args=None, super_ids=(1,)):
+    """اجرای /rotation با ثبتِ متنِ خروجی به‌جای تماس با تلگرام."""
+    from newsbot import config as cfg
+    from newsbot import ui_views_super as V
+
+    shown = {}
+
+    async def fake_render(update, context, text, kb=None):
+        shown["text"] = text
+
+    async def fake_popup(update, context, text, kb=None):
+        shown["text"] = text
+
+    monkeypatch.setattr(cfg, "SUPER_ADMIN_IDS", set(super_ids))
+    monkeypatch.setattr(V, "render", fake_render)
+    monkeypatch.setattr(V, "popup", fake_popup)
+    asyncio.run(V.cmd_rotation(_Update(uid), _Context(args)))
+    return shown.get("text", "")
+
+
+def test_rotation_command_shows_the_cursor_and_the_last_requests(transport, monkeypatch):
+    s = _settings()
+    _add("rot-a")
+    _add("rot-b")
+    asyncio.run(gen_mod.generate(s, _article("r-cmd")))
+
+    text = _run_cmd(monkeypatch, 1)
+    assert "public" in text
+    assert "rot-a" in text or "rot-b" in text
+
+
+def test_rotation_command_is_super_admin_only(transport, monkeypatch):
+    _settings()
+    _add("rot-a")
+    text = _run_cmd(monkeypatch, 2)
+    assert text == "", "غیرِ مدیر کلان نباید چیزی ببیند"

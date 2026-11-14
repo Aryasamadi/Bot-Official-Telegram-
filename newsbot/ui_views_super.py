@@ -275,6 +275,32 @@ async def cmd_providers(update, context):
         return await popup(update, context, str(e))
     return await popup(update, context, P_HELP)
 
+async def cmd_rotation(update, context):
+    """وضعیتِ چرخشِ round-robin و auditِ درخواست‌ها — فقط مدیر کلان (فاز ۳)."""
+    uid = update.effective_user.id
+    if not is_super(uid):
+        return
+    from newsbot import rotation
+
+    lang = L(update)
+    scope = rotation.ROTATION_SCOPES[0]
+    st = await arun(rotation.rotation_stats, scope)
+    rows = await arun(rotation.rotation_log_recent, scope, 20)
+    head = ("چرخشِ مدل‌ها — %s\nمکان‌نما: %d · نسخه: %d · ردیف‌های audit: %d"
+            % (scope, st["cursor"], st["version"], st["log_rows"]))
+    if not rows:
+        return await render(update, context, head + "\n\nهنوز درخواستی از این استخر ثبت نشده است.",
+                            [[B(tr(lang, "back"), "s:home")]])
+    lines = []
+    for r in rows:
+        m = get_model(r["model_id"])
+        name = esc(m["name"]) if m else "#%d" % r["model_id"]
+        lines.append("%s · اندیس %d از %d · نسخه %d · %s"
+                     % (name, r["idx"], r["pool_size"], r["version"], (r["ts"] or "")[:16]))
+    text = head + "\n\nآخرین درخواست‌ها:\n" + "\n".join(lines)
+    return await render(update, context, text, [[B(tr(lang, "back"), "s:home")]])
+
+
 def _code_version():
     """نسخهٔ کدِ در حال اجرا از git — تا کاربر مطمئن شود deploy شده است."""
     # DEVOPS-03: در ایمیجِ immutable (بدون .git) نسخه از متغیرِ محیطی می‌آید که

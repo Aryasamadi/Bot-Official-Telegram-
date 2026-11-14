@@ -26,7 +26,7 @@ from newsbot.ui_commands import (managed_command, cmd_start, cmd_create, cmd_adm
                                  cmd_help, cmd_about, cmd_lang, cmd_cancel, cmd_ref, cmd_unknown)
 from newsbot.ui_support import on_message
 from newsbot.ui_dispatch import on_callback
-from newsbot.ui_views_super import cmd_health, cmd_providers
+from newsbot.ui_views_super import cmd_health, cmd_providers, cmd_rotation
 
 APP: Application | None = None
 _db_lock = None      # قفل فایلِ دیتابیس: دو نسخه‌ی هم‌زمان ربات ⇒ دو چرخه روی یک کانال و پست تکراری
@@ -269,7 +269,7 @@ def main():
     if config.API_BASE: _bld = _bld.base_url(config.API_BASE)          # سرور محلی Bot API (اختیاری) → پشتیبانی از فایل‌های تا ۲ گیگ
     _bld = _bld.request(build_telegram_request())
     APP = _bld.post_init(post_init).post_shutdown(post_shutdown).concurrent_updates(True).build()
-    for cmd, fn in (("start", cmd_start), ("create", cmd_create), ("admin", cmd_admin), ("man", cmd_man), ("help", cmd_help), ("about", cmd_about), ("lang", cmd_lang), ("ref", cmd_ref), ("cancel", cmd_cancel), ("health", cmd_health), ("providers", cmd_providers)): APP.add_handler(CommandHandler(cmd, managed_command(fn)))
+    for cmd, fn in (("start", cmd_start), ("create", cmd_create), ("admin", cmd_admin), ("man", cmd_man), ("help", cmd_help), ("about", cmd_about), ("lang", cmd_lang), ("ref", cmd_ref), ("cancel", cmd_cancel), ("health", cmd_health), ("providers", cmd_providers), ("rotation", cmd_rotation)): APP.add_handler(CommandHandler(cmd, managed_command(fn)))
     APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.COMMAND, managed_command(cmd_unknown)))
     APP.add_handler(CallbackQueryHandler(on_callback)); APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, on_message)); APP.add_error_handler(on_error)
     # drop_pending_updates=False: پیام‌هایی که کاربر در زمان خاموشی فرستاده از دست نمی‌روند؛ کهنه‌ها با stale() رد می‌شوند.

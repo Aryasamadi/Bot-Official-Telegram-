@@ -44,6 +44,11 @@ CREATE TABLE IF NOT EXISTS ai_providers(id INTEGER PRIMARY KEY AUTOINCREMENT, ow
 -- فاز ۳ (ADR-۳): مکان‌نمای چرخش در دیتابیس + version برایِ CAS؛ و audit هر درخواست
 CREATE TABLE IF NOT EXISTS ai_rotation(scope TEXT PRIMARY KEY, cursor INTEGER DEFAULT 0, version INTEGER DEFAULT 0, updated_at TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS ai_rotation_log(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, scope TEXT, model_id INTEGER, idx INTEGER, pool_size INTEGER, version INTEGER);
+-- فاز ۴: پاسخِ سؤالِ replyشده به پستِ کانال. کلیدِ یکتا (chat_id,msg_id) ⇒ at-most-once.
+-- channel_id = شناسهٔ چتِ تلگرامِ کانال (تصمیمِ مالک ۵)، نه شناسهٔ داخلی.
+CREATE TABLE IF NOT EXISTS qa_answers(chat_id INTEGER, msg_id INTEGER, user_id INTEGER, channel_id INTEGER, post_id INTEGER DEFAULT 0, status TEXT DEFAULT 'pending', answer TEXT DEFAULT '', error TEXT DEFAULT '', created_at TEXT, updated_at TEXT, PRIMARY KEY(chat_id, msg_id));
+-- فاز ۴: سهمیهٔ AI هر دورهٔ اشتراک (سراسری: ربات + Q&A). UNIQUE(user_id,expires_at) = یک گرانت per period.
+CREATE TABLE IF NOT EXISTS ai_plan_grants(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, plan_id INTEGER, quota INTEGER DEFAULT 0, used INTEGER DEFAULT 0, granted_at TEXT, expires_at TEXT, UNIQUE(user_id, expires_at));
 CREATE TABLE IF NOT EXISTS deeplinks(key TEXT PRIMARY KEY, admin_id INTEGER, created_at TEXT, local_json TEXT);
 CREATE TABLE IF NOT EXISTS kv_cache(key TEXT PRIMARY KEY, value TEXT, cached_at TEXT);
 CREATE TABLE IF NOT EXISTS pub_journal(article_id INTEGER PRIMARY KEY, journal TEXT, updated_at TEXT);
@@ -63,6 +68,9 @@ CREATE TABLE IF NOT EXISTS credit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, user
 CREATE TABLE IF NOT EXISTS wallet(user_id INTEGER, cur TEXT, amount REAL DEFAULT 0, updated_at TEXT, PRIMARY KEY(user_id, cur));
 CREATE TABLE IF NOT EXISTS rate_limits(key TEXT PRIMARY KEY, ts REAL);
 CREATE INDEX IF NOT EXISTS idx_ai_rotation_log_scope ON ai_rotation_log(scope, id);
+CREATE INDEX IF NOT EXISTS idx_qa_answers_user ON qa_answers(user_id);
+CREATE INDEX IF NOT EXISTS idx_qa_answers_channel ON qa_answers(channel_id);
+CREATE INDEX IF NOT EXISTS idx_ai_grants_user ON ai_plan_grants(user_id);
 CREATE INDEX IF NOT EXISTS idx_art_ch_status ON articles(channel_id, status);
 CREATE INDEX IF NOT EXISTS idx_art_created ON articles(created_at);
 CREATE INDEX IF NOT EXISTS idx_src_ch ON sources(channel_id);
@@ -166,6 +174,10 @@ MIGRATIONS += [("articles", "ai_state", "TEXT DEFAULT ''"),
 # ستونِ افزایشیِ «کدام فراهم‌کننده» روی مدل‌ها. NULL = ردیفِ مهاجرت‌نشده (به base_url/api_key
 # خودش نگاه می‌کند) ⇒ عقب‌گرد بدونِ مهاجرتِ دوم ممکن است.
 MIGRATIONS += [("ai_models", "provider_id", "INTEGER")]
+
+# ── فاز ۴: سهمیهٔ AI در پلن‌ها (تصمیمِ مالک ۶) ──────────────────────────────────────
+# 0 = نامحدود. گرانتِ دوره در ai_plan_grants ساخته می‌شود؛ این ستون «سقفِ دوره» را تعریف می‌کند.
+MIGRATIONS += [("plans", "ai_quota", "INTEGER DEFAULT 0")]
 
 # ── خواندنِ اسکیما: باید روی SQLite *و* Cloudflare D1 درست کار کند ────────────────────
 # DB-27 (رخداد تولید ۲۰۲۶-۱۰-۲۱): تشخیصِ ستون‌های موجود روی D1 خالی برمی‌گشت و

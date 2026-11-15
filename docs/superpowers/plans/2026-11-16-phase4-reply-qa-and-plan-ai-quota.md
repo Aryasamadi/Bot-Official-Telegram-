@@ -249,7 +249,7 @@ git commit -m "feat(phase4): pure Q&A helpers - detect channel post, cap context
 - Test: `tests/test_phase4_qa_core.py` (append)
 
 **Interfaces:**
-- Consumes: Task 2 helpers; `newsbot.db.write/q/qrow/arun/gget/gset`; `newsbot.core_channels.channel_by_chat/get_settings`; `newsbot.core_users.ensure_user`; `newsbot.ai_models.ai_chat/budget_reset`.
+- Consumes: Task 2 helpers; from `newsbot/db.py`: `write`, `q`, `qrow`, `arun`, `gget`, `gset`; from `newsbot/core_channels.py`: `channel_by_chat`, `get_settings`; from `newsbot/core_users.py`: `ensure_user`; from `newsbot/ai_models.py`: `ai_chat`, `budget_reset`.
 - Produces:
   - `qa_claim(chat_id, msg_id, user_id, channel_id, post_id=0) -> bool` (True only for a fresh claim)
   - `qa_finish(chat_id, msg_id, status, answer="", error="") -> None`

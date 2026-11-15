@@ -161,6 +161,7 @@ TXT = {
     "ch_stats": ("🌐 {s} منبع · 📝 صف {q} · ✅ ۲۴ ساعت اخیر {p} · ♻️ ردشده {r} · 🕐 {a}", "🌐 {s} sources · 📝 queue {q} · ✅ 24h {p} · ♻️ rejected {r} · 🕐 {a}"),
     "report": ("📊 گزارش", "📊 Report"), "test": ("🧪 تست فوری", "🧪 Quick test"), "sources": ("🌐 منابع ({n})", "🌐 Sources ({n})"), "content": ("✍️ محتوا", "✍️ Content"), "sched": ("⏰ زمان‌بندی", "⏰ Schedule"),
     "queue": ("📝 صف انتشار ({n})", "📝 Publish queue ({n})"), "rejected": ("♻️ ردشده‌ها", "♻️ Rejected"), "automation": ("{i} فعالیت ربات", "{i} Automation"), "ch_del": ("🗑 حذف کانال", "🗑 Remove channel"),
+    "qa_btn": ("{i} پرسش‌وپاسخِ گروه", "{i} Group Q&A"),
     "refresh": ("🔄 به‌روزرسانی", "🔄 Refresh"), "ch_del_q": ("❓ کانال «{title}» حذف شود؟\n🌐 منابع · ⚙️ تنظیمات · 📝 صف انتشار این کانال هم حذف می‌شوند", "❓ Remove “{title}”?\n🌐 Sources · ⚙️ Settings · 📝 Queue"), "ch_deleted": ("🗑 کانال حذف شد", "🗑 Channel removed"),
     "tog_enabled": ("🟢 ربات برای این کانال فعال شد", "🟢 Automation on"), "tog_disabled": ("🔴 ربات برای این کانال متوقف شد", "🔴 Automation off"),
     # ---- تأیید دوسطحی اقدامات مخرب (فاز ۹ — UX-05/UISEC-05)
@@ -221,7 +222,9 @@ TXT = {
     "b_cats": ("🗂 دسته‌ها ({n})", "🗂 Categories ({n})"), "b_crits": ("📏 معیارها ({n})", "📏 Criteria ({n})"), "b_min": ("⭐ حداقل امتیاز {n}", "⭐ Min score {n}"), "b_words": ("🔢 حداکثر {n} کلمه", "🔢 Words {n}"), "b_limit": ("📏 حداکثر {n} کاراکتر", "📏 Char limit {n}"),
     "b_hashtags": ("#️⃣ هشتگ {i}", "#️⃣ Hashtags {i}"), "b_link": ("🔗 لینک منبع {i}", "🔗 Source in bot {i}"), "b_media": ("🖼 رسانه {i}", "🖼 Media {i}"), "b_strict": ("🛡 فیلتر سخت تبلیغ {i}", "🛡 Strict filter {i}"),
     "tog_hashtags": ("#️⃣ هشتگ", "#️⃣ Hashtags"), "tog_include_link": ("🔗 لینک منبع", "🔗 Source in bot"), "tog_include_media": ("🖼 رسانه", "🖼 Media"), "tog_strict_ads": ("🛡 فیلتر سخت تبلیغ", "🛡 Strict ad filter"), "tog_allow_undated": ("📅 خبرهای بدون تاریخ", "📅 Undated"),
+    "tog_qa_enabled": ("❓ پرسش‌وپاسخِ گروهِ بحث", "❓ Discussion-group Q&A"),
     "togd_hashtags": ("هشتگ‌های مرتبط در انتهای پست اضافه می‌شوند", "Related hashtags are added at the end of the post"), "togd_include_link": ("لینک منبع فقط در نسخهٔ کامل («ادامه در ربات») نمایش داده می‌شود", "The news source is shown only in “continue in bot”"), "togd_include_media": ("تصویر یا ویدیوی خبر همراه پست ارسال می‌شود", "The news photo or video is sent with the post"), "togd_strict_ads": ("فیلتر سخت‌گیرانه‌تر، مطالب تبلیغاتی را دقیق‌تر حذف می‌کند", "The stricter filter rejects ad-like articles earlier"), "togd_allow_undated": ("مطالب بدون تاریخ هم منتشر می‌شوند", "Articles without a publish date are published too"),
+    "togd_qa_enabled": ("کاربران در گروهِ بحثِ همین کانال می‌توانند به پست‌ها reply بزنند و پاسخ بگیرند؛ هر پاسخ از سهمیهٔ هوش مصنوعیِ خودِ پرسشگر کم می‌شود", "Users in this channel’s linked discussion group can reply to posts and get an answer; each answer uses the asker’s own AI quota"),
     "cats_title": ("🗂 <b>دسته‌ها</b>\nهوش مصنوعی برای هر مطلب یک دسته انتخاب می‌کند و با سبک همان دسته می‌نویسد.", "🗂 <b>Categories</b>\nAI picks one per article and writes in its style."), "cat_add": ("➕ افزودن دسته", "➕ Category"),
     "cat_view": ("{e} <b>{name}</b>\n📐 {style}", "{e} <b>{name}</b>\n📐 {style}"), "cat_edit": ("✏️ ویرایش سبک", "✏️ Style"), "cat_style_prompt": ("سبک نگارش جدید این دسته را بفرستید:", "New writing style for this category:"),
     "cat_added": ("✅ دسته اضافه شد", "✅ Category added"), "cat_updated": ("✅ سبک به‌روزرسانی شد", "✅ Style updated"), "cat_min": ("⚠️ حداقل یک دسته لازم است", "⚠️ At least one category required"),
@@ -346,7 +349,7 @@ def tr(lang, key, /, **kw):
     try: return s.format(**kw)
     except Exception: return s
 
-TOGGLABLE = {"enabled", "hashtags", "include_link", "include_media", "strict_ads", "allow_undated"}
+TOGGLABLE = {"enabled", "hashtags", "include_link", "include_media", "strict_ads", "allow_undated", "qa_enabled"}
 STATUS = {"discovered": ("🔎 کشف‌شده", "🔎 discovered"), "skipped": ("⏭ خارج از بازه", "⏭ out of window"), "rejected": ("♻️ ردشده", "♻️ rejected"), "failed": ("❌ ناموفق", "❌ failed"), "ready": ("📝 آماده", "📝 ready"), "published": ("✅ {n} مطلب در کانال منتشر شد", "✅ {n} published")}
 
 def reason_text(reason, lang):

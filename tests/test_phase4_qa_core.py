@@ -285,3 +285,34 @@ def test_the_group_reply_handler_is_registered():
     src = inspect.getsource(app.main)
     assert "on_group_reply" in src, "هندلرِ گروه باید در main ثبت شود، وگرنه هرگز اجرا نمی‌شود"
     assert "filters.ChatType.GROUPS" in src, "ثبت باید فقط روی گروهِ بحث باشد، نه چتِ خصوصی"
+
+
+# ── کلیدِ per-channel در پنلِ مدیر (تصمیمِ مالک ۴) ──────────────────────────────────
+def test_qa_enabled_defaults_on_for_a_channel(isolated_db):
+    from newsbot.core_channels import get_settings
+    add_channel(900001, -100111, "کانال", "", 900001)
+    assert get_settings(channel_by_chat(-100111)["id"])["qa_enabled"] is True
+
+
+def test_the_toggle_is_a_known_toggleable_setting():
+    from newsbot.ui_i18n import TOGGLABLE, tr
+    assert "qa_enabled" in TOGGLABLE
+    assert tr("fa", "tog_qa_enabled") and tr("en", "tog_qa_enabled")
+    assert tr("fa", "togd_qa_enabled") and tr("en", "togd_qa_enabled")
+    assert tr("fa", "qa_btn", i="🟢") and tr("en", "qa_btn", i="🟢")
+
+
+def test_the_channel_panel_has_the_qa_toggle_button():
+    import inspect
+
+    from newsbot import ui_views_admin
+    src = inspect.getsource(ui_views_admin.view_channel)
+    assert "qa_enabled" in src and "qa_btn" in src
+
+
+def test_the_toggle_callback_returns_to_the_channel_panel():
+    import inspect
+
+    from newsbot import ui_dispatch
+    src = inspect.getsource(ui_dispatch)
+    assert "qa_enabled" in src, "کال‌بکِ a:tog:<cid>:qa_enabled باید به پنلِ کانال برگردد"

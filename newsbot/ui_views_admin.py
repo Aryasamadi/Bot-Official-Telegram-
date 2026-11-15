@@ -86,6 +86,7 @@ async def view_channel(update, context, cid):
           [B(tr(lang, "sched"), f"a:sch:{cid}"), B(tr(lang, "content"), f"a:con:{cid}")],
           [B(tr(lang, "rejected"), f"a:rej:{cid}"), B(tr(lang, "automation", i="🟢" if on else "🔴"), f"a:tog:{cid}:enabled")],
           [B(tr(lang, "my_ai"), f"a:myai:{cid}"), B(tr(lang, "ch_del"), f"a:chdel:{cid}")],
+          [B(tr(lang, "qa_btn", i="🟢" if s.get("qa_enabled") else "🔴"), f"a:tog:{cid}:qa_enabled")],
           [B(tr(lang, "back"), "a:home")]]
     # NEW v4: اگر کانال اجباری تنظیم شده و این ادمین عضو نیست، هشدار + دکمه‌های Join/Check بالای پنل
     if mandatory_configured(lang):

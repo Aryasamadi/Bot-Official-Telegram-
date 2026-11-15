@@ -223,6 +223,14 @@ MAX_PPC = 5
 # ۰ = سخت‌گیریِ کامل: هر اختلافی تأیید را متوقف می‌کند.
 PAY_QUOTE_TOLERANCE_PCT = _env_float("PAY_QUOTE_TOLERANCE_PCT", 0.0, 0.0, 100.0)
 AI_CONCURRENCY = _env_int("AI_CONCURRENCY", 3)
+
+# ── فاز ۴: پرسش‌وپاسخِ گروهِ بحث ──
+# QA_ENABLED فقط kill-switchِ سراسریِ نصب است؛ کلیدِ اصلی per-channel در پنلِ مدیر است.
+QA_ENABLED = os.getenv("QA_ENABLED", "1").strip() == "1"
+QA_CONTEXT_MAX_CHARS = _env_int("QA_CONTEXT_MAX_CHARS", 4000, 200, 20000)
+QA_QUESTION_MAX_CHARS = _env_int("QA_QUESTION_MAX_CHARS", 1000, 50, 5000)
+QA_ANSWER_MAX_CHARS = _env_int("QA_ANSWER_MAX_CHARS", 900, 100, 4000)
+QA_LINK_CACHE_MIN = _env_int("QA_LINK_CACHE_MIN", 360, 5, 10080)
 FETCH_CONCURRENCY = _env_int("FETCH_CONCURRENCY", 8)
 CYCLE_CONCURRENCY = _env_int("CYCLE_CONCURRENCY", 2)
 MAX_CYCLES_PER_TICK = _env_int("MAX_CYCLES_PER_TICK", 4)

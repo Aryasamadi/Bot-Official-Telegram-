@@ -828,6 +828,11 @@ async def ai_chat(system, user, on_queue=None, owner_id=None, selected_id=None, 
 async def test_model(mid):
     m = get_model(mid); t = time.monotonic()
     if not m: return False, "no model", 0.0
+    # فاز ۴ (تصمیمِ مالک ۶): تستِ مدلِ شخصی هم یک درخواستِ AI است ⇒ از سهمیهٔ پلنِ همان کاربر
+    owner = m["owner_id"]
+    if owner is not None:
+        from newsbot import ai_quota
+        if not ai_quota.plan_claim(int(owner)): return False, "ai_limit", 0.0
     out, label, err = await _try_models([("direct", [m])], "You are a health-check. Reply with exactly one word.",
                                         "Say: READY", validate=_validate_ready, explicit_id=mid)
     return out is not None, out[:100] if out else err, round(time.monotonic() - t, 1)

@@ -109,15 +109,37 @@ def ai_used_today(uid):
     except (IndexError, KeyError, TypeError): return 0
 
 def ai_claim(uid):
-    """ادعای اتمیک یک واحد از سقف روزانهٔ AI (BIZ-01). False ⇒ سقف تمام شده است.
-    مثل reserve_publication با یک UPDATE شرطی CAS درون تراکنش؛ دو فراخوانی هم‌زمان هرگز از دروازه رد نمی‌شوند."""
+    """ادعای اتمیک یک واحد از سقف روزانهٔ AI (BIZ-01) **و** سهمیهٔ پلن (فاز ۴).
+
+    False ⇒ سقف تمام شده است. مثل reserve_publication با UPDATE/INSERT شرطی CAS درونِ
+    یک تراکنش؛ دو فراخوانی هم‌زمان هرگز از دروازه رد نمی‌شوند. سهمیهٔ پلن سراسری است
+    (تولیدِ مقاله، تستِ مدل و Q&A) و در همان تراکنش با سقفِ روزانه مصرف می‌شود تا
+    یکی بدون دیگری ثبت نشود."""
+    from newsbot import ai_quota            # lazy: جلوگیری از حلقهٔ import با core_users
     cap = ai_cap_for(uid)
-    if cap is None: return True
+    grant = ai_quota.plan_grant(uid)
+    if cap is None and not grant:
+        return True
     day = today_str(admin_offset(uid))
+
+    class _PlanQuotaExhausted(Exception):
+        """فقط برای برگرداندنِ تراکنش؛ به بیرون نمی‌رود."""
+
     def _go(conn):
-        cur = conn.execute("INSERT INTO usage(admin_id,day,posts,tests,ai) VALUES(?,?,0,0,1) ON CONFLICT(admin_id,day) DO UPDATE SET ai=ai+1 WHERE ai < ?", (uid, day, cap))
-        return cur.rowcount > 0
-    return bool(_trx(_go))
+        if cap is not None:
+            cur = conn.execute("INSERT INTO usage(admin_id,day,posts,tests,ai) VALUES(?,?,0,0,1) ON CONFLICT(admin_id,day) DO UPDATE SET ai=ai+1 WHERE ai < ?", (uid, day, cap))
+            if cur.rowcount <= 0:
+                return False
+        if grant is not None:
+            cur = conn.execute("UPDATE ai_plan_grants SET used=used+1 WHERE id=? AND used<quota", (grant["id"],))
+            if cur.rowcount <= 0:
+                raise _PlanQuotaExhausted
+        return True
+
+    try:
+        return bool(_trx(_go))
+    except _PlanQuotaExhausted:
+        return False
 
 def carry_usage_day(uid, old_day, new_day):
     """PIPE-018: انتقال همهٔ شمارنده‌های سهمیهٔ روزانه (posts/tests/ai) هنگام جابه‌جایی مرز روز

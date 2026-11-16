@@ -11,6 +11,7 @@ from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc, parse_dt, fmt_date, ago_text
 from newsbot.core_users import list_users, get_user, admin_limits, admin_offset, usage_today, is_super, user_lang
 from newsbot.core_plans import get_plan, plan_txt, list_plans, plan_num, fmt_amt
+from newsbot.ai_quota import units_text
 from newsbot.core_discounts import disc_list, disc_get, disc_valid
 from newsbot.core_channels import list_channels, mandatory_cfg
 from newsbot.core_sources import count_sources
@@ -395,7 +396,7 @@ async def view_s_plan(update, context, pid):
     n = (await arun(q, "SELECT COUNT(*) c FROM users WHERE plan_id=?", (pid,), one=True))["c"]
     pn = f"{fmt_amt(plan_num(p, 'en'), 'en')} · {fmt_amt(plan_num(p, 'fa'), 'fa')}" if (plan_num(p, "en") or plan_num(p, "fa")) else "—"
     try:
-        text = tr(lang, "s_plan_view", name=esc(p["name"]), name_en=esc(p["name_en"] or "—"), free="🎁" if p["is_free"] else "", st="🟢" if p["active"] else "🔴", desc=esc((p["description_en"] or "") if lang == "en" else (p["description"] or "")), days=p["days"], posts=p["daily_posts"], tests=p["daily_tests"], src=p["max_sources"], ch=p["max_channels"], price=esc(p["price"]), price_en=esc(p["price_en"] or "—"), price_num=pn, n=n)
+        text = tr(lang, "s_plan_view", name=esc(p["name"]), name_en=esc(p["name_en"] or "—"), free="🎁" if p["is_free"] else "", st="🟢" if p["active"] else "🔴", desc=esc((p["description_en"] or "") if lang == "en" else (p["description"] or "")), days=p["days"], posts=p["daily_posts"], tests=p["daily_tests"], src=p["max_sources"], ch=p["max_channels"], ai=units_text(p["ai_quota"], lang), price=esc(p["price"]), price_en=esc(p["price_en"] or "—"), price_num=pn, n=n)
     except Exception:
         text = tr(lang, "s_plans_title") + "\n" + esc(str(dict(p)))
     kb = pairs([B(f"✏️ {f[2] if lang == 'en' else f[1]}", f"s:plan_e:{pid}:{f[0]}") for f in PLAN_FIELDS]) + [[B(tr(lang, "toggle"), f"s:plan_t:{pid}"), B(tr(lang, "s_plan_free_set"), f"s:plan_free:{pid}")], [B(tr(lang, "s_plan_del"), f"s:plan_d:{pid}")], [B(tr(lang, "back"), "s:plans")]]

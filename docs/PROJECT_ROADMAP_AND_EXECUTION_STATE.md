@@ -12,38 +12,38 @@
 |---|---|
 | **Repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Default branch** | `main` |
-| **Current working branch** | `phase4/quota` (from `main` @ `f850d44`) |
-| **Branch base commit** | `f850d44830b49d0fed8a53c78cf633714012d815` (Phase 4 · PR #83 merged) |
-| **Last verified commit** | `f850d44` on `main` (PR #83 squash-merge, 2026-11-16) |
+| **Current working branch** | **docs/phase4-design** (from `main` @ `0985e3e`) |
+| **Branch base commit** | `0985e3ebd4839df3110896c085bd4f8cf652d7ce` (Phase 4 · PR #84 merged) |
+| **Last verified commit** | `0985e3e` on `main` (PR #84 squash-merge, 2026-11-16) |
 | **Last state update** | 2026-11-16 (UTC) |
-| **Overall status** | `IN_PROGRESS` — **Phases 1–3 are COMPLETE**; Phase 4 is one PR from closing (#82, the docs PR, merges last) |
-| **Current phase** | Phase 4 of 10 — `IN_PROGRESS` (#83 and #84 merged; #82 design + plan merges last) |
-| **Current sub-step** | Phase 4 close-out: merge #82 (design + plan) and flip the phase to `COMPLETED` |
+| **Overall status** | `IN_PROGRESS` — **Phases 1–4 are COMPLETE**; Phase 5 waits for the owner's explicit instruction |
+| **Current phase** | Phase 5 of 10 — `NOT_STARTED` (Phases 1–4 are `COMPLETED`; Phase 5 starts only on the owner's explicit instruction) |
+| **Current sub-step** | — (Phase 4 closed with this PR #82; nothing else starts without a new owner instruction) |
 | **Owner authorization** | Required for every phase. Phase 1 authorized 2026-11-12. The owner ruled on 2026-11-12: every PR of a phase must be **merged** when that phase completes, and each existing PR (#46–#56) gets its disposition **inside its own phase**. |
 
 ---
 
 ## 1. Immediate state (read this before anything else)
 
-**Where we are:** Phase 4 is **one PR from closing**. The group Q&A core is **#83** (`f850d44`):
-schema v12, `newsbot/qa.py`, the fail-closed/at-most-once handler, the per-channel admin toggle. The
-plan-level AI quota is **#84** (this PR). The design + plan document is **#82** and merges **last**,
-because it cites `newsbot/ai_quota.py` and `tests/test_phase4_plan_ai_quota.py` and the repo-integrity
-guard (§5) refuses a cited path that does not exist yet — and, symmetrically, this file must not cite
-the two Phase 4 documents until they exist, so their paths are added in #82's close-out.
+**Where we are:** Phase 4 is **COMPLETE** — every PR it owns is merged. The group Q&A core is **#83**
+(`f850d44`): schema v12, `newsbot/qa.py`, the fail-closed/at-most-once handler, the per-channel admin
+toggle. The plan-level AI quota is **#84** (`0985e3e`): `newsbot/ai_quota.py`, atomic global
+consumption, quota shown before purchase and in the user panel. This PR — **#82** — carries the design
+and the implementation plan and merges **last**, because it cites `newsbot/ai_quota.py` and
+`tests/test_phase4_plan_ai_quota.py` and the repo-integrity guard (§5) refuses a cited path that does
+not exist yet.
 Before Phase 4, Phase 3 (round-robin rotation) was completed the same way: one phase per explicit owner
 instruction, each rebased onto the then-current `main`, squashed, with the review gate lifted and restored.
 **Done so far:** Phase 0 audit; this file; README/docs aligned; P1-1 regression guards; the disposition of
-every existing PR (#46–#56) in §4.1; Phases 1–3 complete; the full suite run on each `main`.
-**Remaining in Phase 4:** only the merge of **#82**. One operational prerequisite is still the owner's:
-**B-4** (the bot must be in the channel's discussion group for a real end-to-end test; the code is
-fail-closed until then). Two operational notes. First, **#55 was closed by GitHub**, not by a decision:
-merging #54 with `--delete-branch` removed #55's base branch, and a PR whose base disappears is closed;
-it could not be reopened, so its content was rebased onto `main` and re-opened as **#64**. Second, `#64`
-also enabled Dependabot, which opened **#68–#78** (dependency bumps, several major). Those are recorded
-as **D-4**.
-**Exact next action:** merge #82 (design + plan) and flip Phase 4 to `COMPLETED`; Phase 5 then waits for
-the owner's explicit instruction.
+every existing PR (#46–#56) in §4.1; Phases 1–4 complete; the full suite run on each `main`.
+**Remaining in Phase 4:** nothing. One operational prerequisite is still the owner's: **B-4** (the bot
+must be in the channel's discussion group for a real end-to-end test; the code is fail-closed until then).
+Two operational notes. First, **#55 was closed by GitHub**, not by a decision: merging #54 with
+`--delete-branch` removed #55's base branch, and a PR whose base disappears is closed; it could not be
+reopened, so its content was rebased onto `main` and re-opened as **#64**. Second, `#64` also enabled
+Dependabot, which opened **#68–#78** (dependency bumps, several major). Those are recorded as **D-4**.
+**Exact next action:** none until the owner says which phase to start next (Phase 5 is next in the
+roadmap and needs that instruction).
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -57,7 +57,7 @@ the owner's explicit instruction.
 | 1 | Truth, state file, PR-chain unblock | Make the repo's recorded state match GitHub; create this file; unblock the stacked PR chain; align README/docs | **`COMPLETED`** 2026-11-13 | — |
 | 2 | Provider-centric model data + backend | Independent Providers (name / base URL / token), connection test, model discovery with manual fallback, encrypted keys | **`COMPLETED`** 2026-11-13 | 1 |
 | 3 | Round-robin model rotation engine | Every request takes the next model in order; atomic cursor; restart/concurrency safe; per-request audit | **`COMPLETED`** 2026-11-14 | 2 |
-| 4 | Reply-to-channel-post Q&A core | Answer questions replied to a channel post, with controlled post context and idempotent delivery | **`IN_PROGRESS`** — #83 merged (`f850d44`); #84 and #82 pending | 2, 3 |
+| 4 | Reply-to-channel-post Q&A core | Answer questions replied to a channel post, with controlled post context and idempotent delivery | **`COMPLETED`** 2026-11-16 | 2, 3 |
 | 5 | Q&A quotas | Per-post/day, cooldown, per-user daily cap — enforced atomically in the backend | `NOT_STARTED` | 4 |
 | 6 | Typing lifecycle | Show `typing` while waiting; always stop it; no orphan tasks | `NOT_STARTED` | 4 |
 | 7 | Onboarding, home menu, message routing | Language → welcome → "start" → add channel; free plan without an extra button; stable state | `NOT_STARTED` | 1 (4 for reply routing) |
@@ -70,7 +70,7 @@ the owner's explicit instruction.
 **Completed phases:** **Phase 1 — `COMPLETED` 2026-11-13** (P1-1: #56 `e3e321e`, #57 `533f753`; P1-2: #46→#50, oldest-first; closed by #58 `0f4b90a`).
 **Phase 2 — `COMPLETED` 2026-11-13** (P2-1: #51 `16a7353`, #52 `886e19d`, #53 `bf34390`; P2-2: #60 `bf73b39`).
 **Phase 3 — `COMPLETED` 2026-11-14** (P3-2: #62 `51bb8d2` — rotation engine + `/rotation`; P3-1: #54 `7f48ec4` — OBS-001/003/008/010/014, DB-007; review fixes #66 `3f78e51`; repo hygiene #64 `fa7f25f`, which replaced #55 after GitHub auto-closed it). **Every Phase 3 PR is merged.**
-**Phase 4 — `IN_PROGRESS`** (P4-1: #83 `f850d44` — schema v12, `newsbot/qa.py`, group handler, per-channel admin toggle; P4-2: #84 — plan-level AI quota + quota UI; P4-0: #82 — design + implementation plan, merged last because it cites the Phase 4 files). **#83 and #84 merged; #82 still open ⇒ the phase is not `COMPLETED` yet (§9 rule 10).**
+**Phase 4 — `COMPLETED` 2026-11-16** (P4-1: #83 `f850d44` — schema v12, `newsbot/qa.py`, group handler, per-channel admin toggle; P4-2: #84 `0985e3e` — plan-level AI quota + quota UI; P4-0: #82 — design + implementation plan, merged last because it cites the Phase 4 files). **Every Phase 4 PR is merged.**
 
 **PRs owned by each phase** (a phase is not `COMPLETED` while one of its own PRs is open — §9 rule 10):
 
@@ -79,7 +79,7 @@ the owner's explicit instruction.
 | 1 | #46, #47, #48, #49, #50, #56, #57 | **all merged** — Phase 1 `COMPLETED` 2026-11-13 |
 | 2 | #51, #52, #53, #60 | **all merged** — Phase 2 `COMPLETED` 2026-11-13 |
 | 3 | #54, #62, #66, #64 all merged | Phase 3 **`COMPLETED`** 2026-11-14 |
-| 4 | #83, #84, #82 | Phase 4 — #83 **merged** (`f850d44`); #84 and #82 **open** ⇒ `IN_PROGRESS` |
+| 4 | #83, #84, #82 all merged | Phase 4 **`COMPLETED`** 2026-11-16 |
 
 ---
 
@@ -232,9 +232,11 @@ cached connection follows a changed `DB_FILE` (verified red before the fix).
 ## 4.4 Phase 4 — scope, decisions and acceptance criteria
 
 **Goal (from §2):** answer a question posted as a reply to a channel post, using a controlled slice of
-the post as context, with idempotent delivery. Design of record: the Phase 4 design spec and the
-7-task implementation plan, delivered by **PR #82** (merged last — see §1 for why their path
-references are re-added only in that PR, where the files exist).
+the post as context, with idempotent delivery. Design of record:
+`docs/superpowers/specs/2026-11-16-phase4-reply-qa-design.md`; plan:
+`docs/superpowers/plans/2026-11-16-phase4-reply-qa-and-plan-ai-quota.md` (both land in this PR, #82 —
+the last Phase 4 PR, because they cite the Phase 4 code and the repo-integrity guard refuses a cited
+path that does not exist yet).
 
 **The owner's six binding decisions** (they supersede the earlier plan defaults):
 
@@ -255,6 +257,11 @@ references are re-added only in that PR, where the files exist).
 - the model is instructed to answer **only** from the post and to say honestly when the answer is not
   there; a media-only post, an empty question and an AI failure each get a fixed honest message and
   never an invented answer;
+- **error mapping (corrected at implementation time):** only `ai_limit` means "your quota is finished"
+  (`NO_QUOTA`); **every other** AI error (`ai_budget`, `ai_busy`, `ai_none`, anything else) means
+  `AI_FAIL`. The first draft of the plan mapped the busy/none errors to the quota message too; that
+  would have blamed the user's quota for a provider-side failure, so the code follows the corrected
+  rule, the plan records the correction, and `tests/test_phase4_qa_core.py` asserts it;
 - the group→channel mapping is cached for `QA_LINK_CACHE_MIN` (360) in `settings` under `qa:linked:<id>`;
 - no question text and no answer text is logged — log lines carry ids and lengths only.
 
@@ -262,9 +269,9 @@ references are re-added only in that PR, where the files exist).
 `SCHEMA_VERSION = 12`, D1 `TABLES`), `newsbot/qa.py` (pure helpers + claim + link validation + handler),
 the `ChatType.GROUPS & REPLY & ~COMMAND` registration in `app.py`, the per-channel toggle, and the four
 schema-version guards bumped 11 → 12.
-**Task P4-2 (#84)** — `newsbot/ai_quota.py`, the atomic plan-grant consumption inside `ai_claim`,
+**Task P4-2 (#84, `0985e3e`)** — `newsbot/ai_quota.py`, the atomic plan-grant consumption inside `ai_claim`,
 `test_model` charged to the plan, `create_plan(ai_quota=…)`, `PLAN_FIELDS`, and the quota lines.
-**Task P4-0 (#82)** — design + plan, merged last (see §1).
+**Task P4-0 (#82)** — design + plan + this close-out record, merged last (see §1).
 
 **Tests:** `tests/test_phase4_schema.py` (7) — v12 tables/columns/PK/unique index, D1 coverage;
 `tests/test_phase4_qa_core.py` (31) — detection, capping, prompt content, fail-closed silence for a
@@ -410,6 +417,12 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-16 | `phase4/quota` | full `pytest -q` (local, Windows) | **984 passed, 19 failed in 582.87s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
 | 2026-11-16 | `phase4/quota` | `ruff check newsbot tests tools run.py` · `python -m pyflakes newsbot tests` · `python tools/final_verification.py` | All checks passed · clean · **17/17** |
 | 2026-11-16 | `phase4/quota` (first full run, before the §5/§7 edits) | full `pytest -q` | 21 failed, 982 passed — the 2 extra failures were **this file's own two guards**: the "Current phase" field still said Phase 4 while the table said `COMPLETED` (fixed → Phase 4 `IN_PROGRESS`), and the file cited the two Phase 4 documents that do not exist on this branch (paths moved to #82's close-out). Both fixed and re-run green (9 passed) |
+| 2026-11-16 | `phase4/quota` | GitHub CI `test` on PR #84 | **SUCCESS** (2m42s) |
+| 2026-11-16 | `main` @ `0985e3e` (PR #84) | `gh pr merge 84 --squash` → **MERGED**; protection compared field by field | merge SHA `0985e3ebd4839df3110896c085bd4f8cf652d7ce` (2026-11-16T20:26:47Z) · **all 15 fields identical to both backups** · CI `test: SUCCESS` |
+| 2026-11-16 | **docs/phase4-design** (rebased onto `0985e3e`) | `pytest tests/test_repo_integrity.py tests/test_phase1_10_state_alignment.py` | **9 passed** — the repo-integrity guard is green now that #84's code exists, so the design/plan may cite the Phase 4 files |
+| 2026-11-16 | **docs/phase4-design** (rebased onto `0985e3e`) | `pytest --collect-only -q` | **1003 collected** |
+| 2026-11-16 | **docs/phase4-design** (first full run, before the §5/§7 edits) | full `pytest -q` | 20 failed, 983 passed — one extra failure: the repo-integrity guard read the **branch name** **docs/phase4-design** (written in backticks) as a repository path. Fixed by writing the branch name in bold; the guard and the state-alignment test then passed (9 passed) |
+| 2026-11-16 | **docs/phase4-design** (rebased onto `0985e3e`, final tree) | full `pytest -q` (local, Windows) | **984 passed, 19 failed in 569.39s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
 
 **Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
 deployment verification, real Telegram integration, Cloudflare D1 live migration.
@@ -455,7 +468,8 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 2 result | **COMPLETE** — every Phase 2 PR (#51, #52, #53, #60) is merged; §4.2 is satisfied |
 | Phase 3 commits on `main` | `7f48ec4` (#54 observability + DB-007) · `51bb8d2` (#62 rotation engine) · `3f78e51` (#66 review fixes) · `fa7f25f` (#64 repo hygiene + `LICENSE`) |
 | Phase 3 result | **COMPLETE** — every Phase 3 PR (#54, #62, #66, #64) is merged; §4.3 is satisfied. #55 → **#64** (auto-close recovery recorded in §1 and §4.1). #68–#75 (Dependabot) are recorded as D-4 |
-| Phase 4 delivery | #83 **MERGED** as `f850d44830b49d0fed8a53c78cf633714012d815` (2026-11-16) · CI `test: SUCCESS` · review gate lifted for the merge only and restored with all 15 fields verified identical · #84 (plan-level AI quota) and #82 (design + plan, merged last) are still open |
+| Phase 4 delivery | #83 **MERGED** as `f850d44830b49d0fed8a53c78cf633714012d815` (2026-11-16) · CI `test: SUCCESS` · #84 **MERGED** as `0985e3ebd4839df3110896c085bd4f8cf652d7ce` (2026-11-16) · CI `test: SUCCESS` · #82 (design + plan + this close-out) merged last — its squash-merge SHA is the `main` head right after the merge. The review gate was lifted for each merge only and restored with **all 15 fields verified identical** every time |
+| Phase 4 result | **COMPLETE** — every Phase 4 PR (#83, #84, #82) is merged; §4.4 is satisfied |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)

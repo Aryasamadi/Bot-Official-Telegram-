@@ -227,6 +227,10 @@ async def _dispatch(update, context, data):
             new = not s.get(d)
             if d == "enabled" and new and await mand_gate(update, context, uid, lang): return   # NEW v4: روشن‌کردن اتوماسیون بدون عضویت تأییدشده ممکن نیست
             update_settings(cid, **{d: new})
+            if d == "qa_enabled":
+                # فاز ۴ (تصمیمِ مالک ۴): کلیدِ Q&A همیشه از پنل در دسترس است و به همان پنل برمی‌گردد
+                await popup(update, context, f"{tr(lang, 'tog_qa_enabled')}: {onoff(new)}\n{tr(lang, 'togd_qa_enabled')}")
+                return await view_channel(update, context, cid)
             if d == "enabled": await popup(update, context, tr(lang, "tog_enabled" if new else "tog_disabled")); return await view_channel(update, context, cid)
             else: await popup(update, context, f"{tr(lang, 'tog_' + d)}: {onoff(new)}\n{tr(lang, 'togd_' + d)}")
             return await (view_sched if d == "allow_undated" else view_content)(update, context, cid)

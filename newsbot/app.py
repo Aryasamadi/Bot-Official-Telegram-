@@ -25,6 +25,7 @@ from newsbot.ui_widgets import notify_supers, notify_user_fn, set_bot
 from newsbot.ui_commands import (managed_command, cmd_start, cmd_create, cmd_admin, cmd_man,
                                  cmd_help, cmd_about, cmd_lang, cmd_cancel, cmd_ref, cmd_unknown)
 from newsbot.ui_support import on_message
+from newsbot.qa import on_group_reply
 from newsbot.ui_dispatch import on_callback
 from newsbot.ui_views_super import cmd_health, cmd_providers, cmd_rotation
 
@@ -271,6 +272,8 @@ def main():
     APP = _bld.post_init(post_init).post_shutdown(post_shutdown).concurrent_updates(True).build()
     for cmd, fn in (("start", cmd_start), ("create", cmd_create), ("admin", cmd_admin), ("man", cmd_man), ("help", cmd_help), ("about", cmd_about), ("lang", cmd_lang), ("ref", cmd_ref), ("cancel", cmd_cancel), ("health", cmd_health), ("providers", cmd_providers), ("rotation", cmd_rotation)): APP.add_handler(CommandHandler(cmd, managed_command(fn)))
     APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.COMMAND, managed_command(cmd_unknown)))
+    # فاز ۴: سؤالِ replyشده به پستِ کانال در گروهِ بحث. گروهِ بی‌ربط در خودِ هندلر ساکت می‌شود.
+    APP.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.REPLY & ~filters.COMMAND, on_group_reply))
     APP.add_handler(CallbackQueryHandler(on_callback)); APP.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, on_message)); APP.add_error_handler(on_error)
     # drop_pending_updates=False: پیام‌هایی که کاربر در زمان خاموشی فرستاده از دست نمی‌روند؛ کهنه‌ها با stale() رد می‌شوند.
     log.info("در حال اجرا…"); APP.run_polling(drop_pending_updates=False, allowed_updates=["message", "callback_query"],

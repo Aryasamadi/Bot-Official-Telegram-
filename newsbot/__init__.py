@@ -9,4 +9,5 @@ __version__ = "4.0.0"
 # v8 (فاز PH-01): کیف پولِ واحد‌دار — جدول wallet + واحد روی credit_log/referrals/pay_requests
 # v10 (فاز ۲): رجیستریِ فراهم‌کننده — جدول ai_providers + ستونِ افزایشیِ ai_models.provider_id
 # v11 (فاز ۳): چرخشِ round-robin — ai_rotation (مکان‌نما + version برای CAS) و ai_rotation_log
-SCHEMA_VERSION = 11
+# v12 (فاز ۴): Q&A گروهی — qa_answers (at-most-once) و سهمیهٔ AI پلن‌ها — ai_plan_grants + plans.ai_quota
+SCHEMA_VERSION = 12

@@ -42,8 +42,8 @@ def plan_txt(p, field, lang="fa"):
     return p[field] or ""
 
 def create_plan(**f):
-    return q("INSERT INTO plans(name,name_en,days,daily_posts,max_sources,max_channels,daily_tests,price,price_en,description,description_en,is_free,sort,price_num,price_num_fa) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-             (f.get("name", "پلن"), f.get("name_en", ""), f.get("days", 30), f.get("daily_posts", 5), f.get("max_sources", 5), f.get("max_channels", 1), f.get("daily_tests", 2), f.get("price", ""), f.get("price_en", ""), f.get("description", ""), f.get("description_en", ""), f.get("is_free", 0), f.get("sort", 0), f.get("price_num", 0) or 0, f.get("price_num_fa", 0) or 0), commit=True)
+    return q("INSERT INTO plans(name,name_en,days,daily_posts,max_sources,max_channels,daily_tests,price,price_en,description,description_en,is_free,sort,price_num,price_num_fa,ai_quota) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             (f.get("name", "پلن"), f.get("name_en", ""), f.get("days", 30), f.get("daily_posts", 5), f.get("max_sources", 5), f.get("max_channels", 1), f.get("daily_tests", 2), f.get("price", ""), f.get("price_en", ""), f.get("description", ""), f.get("description_en", ""), f.get("is_free", 0), f.get("sort", 0), f.get("price_num", 0) or 0, f.get("price_num_fa", 0) or 0, int(f.get("ai_quota", 0) or 0)), commit=True)
 
 def update_plan(pid, **f):
     for k, v in _safe_fields("plans", f).items(): q(f"UPDATE plans SET {k}=? WHERE id=?", (v, pid), commit=True)

@@ -11,6 +11,7 @@ from newsbot.ratelimit import rate_ok, rate_left
 from newsbot.core_users import admin_limits, admin_offset, get_user, is_super, set_lang
 from newsbot.core_channels import relocalize_all, mandatory_configured, mandatory_membership
 from newsbot.core_plans import get_plan, plan_txt, list_plans, assign_plan, upgrade_quote, plan_num, fmt_amt
+from newsbot.ai_quota import quota_lines, units_text
 from newsbot.core_discounts import disc_valid, discount_price
 from newsbot.core_payments import pay_pending_for
 from newsbot.core_referrals import referral_link, referral_cfg
@@ -129,7 +130,10 @@ async def view_plan(update, context, pid):
     # «دریافت‌شدنی» یکی باشند (FIN-004) و واحدِ پول هم همراهش باشد (Q-1c).
     qt = upgrade_quote(uid, p, cur_plan, d["percent"] if d else None, lang=lang)
     price_line = fmt_amt(qt["payable"], lang) if qt["payable_num"] else new_price
-    text = f"{'🎁' if p['is_free'] else '⭐'} <b>{esc(plan_txt(p, 'name', lang))}</b>\n{esc(plan_txt(p, 'description', lang))}\n\n" + tr(lang, "plan_details", days=p["days"], posts=p["daily_posts"], src=p["max_sources"], ch=p["max_channels"], tests=p["daily_tests"], price=esc(price_line))
+    text = f"{'🎁' if p['is_free'] else '⭐'} <b>{esc(plan_txt(p, 'name', lang))}</b>\n{esc(plan_txt(p, 'description', lang))}\n\n" + tr(lang, "plan_details", days=p["days"], posts=p["daily_posts"], src=p["max_sources"], ch=p["max_channels"], tests=p["daily_tests"], ai=units_text(p["ai_quota"], lang), price=esc(price_line))
+    # فاز ۴ (تصمیمِ مالک ۶): وضعیتِ زندهٔ سهمیه پیش از خرید دیده می‌شود (کل/مصرف/مانده)
+    if lim["active"] and lim["plan_id"]:
+        text += "\n" + quota_lines(uid, lang)
     if qt["payable_num"] and d: text += "\n" + tr(lang, "plan_disc_line", old=esc(old_price), new=esc(price_line), code=esc(d["code"]), p=d["percent"])
     kb = []; can_buy = True
     if p["is_free"]: kb.append([B(tr(lang, "plan_free_used"), f"u:freeused:{pid}") if u and u["free_used"] else B(tr(lang, "plan_free_btn"), f"u:free:{pid}")])

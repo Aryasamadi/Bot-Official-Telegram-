@@ -144,7 +144,7 @@ def _input_value(field, raw, lang, name_limit=100):
         if not 1 <= value <= config.MAX_DAILY_POSTS_CAP: invalid(f"بین ۱ تا {config.MAX_DAILY_POSTS_CAP} انتخاب کنید.", f"Between 1 and {config.MAX_DAILY_POSTS_CAP}")
         # سقف واقعیِ «پلن» در handle_input بررسی می‌شود؛ آن‌جا context و uid در دسترس است
         return value
-    if field in INT_FIELDS or field in ("days", "daily_posts", "max_sources", "max_channels", "daily_tests", "max_tokens", "max_uses", "priority", "weight", "percent", "price_num", "price_num_fa"):
+    if field in INT_FIELDS or field in ("days", "daily_posts", "max_sources", "max_channels", "daily_tests", "ai_quota", "max_tokens", "max_uses", "priority", "weight", "percent", "price_num", "price_num_fa"):
         if field in ("price_num", "price_num_fa"):
             if text == "": return 0.0
             try: value = float(text.translate(config._FA_DIGITS).replace(",", ""))

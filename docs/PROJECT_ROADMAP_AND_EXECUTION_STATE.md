@@ -12,9 +12,9 @@
 |---|---|
 | **Repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Default branch** | `main` |
-| **Current working branch** | **docs/phase4-design** (from `main` @ `0985e3e`) |
-| **Branch base commit** | `0985e3ebd4839df3110896c085bd4f8cf652d7ce` (Phase 4 · PR #84 merged) |
-| **Last verified commit** | `0985e3e` on `main` (PR #84 squash-merge, 2026-11-16) |
+| **Current working branch** | **docs/phase4-closeout-record** (records-only, from `main` @ `f4afa0e`) |
+| **Branch base commit** | `f4afa0ebcbc037446402fb3c51c1f04eeebf6eb2` (Phase 4 · PR #82 merged) |
+| **Last verified commit** | `f4afa0e` on `main` (PR #82 squash-merge, 2026-11-16) |
 | **Last state update** | 2026-11-16 (UTC) |
 | **Overall status** | `IN_PROGRESS` — **Phases 1–4 are COMPLETE**; Phase 5 waits for the owner's explicit instruction |
 | **Current phase** | Phase 5 of 10 — `NOT_STARTED` (Phases 1–4 are `COMPLETED`; Phase 5 starts only on the owner's explicit instruction) |
@@ -79,7 +79,7 @@ roadmap and needs that instruction).
 | 1 | #46, #47, #48, #49, #50, #56, #57 | **all merged** — Phase 1 `COMPLETED` 2026-11-13 |
 | 2 | #51, #52, #53, #60 | **all merged** — Phase 2 `COMPLETED` 2026-11-13 |
 | 3 | #54, #62, #66, #64 all merged | Phase 3 **`COMPLETED`** 2026-11-14 |
-| 4 | #83, #84, #82 all merged | Phase 4 **`COMPLETED`** 2026-11-16 |
+| 4 | #83, #84, #82 all merged | Phase 4 **`COMPLETED`** 2026-11-16 · the records-only follow-up PR (like #81 after Phase 3) is not a phase PR |
 
 ---
 
@@ -423,6 +423,10 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-16 | **docs/phase4-design** (rebased onto `0985e3e`) | `pytest --collect-only -q` | **1003 collected** |
 | 2026-11-16 | **docs/phase4-design** (first full run, before the §5/§7 edits) | full `pytest -q` | 20 failed, 983 passed — one extra failure: the repo-integrity guard read the **branch name** **docs/phase4-design** (written in backticks) as a repository path. Fixed by writing the branch name in bold; the guard and the state-alignment test then passed (9 passed) |
 | 2026-11-16 | **docs/phase4-design** (rebased onto `0985e3e`, final tree) | full `pytest -q` (local, Windows) | **984 passed, 19 failed in 569.39s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
+| 2026-11-16 | `main` @ `f4afa0e` (PR #82) | GitHub CI `test` on PR #82 | **SUCCESS** (2m57s) |
+| 2026-11-16 | `main` @ `f4afa0e` (PR #82) | `gh pr merge 82 --squash` → **MERGED**; protection compared field by field | merge SHA `f4afa0ebcbc037446402fb3c51c1f04eeebf6eb2` (2026-11-16T21:04:58Z) · **all 15 fields identical to both backups** · CI `test: SUCCESS` |
+| 2026-11-16 | `main` @ `f4afa0e` (final Phase 4 `main`) | full `pytest -q` (local, Windows) | **984 passed, 19 failed in 605.30s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
+| 2026-11-16 | `main` @ `f4afa0e` (final Phase 4 `main`) | `pytest --collect-only -q` · `ruff check newsbot tests tools run.py` · `python -m pyflakes newsbot tests` · `python tools/final_verification.py` | **1003 collected** · All checks passed · clean · **17/17** |
 
 **Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
 deployment verification, real Telegram integration, Cloudflare D1 live migration.
@@ -468,8 +472,8 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 2 result | **COMPLETE** — every Phase 2 PR (#51, #52, #53, #60) is merged; §4.2 is satisfied |
 | Phase 3 commits on `main` | `7f48ec4` (#54 observability + DB-007) · `51bb8d2` (#62 rotation engine) · `3f78e51` (#66 review fixes) · `fa7f25f` (#64 repo hygiene + `LICENSE`) |
 | Phase 3 result | **COMPLETE** — every Phase 3 PR (#54, #62, #66, #64) is merged; §4.3 is satisfied. #55 → **#64** (auto-close recovery recorded in §1 and §4.1). #68–#75 (Dependabot) are recorded as D-4 |
-| Phase 4 delivery | #83 **MERGED** as `f850d44830b49d0fed8a53c78cf633714012d815` (2026-11-16) · CI `test: SUCCESS` · #84 **MERGED** as `0985e3ebd4839df3110896c085bd4f8cf652d7ce` (2026-11-16) · CI `test: SUCCESS` · #82 (design + plan + this close-out) merged last — its squash-merge SHA is the `main` head right after the merge. The review gate was lifted for each merge only and restored with **all 15 fields verified identical** every time |
-| Phase 4 result | **COMPLETE** — every Phase 4 PR (#83, #84, #82) is merged; §4.4 is satisfied |
+| Phase 4 delivery | #83 **MERGED** as `f850d44830b49d0fed8a53c78cf633714012d815` (2026-11-16) · CI `test: SUCCESS` · #84 **MERGED** as `0985e3ebd4839df3110896c085bd4f8cf652d7ce` (2026-11-16) · CI `test: SUCCESS` · #82 **MERGED** as `f4afa0ebcbc037446402fb3c51c1f04eeebf6eb2` (2026-11-16, last Phase 4 PR — design + plan + close-out). The review gate was lifted for each merge only and restored with **all 15 fields verified identical** every time |
+| Phase 4 result | **COMPLETE** — every Phase 4 PR (#83, #84, #82) is merged; §4.4 is satisfied. The records-only follow-up PR (this one, the pattern of #81 after Phase 3) writes #82's exact SHA and the final-`main` evidence; it is **not** a Phase 4 phase PR, and after its squash-merge its SHA is the `main` head |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)

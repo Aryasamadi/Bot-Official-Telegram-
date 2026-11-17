@@ -7,6 +7,7 @@ workflow و رانبوک.
 """
 import json
 import os
+import re
 
 from tools import qa_live_acceptance as acc
 
@@ -445,3 +446,60 @@ def test_the_preconditions_error_stops_the_run(tmp_path):
         read_log=lambda p: "در حال اجرا…", clock=ft.clock, sleep=ft.sleep,
         resolve=lambda s: (-100111, -555), evaluate_fn=lambda ctx: err)
     assert code == 2 and ft.now == 10 and proc.terminated
+
+
+# ── Task 5: workflow دستی (qa-live) ────────────────────────────────────────────────
+def _wf():
+    return _src(".github/workflows/qa-live.yml")
+
+
+def test_the_workflow_is_manual_only():
+    src = _wf()
+    assert "workflow_dispatch:" in src
+    for forbidden in ("\n  push:", "\n  pull_request:", "\n  schedule:", "\n  workflow_run:"):
+        assert forbidden not in src
+
+
+def test_every_action_is_pinned_to_a_commit_sha():
+    for line in _wf().splitlines():
+        s = line.strip()
+        if s.startswith(("- uses:", "uses:")):
+            ref = s.split("uses:", 1)[1].strip().split()[0]
+            assert re.fullmatch(r"[\w.-]+(?:/[\w.-]+)+@[0-9a-f]{40}", ref), ref
+
+
+def test_the_workflow_has_the_required_settings():
+    src = _wf()
+    assert "permissions:\n  contents: read" in src
+    assert "timeout-minutes: 360" in src
+    assert 'default: "350"' in src
+    assert "qa-live-db-v1-${{ github.run_id }}" in src
+    assert "restore-keys: qa-live-db-v1-" in src
+    assert "actions/cache/restore@" in src and "actions/cache/save@" in src
+    assert "name: Save the test DB for the next run" in src
+    assert "retention-days: 14" in src
+    assert "if: always()" in src
+    assert "concurrency:" in src and "cancel-in-progress: false" in src
+
+
+def test_no_secret_is_used_inside_an_if_expression():
+    for line in _wf().splitlines():
+        if line.strip().startswith("if:"):
+            assert "secrets." not in line
+
+
+def test_the_run_step_receives_the_three_secrets():
+    src = _wf()
+    block = src.split("name: Run the live acceptance", 1)[1].split("name:", 1)[0]
+    for name in ("BOT_TOKEN", "SUPER_ADMIN_IDS", "SECRETS_KEY"):
+        assert "${{ secrets.%s }}" % name in block
+    assert "DB_FILE: ${{ runner.temp }}/qa-live/newsbot.db" in block
+    assert "--scenario \"${{ inputs.scenario }}\"" in block
+
+
+def test_the_database_is_never_uploaded_as_an_artifact():
+    src = _wf()
+    block = src.split("name: Upload the evidence", 1)[1].split(
+        "name: Save the test DB", 1)[0]
+    assert "newsbot.db" not in block
+    assert "report.json" in block and "bot.log" in block

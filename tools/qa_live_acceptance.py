@@ -13,15 +13,19 @@
 کدهای خروج: ۰ = همهٔ بررسی‌های لازم دیده شد · ۱ = وقت تمام شد · ۲ = پیش‌شرط شکست خورد.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 SCHEMA = 1
 POLL_SECONDS = 10
@@ -486,10 +490,239 @@ def evaluate(ctx):
     return out
 
 
+# ── سوپروایزرِ فرزند ──────────────────────────────────────────────────────────────
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+READY_MARKER = "در حال اجرا"
+READY_ATTEMPTS = 60
+READY_INTERVAL_S = 2
+
+
+class Precondition(Exception):
+    """پیش‌شرطی که اجرا را متوقف می‌کند؛ کد به گزارش می‌رود (خروجی ۲)."""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+@dataclass
+class SuperviseConfig:
+    db_path: str
+    log_path: str
+    duration_s: int
+    scenario: str = "core"
+    super_ids: set = field(default_factory=set)
+    secret_values: dict = field(default_factory=dict)
+    poll_s: int = POLL_SECONDS
+    env: dict = field(default_factory=dict)
+    report_path: str = ""
+
+
+def utc_now_iso():
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def blank_answers(db_path):
+    """متنِ پاسخ‌ها را پیش از کش‌شدنِ DB پاک می‌کند؛ ردیف و status دست‌نخورده می‌مانند."""
+    if not db_path or not os.path.isfile(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path, timeout=10)
+        try:
+            conn.execute("UPDATE qa_answers SET answer=''")
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        pass
+
+
+def write_report(path, report):
+    if not path:
+        return
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+
+
+class BotProcess:
+    """فرزندِ ربات + فایلِ لاگش؛ فایل تا پایانِ اجرا باز می‌ماند."""
+
+    def __init__(self, proc, fh):
+        self.proc, self.fh = proc, fh
+
+    def terminate(self):
+        self.proc.terminate()
+
+    def wait(self, timeout=None):
+        return self.proc.wait(timeout=timeout)
+
+    def kill(self):
+        self.proc.kill()
+
+    def poll(self):
+        return self.proc.poll()
+
+    def close(self):
+        try:
+            self.fh.close()
+        except OSError:
+            pass
+
+
+def spawn_bot(env, log_path):
+    parent = os.path.dirname(os.path.abspath(log_path))
+    os.makedirs(parent, exist_ok=True)
+    fh = open(log_path, "w", encoding="utf-8", errors="replace")
+    child_env = dict(os.environ)
+    child_env.update(dict(env or {}))
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["PYTHONUNBUFFERED"] = "1"
+    proc = subprocess.Popen([sys.executable, "run.py"], cwd=REPO_ROOT, env=child_env,
+                            stdout=fh, stderr=subprocess.STDOUT)
+    return BotProcess(proc, fh)
+
+
+def default_resolve(env, snapshot):
+    """کانالِ ثبت‌شده و گروهِ بحثِ لینک‌شده‌اش را از DB و یک getChatِ فقط-خواندنی می‌گیرد."""
+    rows = list(snapshot.channels)
+    if not rows:
+        raise Precondition("CHANNEL_NOT_REGISTERED")
+    chat_id = int(rows[-1].get("chat_id") or 0)
+    if not chat_id:
+        raise Precondition("CHANNEL_NOT_REGISTERED")
+    url = "%s/bot%s/getChat?chat_id=%d" % (api_base(env), (env.get("BOT_TOKEN") or "").strip(),
+                                           chat_id)
+    try:
+        data = http_get_json(url, timeout=10)
+    except Exception:                                        # noqa: BLE001
+        raise Precondition("GETCHAT_FAILED") from None
+    linked = (data.get("result") or {}).get("linked_chat_id")
+    if not linked:
+        raise Precondition("NO_LINKED_GROUP")
+    return chat_id, int(linked)
+
+
+def _stop(proc):
+    try:
+        proc.terminate()
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        proc.wait(timeout=STOP_GRACE_SECONDS)
+    except Exception:                                        # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:                                    # noqa: BLE001
+            pass
+    close = getattr(proc, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
+              clock=time.monotonic, sleep=time.sleep, resolve, now=utc_now_iso,
+              evaluate_fn=None):
+    """ربات را بالا می‌آورد، هر poll_s اسنپ‌شات می‌گیرد و در پایان گزارش می‌نویسد."""
+    eval_fn = evaluate_fn if evaluate_fn is not None else evaluate
+    started_at = now()
+    db_reused = bool(cfg.db_path and os.path.isfile(cfg.db_path))
+    problems, checks, proc, log_text = [], [], None, ""
+    code = 1
+    t0 = clock()
+
+    try:
+        if not (MIN_DURATION_MIN * 60 <= int(cfg.duration_s) <= MAX_DURATION_MIN * 60):
+            raise Precondition("BAD_DURATION")
+        proc = spawn()
+        ready = False
+        deadline = clock() + READY_ATTEMPTS * READY_INTERVAL_S
+        while clock() < deadline:
+            log_text = read_log(cfg.log_path)
+            if READY_MARKER in log_text:
+                ready = True
+                break
+            sleep(READY_INTERVAL_S)
+        if not ready:
+            raise Precondition("BOT_NOT_READY")
+        channel_chat_id, group_chat_id = resolve(snapshot(cfg.db_path))
+        prev = snapshot(cfg.db_path)
+        transitions = []
+        while True:
+            sleep(cfg.poll_s)
+            cur = snapshot(cfg.db_path)
+            transitions.extend(attribute(prev, cur))
+            prev = cur
+            log_text = read_log(cfg.log_path)
+            ctx = EvalContext(scenario=cfg.scenario, started_at=started_at,
+                              expected_group=group_chat_id, expected_channel=channel_chat_id,
+                              transitions=list(transitions), snapshot=cur, log_text=log_text,
+                              super_ids=set(cfg.super_ids or ()),
+                              secret_values=dict(cfg.secret_values or {}))
+            checks = eval_fn(ctx)
+            by_name = {c["name"]: c for c in checks}
+            pre = by_name.get("preconditions") or {}
+            if pre.get("status") == "ERROR":
+                problems.append("PRECONDITION:" + str(pre.get("detail") or ""))
+                code = 2
+                break
+            required = REQUIRED.get(cfg.scenario, REQUIRED["core"])
+            if all((by_name.get(n) or {}).get("status") == "OBSERVED" for n in required):
+                code = 0
+                break
+            if clock() - t0 >= cfg.duration_s:
+                code = 1
+                break
+    except Precondition as e:
+        problems.append(e.code)
+        code = 2
+    finally:
+        if proc is not None:
+            _stop(proc)
+        log_text = read_log(cfg.log_path) or log_text
+        blank_answers(cfg.db_path)
+
+    report = {
+        "schema": SCHEMA,
+        "started_at": started_at,
+        "duration_s": int(cfg.duration_s),
+        "scenario": cfg.scenario,
+        "db_reused": db_reused,
+        "checks": checks,
+        "exit_code": code,
+        "redactions": ["BOT_TOKEN", "SECRETS_KEY"],
+        "bot_log_lines": len((log_text or "").splitlines()),
+        "log_sha256": hashlib.sha256((log_text or "").encode("utf-8")).hexdigest(),
+        "problems": problems,
+    }
+    write_report(cfg.report_path, report)
+    return code, report
+
+
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="پذیرشِ زندهٔ Q&A فاز ۴")
     ap.add_argument("--check", action="store_true", help="فقط پیش‌شرط‌ها")
+    ap.add_argument("--supervise", action="store_true", help="اجرای کاملِ نظارت‌شده")
+    ap.add_argument("--duration", type=int, default=350, help="سقفِ مدت به دقیقه (۵ تا ۳۵۵)")
+    ap.add_argument("--scenario", choices=("core", "full"), default="core")
+    ap.add_argument("--report", default="", help="مسیرِ گزارشِ JSON")
+    ap.add_argument("--log", default="", help="مسیرِ لاگِ فرزند")
     ap.add_argument("--env-file", default=os.environ.get("NEWSBOT_ENV_FILE", ""),
                     help="مسیرِ فایل env (مقدارها هرگز چاپ نمی‌شوند)")
     args = ap.parse_args(argv)
@@ -499,8 +732,30 @@ def main(argv=None):
         code, out = run_check(env)
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return code
-    ap.error("یکی از --check یا --supervise لازم است")
-    return 2
+    if not args.supervise:
+        ap.error("یکی از --check یا --supervise لازم است")
+
+    env["DB_BACKEND"] = env.get("DB_BACKEND") or "sqlite"
+    env["QA_ENABLED"] = env.get("QA_ENABLED") or "1"
+    check_code, check_out = run_check(env)
+    if check_code != 0:
+        print(json.dumps(check_out, ensure_ascii=False, indent=2))
+        return check_code
+
+    db_path = (env.get("DB_FILE") or "").strip()
+    log_path = args.log or os.path.join(os.path.dirname(os.path.abspath(db_path)), "bot.log")
+    cfg = SuperviseConfig(db_path=db_path, log_path=log_path,
+                          duration_s=int(args.duration) * 60, scenario=args.scenario,
+                          super_ids=admin_ids(env.get("SUPER_ADMIN_IDS")),
+                          secret_values={"BOT_TOKEN": env.get("BOT_TOKEN") or "",
+                                         "SECRETS_KEY": env.get("SECRETS_KEY") or ""},
+                          env=env, report_path=args.report)
+    code, report = supervise(cfg, spawn=lambda: spawn_bot(env, log_path),
+                             resolve=lambda snap: default_resolve(env, snap))
+    print(json.dumps({"exit_code": code, "checks": report.get("checks"),
+                      "problems": report.get("problems")}, ensure_ascii=False, indent=2))
+    return code
+
 
 
 if __name__ == "__main__":

@@ -302,3 +302,146 @@ def test_the_secret_check_reports_absent_values_only():
     got = _by_name(ctx)["no_secret_in_log"]
     assert got["status"] == "NOT_OBSERVED" and "BOT_TOKEN" in got["detail"]
     assert TOKEN not in got["detail"]
+
+
+# ── Task 4: سوپروایزر، کدهای خروج و گزارش ──────────────────────────────────────────
+class FakeProc:
+    def __init__(self):
+        self.terminated = self.killed = False
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        if not self.terminated:
+            raise RuntimeError("still running")
+        return 0
+
+    def kill(self):
+        self.killed = True
+
+    def poll(self):
+        return 0 if self.terminated else None
+
+
+class FakeTime:
+    def __init__(self):
+        self.now = 0.0
+
+    def clock(self):
+        return self.now
+
+    def sleep(self, s):
+        self.now += s
+
+
+def _cfg(tmp_path, **kw):
+    base = {"db_path": str(tmp_path / "db.sqlite"), "log_path": str(tmp_path / "bot.log"),
+            "duration_s": 600, "scenario": "core", "super_ids": {1},
+            "secret_values": {"BOT_TOKEN": TOKEN}, "poll_s": 10, "env": {}}
+    base.update(kw)
+    return acc.SuperviseConfig(**base)
+
+
+def _scripted(monkeypatch, checks_by_call):
+    calls = {"n": 0}
+
+    def fake_eval(ctx):
+        i = min(calls["n"], len(checks_by_call) - 1)
+        calls["n"] += 1
+        return checks_by_call[i]
+    monkeypatch.setattr(acc, "evaluate", fake_eval)
+
+
+PASS = [{"name": n, "status": "OBSERVED", "detail": ""} for n in acc.REQUIRED["core"]]
+WAIT = [{"name": n, "status": "NOT_OBSERVED", "detail": ""} for n in acc.REQUIRED["core"]]
+
+
+def test_the_supervisor_stops_early_when_every_check_is_observed(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [WAIT, PASS])
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path), spawn=lambda: proc, snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "… در حال اجرا…", clock=ft.clock, sleep=ft.sleep,
+        resolve=lambda s: (-100111, -555))
+    assert code == 0 and proc.terminated and ft.now == 20
+    assert report["exit_code"] == 0 and report["schema"] == acc.SCHEMA
+
+
+def test_the_supervisor_times_out_with_exit_1(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [WAIT])
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300), spawn=lambda: proc, snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "در حال اجرا…", clock=ft.clock, sleep=ft.sleep,
+        resolve=lambda s: (-100111, -555))
+    assert code == 1 and proc.terminated and report["exit_code"] == 1
+
+
+def test_a_bot_that_never_starts_is_a_precondition_failure(tmp_path):
+    proc = FakeProc()
+    ft = FakeTime()
+    code, report = acc.supervise(
+        _cfg(tmp_path), spawn=lambda: proc, snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "", clock=ft.clock, sleep=ft.sleep,
+        resolve=lambda s: (-100111, -555))
+    assert code == 2 and "BOT_NOT_READY" in report["problems"] and proc.terminated
+
+
+def test_a_duration_outside_the_bounds_is_a_precondition_failure(tmp_path):
+    spawned = {"n": 0}
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=60), spawn=lambda: spawned.update(n=1),
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=FakeTime().clock, sleep=lambda s: None, resolve=lambda s: (-100111, -555))
+    assert code == 2 and "BAD_DURATION" in report["problems"] and spawned["n"] == 0
+
+
+def test_a_missing_channel_is_a_precondition_failure(tmp_path):
+    def resolve(snap):
+        raise acc.Precondition("CHANNEL_NOT_REGISTERED")
+
+    proc = FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path), spawn=lambda: proc, snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "در حال اجرا…", clock=FakeTime().clock, sleep=lambda s: None,
+        resolve=resolve)
+    assert code == 2 and "CHANNEL_NOT_REGISTERED" in report["problems"] and proc.terminated
+
+
+def test_the_report_never_contains_a_secret_or_an_answer(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    code, report = acc.supervise(
+        _cfg(tmp_path), spawn=lambda: FakeProc(), snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "در حال اجرا… " + TOKEN + " TEXT_OF_ANSWER",
+        clock=FakeTime().clock, sleep=lambda s: None, resolve=lambda s: (-100111, -555))
+    body = json.dumps(report, ensure_ascii=False)
+    assert code == 0 and TOKEN not in body and "TEXT_OF_ANSWER" not in body
+    assert report["redactions"] == ["BOT_TOKEN", "SECRETS_KEY"]
+    assert report["log_sha256"] and report["bot_log_lines"] == 1
+
+
+def test_blank_answers_keeps_the_row_and_drops_the_text(isolated_db):
+    import sqlite3
+    c = sqlite3.connect(isolated_db)
+    c.execute("INSERT INTO qa_answers(chat_id,msg_id,user_id,channel_id,status,answer,"
+              "created_at,updated_at) VALUES(-555,10,900001,-100111,'done','پاسخِ محرمانه',?,?)",
+              (START, START))
+    c.commit()
+    c.close()
+    acc.blank_answers(isolated_db)
+    c = sqlite3.connect(isolated_db)
+    row = c.execute("SELECT status, answer FROM qa_answers WHERE chat_id=-555").fetchone()
+    c.close()
+    assert row == ("done", "")
+
+
+def test_the_preconditions_error_stops_the_run(tmp_path):
+    err = [{"name": n, "status": "ERROR" if n == "preconditions" else "NOT_OBSERVED",
+            "detail": "SUPER_ASKER"} for n in acc.REQUIRED["core"]]
+    proc, ft = FakeProc(), FakeTime()
+    code, report = acc.supervise(
+        _cfg(tmp_path), spawn=lambda: proc, snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "در حال اجرا…", clock=ft.clock, sleep=ft.sleep,
+        resolve=lambda s: (-100111, -555), evaluate_fn=lambda ctx: err)
+    assert code == 2 and ft.now == 10 and proc.terminated

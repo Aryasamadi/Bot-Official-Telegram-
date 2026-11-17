@@ -488,9 +488,18 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-16 | `main` @ `f4afa0e` (PR #82) | `gh pr merge 82 --squash` → **MERGED**; protection compared field by field | merge SHA `f4afa0ebcbc037446402fb3c51c1f04eeebf6eb2` (2026-11-16T21:04:58Z) · **all 15 fields identical to both backups** · CI `test: SUCCESS` |
 | 2026-11-16 | `main` @ `f4afa0e` (final Phase 4 `main`) | full `pytest -q` (local, Windows) | **984 passed, 19 failed in 605.30s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
 | 2026-11-16 | `main` @ `f4afa0e` (final Phase 4 `main`) | `pytest --collect-only -q` · `ruff check newsbot tests tools run.py` · `python -m pyflakes newsbot tests` · `python tools/final_verification.py` | **1003 collected** · All checks passed · clean · **17/17** |
+| 2026-11-18 | **phase4/live-acceptance** | `pytest tests/test_phase4_qa_core.py -q` (after the ignore-log change) | **37 passed** (6 new tests; red first: 5 failed) |
+| 2026-11-18 | **phase4/live-acceptance** | `pytest tests/test_phase4_live_acceptance.py -q` (built task by task) | **39 passed** — 9 env/`--check`, 15 attribution/checks (red first: 15 failed), 8 supervisor/report (red first: 8 failed), 6 workflow guards (red first: 6 failed), 1 runbook (red first: `FileNotFoundError`) |
+| 2026-11-18 | **phase4/live-acceptance** | `pytest tests/test_phase4_live_acceptance.py tests/test_repo_integrity.py tests/test_phase1_10_state_alignment.py -q` | **48 passed** |
+| 2026-11-18 | **phase4/live-acceptance** | `tools/qa_live_acceptance.py --check` with a **dummy** token | `problems: [GETME_FAILED]`, exit **2**, token absent from the output (`token_len` printed only) |
+| 2026-11-18 | **phase4/live-acceptance** | `run.py --check` with dummy env vars | **exit 0** — «خودآزمایی موفق»; no secret printed |
+| 2026-11-18 | **phase4/live-acceptance** | full `pytest -q` (local, Windows) | **1029 passed, 19 failed in 638.39s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
+| 2026-11-18 | **phase4/live-acceptance** | `pytest --collect-only -q` | **1048 collected** (README badge and count line updated to match) |
+| 2026-11-18 | **phase4/live-acceptance** | `ruff check newsbot tests tools run.py` · `python -m pyflakes newsbot tests tools run.py` · `python -m mypy newsbot` · `python tools/final_verification.py` | All checks passed · clean · **Success: no issues found in 50 source files** · **17/17** |
 
-**Not run / unavailable:** coverage percentage (no coverage tool in dev requirements), live VPS
-deployment verification, real Telegram integration, Cloudflare D1 live migration.
+**Not run / unavailable:** the live `qa-live` run itself (`PENDING` on the owner — §4.5), coverage
+percentage (no coverage tool in dev requirements), live VPS deployment verification, Cloudflare D1 live
+migration.
 
 ### 5.1 The 19 local failures on the final `main` (measured, not assumed)
 

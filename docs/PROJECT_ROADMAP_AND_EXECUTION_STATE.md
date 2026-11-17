@@ -12,38 +12,48 @@
 |---|---|
 | **Repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Default branch** | `main` |
-| **Current working branch** | **docs/phase4-closeout-record** (records-only, from `main` @ `f4afa0e`) |
-| **Branch base commit** | `f4afa0ebcbc037446402fb3c51c1f04eeebf6eb2` (Phase 4 · PR #82 merged) |
-| **Last verified commit** | `f4afa0e` on `main` (PR #82 squash-merge, 2026-11-16) |
-| **Last state update** | 2026-11-16 (UTC) |
-| **Overall status** | `IN_PROGRESS` — **Phases 1–4 are COMPLETE**; Phase 5 waits for the owner's explicit instruction |
-| **Current phase** | Phase 5 of 10 — `NOT_STARTED` (Phases 1–4 are `COMPLETED`; Phase 5 starts only on the owner's explicit instruction) |
-| **Current sub-step** | — (Phase 4 closed with this PR #82; nothing else starts without a new owner instruction) |
+| **Current working branch** | **phase4/live-acceptance** (Phase 4 live-acceptance harness; from `main` @ `a925994`) |
+| **Branch base commit** | `a925994b3e5bf77ee4800bba711af0f697db8de3` (records-only PR #85) |
+| **Last verified commit** | `a925994` on `main` (PR #85 squash-merge, 2026-11-17) |
+| **Last state update** | 2026-11-18 (UTC) |
+| **Overall status** | `IN_PROGRESS` — Phases 1–3 are `COMPLETED`; **Phase 4's code is merged but its live acceptance is `PENDING`** (§4.5), so Phase 4 is not declared live-verified; Phase 5 has not started |
+| **Current phase** | Phase 4 of 10 — `IN_PROGRESS` (all Phase 4 code PRs merged; the live acceptance run is `PENDING` on the owner — §4.5) |
+| **Current sub-step** | Phase 4 live-acceptance harness (this PR) — the live run is `PENDING` on the owner's three secrets and Telegram setup (§4.5) |
 | **Owner authorization** | Required for every phase. Phase 1 authorized 2026-11-12. The owner ruled on 2026-11-12: every PR of a phase must be **merged** when that phase completes, and each existing PR (#46–#56) gets its disposition **inside its own phase**. |
 
 ---
 
 ## 1. Immediate state (read this before anything else)
 
-**Where we are:** Phase 4 is **COMPLETE** — every PR it owns is merged. The group Q&A core is **#83**
-(`f850d44`): schema v12, `newsbot/qa.py`, the fail-closed/at-most-once handler, the per-channel admin
-toggle. The plan-level AI quota is **#84** (`0985e3e`): `newsbot/ai_quota.py`, atomic global
-consumption, quota shown before purchase and in the user panel. This PR — **#82** — carries the design
-and the implementation plan and merges **last**, because it cites `newsbot/ai_quota.py` and
-`tests/test_phase4_plan_ai_quota.py` and the repo-integrity guard (§5) refuses a cited path that does
-not exist yet.
+**Where we are:** Phase 4's **code is merged** but the phase is **not yet declared complete**: the
+owner's rule is that a phase is only `COMPLETED` after a **live end-to-end run**. The group Q&A core is
+**#83** (`f850d44`): schema v12, `newsbot/qa.py`, the fail-closed/at-most-once handler, the per-channel
+admin toggle. The plan-level AI quota is **#84** (`0985e3e`): `newsbot/ai_quota.py`, atomic global
+consumption, quota shown before purchase and in the user panel. **#82** (`f4afa0e`) carried the design
+and the implementation plan. The current branch **phase4/live-acceptance** adds the missing piece: the
+live-acceptance harness (`tools/qa_live_acceptance.py`), the manual-only workflow
+(`.github/workflows/qa-live.yml`), the owner runbook (`docs/QA_LIVE_ACCEPTANCE.md`) and id-only ignore
+log lines in `newsbot/qa.py` so that "the bot saw the message and refused" is distinguishable from "the
+bot received nothing".
 Before Phase 4, Phase 3 (round-robin rotation) was completed the same way: one phase per explicit owner
 instruction, each rebased onto the then-current `main`, squashed, with the review gate lifted and restored.
 **Done so far:** Phase 0 audit; this file; README/docs aligned; P1-1 regression guards; the disposition of
 every existing PR (#46–#56) in §4.1; Phases 1–4 complete; the full suite run on each `main`.
-**Remaining in Phase 4:** nothing. One operational prerequisite is still the owner's: **B-4** (the bot
-must be in the channel's discussion group for a real end-to-end test; the code is fail-closed until then).
+**Remaining in Phase 4:** the **live acceptance** (§4.5). The harness, the manual workflow and the
+runbook are in this PR; the run itself is `PENDING` on two owner actions — add `BOT_TOKEN`,
+`SUPER_ADMIN_IDS` and `SECRETS_KEY` as repository secrets (§8 B-7), and perform the in-Telegram
+sequence of `docs/QA_LIVE_ACCEPTANCE.md` from a **non-super** account. Phase 4 is declared
+live-verified only after a green `qa-live` run's report artifact is recorded in §5. The older
+operational prerequisite **B-4** (the bot must be in the channel's discussion group) is now covered by
+that runbook step rather than being a code gap.
 Two operational notes. First, **#55 was closed by GitHub**, not by a decision: merging #54 with
 `--delete-branch` removed #55's base branch, and a PR whose base disappears is closed; it could not be
 reopened, so its content was rebased onto `main` and re-opened as **#64**. Second, `#64` also enabled
 Dependabot, which opened **#68–#78** (dependency bumps, several major). Those are recorded as **D-4**.
-**Exact next action:** none until the owner says which phase to start next (Phase 5 is next in the
-roadmap and needs that instruction).
+**Exact next action:** merge this harness PR, then the owner adds the three repository secrets and
+performs the Telegram sequence (§4.5); the assistant triggers `qa-live`, records the report in §5 and
+only then declares Phase 4 live-verified. **Phase 5 does not start before that** — and even then it
+starts only on an explicit owner instruction.
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -57,7 +67,7 @@ roadmap and needs that instruction).
 | 1 | Truth, state file, PR-chain unblock | Make the repo's recorded state match GitHub; create this file; unblock the stacked PR chain; align README/docs | **`COMPLETED`** 2026-11-13 | — |
 | 2 | Provider-centric model data + backend | Independent Providers (name / base URL / token), connection test, model discovery with manual fallback, encrypted keys | **`COMPLETED`** 2026-11-13 | 1 |
 | 3 | Round-robin model rotation engine | Every request takes the next model in order; atomic cursor; restart/concurrency safe; per-request audit | **`COMPLETED`** 2026-11-14 | 2 |
-| 4 | Reply-to-channel-post Q&A core | Answer questions replied to a channel post, with controlled post context and idempotent delivery | **`COMPLETED`** 2026-11-16 | 2, 3 |
+| 4 | Reply-to-channel-post Q&A core | Answer questions replied to a channel post, with controlled post context and idempotent delivery | **`IN_PROGRESS`** — code merged 2026-11-16 (#83, #84, #82); live acceptance **`PENDING`** (§4.5) | 2, 3 |
 | 5 | Q&A quotas | Per-post/day, cooldown, per-user daily cap — enforced atomically in the backend | `NOT_STARTED` | 4 |
 | 6 | Typing lifecycle | Show `typing` while waiting; always stop it; no orphan tasks | `NOT_STARTED` | 4 |
 | 7 | Onboarding, home menu, message routing | Language → welcome → "start" → add channel; free plan without an extra button; stable state | `NOT_STARTED` | 1 (4 for reply routing) |
@@ -67,10 +77,17 @@ roadmap and needs that instruction).
 
 **Status values:** `NOT_STARTED` · `IN_PROGRESS` · `BLOCKED` · `COMPLETED`
 
+> **Phase 5 design constraint (owner, 2026-11-17):** AI usage must be **neither an absolute limit nor
+> runaway consumption**. Quotas/cooldowns are guardrails against waste — no request may burn tokens or
+> API calls that no user asked for, and no limit may be so hard that legitimate use is refused. Any
+> Phase 5 mechanism that charges a user for an internal call, retries blindly, or sends a request the
+> user did not trigger is out of scope by definition.
+
+
 **Completed phases:** **Phase 1 — `COMPLETED` 2026-11-13** (P1-1: #56 `e3e321e`, #57 `533f753`; P1-2: #46→#50, oldest-first; closed by #58 `0f4b90a`).
 **Phase 2 — `COMPLETED` 2026-11-13** (P2-1: #51 `16a7353`, #52 `886e19d`, #53 `bf34390`; P2-2: #60 `bf73b39`).
 **Phase 3 — `COMPLETED` 2026-11-14** (P3-2: #62 `51bb8d2` — rotation engine + `/rotation`; P3-1: #54 `7f48ec4` — OBS-001/003/008/010/014, DB-007; review fixes #66 `3f78e51`; repo hygiene #64 `fa7f25f`, which replaced #55 after GitHub auto-closed it). **Every Phase 3 PR is merged.**
-**Phase 4 — `COMPLETED` 2026-11-16** (P4-1: #83 `f850d44` — schema v12, `newsbot/qa.py`, group handler, per-channel admin toggle; P4-2: #84 `0985e3e` — plan-level AI quota + quota UI; P4-0: #82 — design + implementation plan, merged last because it cites the Phase 4 files). **Every Phase 4 PR is merged.**
+**Phase 4 — code merged 2026-11-16, live acceptance `PENDING`** (P4-1: #83 `f850d44` — schema v12, `newsbot/qa.py`, group handler, per-channel admin toggle; P4-2: #84 `0985e3e` — plan-level AI quota + quota UI; P4-0: #82 `f4afa0e` — design + implementation plan, merged last because it cites the Phase 4 files; live-acceptance harness: the current branch). **Every Phase 4 code PR is merged; the phase itself waits on the live run (§4.5).**
 
 **PRs owned by each phase** (a phase is not `COMPLETED` while one of its own PRs is open — §9 rule 10):
 
@@ -79,7 +96,7 @@ roadmap and needs that instruction).
 | 1 | #46, #47, #48, #49, #50, #56, #57 | **all merged** — Phase 1 `COMPLETED` 2026-11-13 |
 | 2 | #51, #52, #53, #60 | **all merged** — Phase 2 `COMPLETED` 2026-11-13 |
 | 3 | #54, #62, #66, #64 all merged | Phase 3 **`COMPLETED`** 2026-11-14 |
-| 4 | #83, #84, #82 all merged | Phase 4 **`COMPLETED`** 2026-11-16 · the records-only follow-up PR (like #81 after Phase 3) is not a phase PR |
+| 4 | #83, #84, #82 merged · live-acceptance harness PR open | Phase 4 **`IN_PROGRESS`** — code merged 2026-11-16, live acceptance `PENDING` (§4.5) · the records-only follow-up PR (like #81 after Phase 3) is not a phase PR |
 
 ---
 
@@ -292,6 +309,50 @@ unlimited plans, model-test charging and blocking, quota text and panel wiring.
 
 ---
 
+## 4.5 Phase 4 live acceptance — `PENDING` on the owner
+
+**Why it exists.** The Phase 4 tests use stubs. Four facts can only be shown by the real API:
+the bot really receives a reply to a channel post **inside the linked discussion group**
+(admin membership / Privacy Mode); the group's `linked_chat_id` really equals the registered
+channel's `chat_id`; the automatic forward of a post really carries `sender_chat.type == channel` and
+the post id; and one answer is really delivered once while the **asker's own** AI quota drops.
+
+**What is now in the repo (this PR).**
+
+| Piece | Path | What it does |
+|---|---|---|
+| Harness | `tools/qa_live_acceptance.py` | `--check` preconditions (token shape, numeric admin ids, non-empty `SECRETS_KEY`, writable DB dir, one `getMe`); `--supervise` starts the real bot, snapshots the DB every 10 s, attributes counter deltas to a single question row, evaluates 13 checks, stops early when every required check is `OBSERVED`, writes an atomic JSON report |
+| Workflow | `.github/workflows/qa-live.yml` | **manual only** (`workflow_dispatch`), `contents: read`, `concurrency: qa-live`, `timeout-minutes: 360`, inputs `duration_minutes` (default `350`, bounded 5–355) / `scenario` (`core`\|`full`) / `db_mode` (`reuse`\|`fresh`); pinned action SHAs; artifacts `report.json` + `bot.log` only |
+| Runbook | `docs/QA_LIVE_ACCEPTANCE.md` | Persian, owner-facing: prerequisites, the three secrets, the exact in-Telegram order, exit-code meanings, troubleshooting |
+| Log line | `newsbot/qa.py` | `qa: ignored chat=… msg=… user=… reason=…` — INFO for `unregistered_channel`/`toggle_off`/`foreign_group`, DEBUG for `not_a_reply`/`not_a_post`, silent when `message`/`user` is absent. Identifiers only; never the question or post text |
+
+**Runner budget.** A GitHub-hosted job is killed at 360 minutes; the workflow sets
+`timeout-minutes: 360` and the harness defaults to **350** minutes, so a run always stops itself and
+still uploads its evidence. The duration is a ceiling, not a wait: the run exits the moment every
+required check is observed.
+
+**Database reuse.** `db_mode=reuse` restores `qa-live-db-v1-*` from the Actions cache so the channel,
+provider and model registered once survive into later runs; `db_mode=fresh` starts empty. The cache is
+saved with `if: always()` under a per-run key with the `qa-live-db-v1-` prefix, so the newest run wins.
+`qa_answers.answer` is blanked before the job ends, the DB is **never** uploaded as an artifact, and a
+stable `SECRETS_KEY` is mandatory — a changing key makes the cached provider secret undecryptable.
+
+**Exit codes:** `0` = every required check of the chosen scenario observed · `1` = the duration elapsed
+first · `2` = a precondition failed (token / admin id / `SECRETS_KEY` / DB path / `getMe` / channel /
+linked group / super-asker).
+
+**What the owner must do (and nothing else).** 1) Add `BOT_TOKEN` (the **test** bot, never the
+production token), `SUPER_ADMIN_IDS` (numeric owner id) and `SECRETS_KEY` (64 random characters, kept
+stable) as repository secrets — §8 **B-7**. 2) Create a test channel with its linked discussion group,
+make the bot admin in **both**, register a **public** AI model, and ask from a **second, non-super**
+Telegram account. The super admin has no daily AI cap and never receives an `ai_plan_grants` row, so
+"charged to the asker" and "quota exhausted" are unobservable from that account.
+
+**Status:** `PENDING`. Phase 4 is declared live-verified only when a green `qa-live` report artifact is
+recorded in §5.
+
+---
+
 ## 4.1 Disposition of the existing PR chain (#46–#56) — binding
 
 > **Owner rule (2026-11-12):** every existing pull request gets its disposition **inside the phase
@@ -473,7 +534,9 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 3 commits on `main` | `7f48ec4` (#54 observability + DB-007) · `51bb8d2` (#62 rotation engine) · `3f78e51` (#66 review fixes) · `fa7f25f` (#64 repo hygiene + `LICENSE`) |
 | Phase 3 result | **COMPLETE** — every Phase 3 PR (#54, #62, #66, #64) is merged; §4.3 is satisfied. #55 → **#64** (auto-close recovery recorded in §1 and §4.1). #68–#75 (Dependabot) are recorded as D-4 |
 | Phase 4 delivery | #83 **MERGED** as `f850d44830b49d0fed8a53c78cf633714012d815` (2026-11-16) · CI `test: SUCCESS` · #84 **MERGED** as `0985e3ebd4839df3110896c085bd4f8cf652d7ce` (2026-11-16) · CI `test: SUCCESS` · #82 **MERGED** as `f4afa0ebcbc037446402fb3c51c1f04eeebf6eb2` (2026-11-16, last Phase 4 PR — design + plan + close-out). The review gate was lifted for each merge only and restored with **all 15 fields verified identical** every time |
-| Phase 4 result | **COMPLETE** — every Phase 4 PR (#83, #84, #82) is merged; §4.4 is satisfied. The records-only follow-up PR (this one, the pattern of #81 after Phase 3) writes #82's exact SHA and the final-`main` evidence; it is **not** a Phase 4 phase PR, and after its squash-merge its SHA is the `main` head |
+| Phase 4 result | **CODE COMPLETE — live acceptance `PENDING`** — every Phase 4 code PR (#83, #84, #82) is merged and the §4.4 code criteria are met, but §4.5's live run has not happened yet. The records-only PR #85 (`a925994`) wrote #82's exact SHA and the final-`main` evidence |
+| Phase 4 live-acceptance harness | Branch **phase4/live-acceptance** from `main` @ `a925994` — commit **028407e** (id-only ignore log lines) · **09b6039** (precondition checker) · **eaa79ad** (per-row attribution + 13 checks) · **1bd8104** (supervisor + report) · **f44372a** (manual `qa-live` workflow) · the runbook/state/README commit. Merged after CI `test: SUCCESS` and the usual gate protocol |
+| Phase 4 live run | **`PENDING`** — recorded here only after the `qa-live` report artifact exists (§4.5) |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)
@@ -530,15 +593,17 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 |---|---|---|
 | B-1 | Merging the stacked PR chain requires an approving review and **linear history** (squash/rebase, not merge) | **RESOLVED 2026-11-13** — owner ruled: each PR gets its disposition in its own phase, and each phase's PRs are merged when the phase completes. Dispositions in §4.1; merge mechanics in §7.1 |
 | B-2 | Production commit SHA / unit name / env permissions are unverified | needs VPS access |
-| B-3 | A 350-minute GitHub-hosted run would leave only ~10 minutes of headroom against the hard 6-hour (360-minute) job cap; the cap cannot be raised | needs owner decision |
-| B-4 | Whether the bot is added to the channel discussion group (prerequisite for a **real end-to-end** Phase 4 test) | **OPEN — the only Phase 4 prerequisite left**; the owner must add the bot to the group (admin, or a member with Privacy Mode off). The code is **fail-closed** until then: no verified link ⇒ no answer, by design (§4.4) |
+| B-3 | A 350-minute GitHub-hosted run would leave only ~10 minutes of headroom against the hard 6-hour (360-minute) job cap; the cap cannot be raised | **HANDLED** for `qa-live` — `timeout-minutes: 360` + a default duration of 350 minutes, and the harness exits early once every required check is observed (§4.5). The cap itself is still unraisable |
+| B-4 | Whether the bot is added to the channel discussion group (prerequisite for a **real end-to-end** Phase 4 test) | **HANDED TO THE RUNBOOK** — a setup step of `docs/QA_LIVE_ACCEPTANCE.md`, not a code gap. The code stays **fail-closed**: no verified link ⇒ no answer (§4.4) |
 | B-5 | A file **outside** this repository (the local `newsbot-deploy-pkg` folder) holds a bot token matching the BotFather format and a 64-char `SECRETS_KEY` in plain text (names/lengths only; values never read) | needs rotation |
 | B-6 | ~~licence choice for #64~~ — **RESOLVED 2026-11-14**: the owner chose **proprietary / all rights reserved**; `LICENSE` merged as part of #64 `fa7f25f` | closed |
+| B-7 | The three repository secrets for the live run — `BOT_TOKEN` (**test** bot only), `SUPER_ADMIN_IDS` (numeric owner id), `SECRETS_KEY` (64 random chars, must stay stable or the cached provider key becomes undecryptable) — plus a test channel with a linked discussion group, the bot as admin in both, one **public** active AI model, and a **non-super** second account as the asker | **`PENDING` on the owner** — nothing in the repo can supply these; §4.5 and `docs/QA_LIVE_ACCEPTANCE.md` list the exact steps |
 | D-1 | 18 unmerged stale branches, 37 remote branches total | deferred to Phase 10 |
 | D-2 | 19 Windows-only failing deploy tests (4 in `tests/test_deploy_script.py`, 15 in `tests/test_session3_cicd_docker_deploy_docs.py`) degrade the local signal; §5.1 records the exact cause and why CI is unaffected | deferred to Phase 10 |
 | D-3 | `tools/migrate_sqlite_to_d1.py` `TABLES` also omits `ai_providers` (Phase 2), so a sqlite → D1 migration loses provider rows the same way it lost the rotation tables in Phase 3 | deferred; Phase 3 fixed only its own two tables |
 | D-4 | Dependabot (enabled by #64) opened #68–#78: `python 3.13-slim → 3.15-slim`, `actions/checkout 4 → 7`, `setup-python 5 → 7`, `upload-artifact 4 → 7`, `gitleaks-action 2 → 3`, `appleboy/ssh-action 1.2.2 → 1.2.5`, `python-dateutil 2.9 → 4.0`, `tzlocal → 5.4.5`, `soupsieve → 4.1`, `regex → 2026.11.9`, `ruff 0.14 → 0.17`. Several are **major** bumps that change CI/deploy behaviour | deferred to Phase 10 (dependency and release hardening), one PR at a time with a real CI run |
 | D-5 | `qa_answers` has **no retention or pruning policy**: at-most-once needs the row keyed by `(chat_id, msg_id)` forever, so the table grows with every answered question (one small row per answer; no question or answer text is stored) | deferred; revisit in Phase 10 with a measured row-count/age threshold if volume justifies it — **deleting rows would re-open the at-most-once guarantee**, so any pruning must keep the key |
+| D-6 | The Actions cache used by `qa-live` holds the **test** database across runs (key prefix `qa-live-db-v1-`), and that DB can contain an encrypted provider key. `qa_answers.answer` is blanked and the DB is never uploaded as an artifact, but a cached artifact still outlives the run until the cache expires | accepted for the test-only workflow; the stable `SECRETS_KEY` is mandatory (`SECRETS_KEY_REQUIRED` blocks a keyless run). Revisit in Phase 10 alongside B-5's key rotation |
 
 ---
 

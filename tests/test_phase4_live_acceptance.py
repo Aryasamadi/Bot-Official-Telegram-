@@ -503,3 +503,14 @@ def test_the_database_is_never_uploaded_as_an_artifact():
         "name: Save the test DB", 1)[0]
     assert "newsbot.db" not in block
     assert "report.json" in block and "bot.log" in block
+
+
+# ── Task 6: رانبوک ────────────────────────────────────────────────────────────────
+def test_the_runbook_names_the_secrets_and_the_telegram_steps():
+    body = _src("docs/QA_LIVE_ACCEPTANCE.md")
+    for name in ("BOT_TOKEN", "SUPER_ADMIN_IDS", "SECRETS_KEY"):
+        assert name in body
+    for needle in ("گروهِ بحث", "reply", "ai_quota=1", "db_mode", "artifact"):
+        assert needle in body
+    for needle in ("غیرسوپر", "toggle_off", "foreign_group", "ai_limit", "۳۵۰"):
+        assert needle in body

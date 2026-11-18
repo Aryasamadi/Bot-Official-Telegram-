@@ -11,7 +11,8 @@ import httpx
 from newsbot import config
 from newsbot import net_http as _net_http
 from newsbot.db import q, gget, gset, arun, _safe_fields
-from newsbot.secret_store import decrypt as _sec_decrypt, encrypt as _sec_encrypt   # SEC-09 (فاز ۱۲)
+from newsbot.secret_store import (clean_api_key, decrypt as _sec_decrypt,
+                                  encrypt as _sec_encrypt)   # SEC-09 (فاز ۱۲)
 from newsbot import rotation  # فاز ۳: چرخشِ round-robin و audit
 from newsbot.logutils import log, log_event, bump, redact
 from newsbot.timeutils import now_utc, now_iso, parse_dt
@@ -160,11 +161,11 @@ def add_model(base_url, api_key, model, name="", priority=10, temperature=0.5, m
     base_url = str(base_url).strip().rstrip("/"); model = str(model).strip(); kind = detect_kind(base_url)
     name = (name or f"{hostname(base_url) or kind}").strip()[:40]
     return q("INSERT INTO ai_models(name,kind,base_url,api_key,model,priority,temperature,max_tokens,owner_id,provider_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
-             (name, kind, base_url, _sec_encrypt(api_key.strip()), model, priority, temperature, max_tokens, owner_id, provider_id), commit=True)
+             (name, kind, base_url, _sec_encrypt(clean_api_key(api_key)), model, priority, temperature, max_tokens, owner_id, provider_id), commit=True)
 
 def update_model(mid, **f):
     if "base_url" in f: f["base_url"] = str(f["base_url"]).strip().rstrip("/"); f["kind"] = detect_kind(f["base_url"])
-    if "api_key" in f: f["api_key"] = _sec_encrypt(str(f["api_key"]).strip())   # SEC-09: کلید همیشه رمزنگاری‌شده ذخیره می‌شود
+    if "api_key" in f: f["api_key"] = _sec_encrypt(clean_api_key(f["api_key"]))   # SEC-09: کلید همیشه رمزنگاری‌شده ذخیره می‌شود
     _safe_fields("ai_models", f)
     q("UPDATE ai_models SET " + ", ".join(f"{k}=?" for k in f) + " WHERE id=?", (*f.values(), mid), commit=True)
 
@@ -453,6 +454,26 @@ async def _call_model(m, system, user):
     finally:
         _net_http.post_model_reset(tok)
 
+def _stored_key(stored):
+    """کلیدِ ذخیره‌شده را رمزگشایی می‌کند و اگر رمزگشایی شکست بخورد **fail-closed** است.
+
+    ``secret_store.decrypt`` برای کلیدِ غیرقابل‌رمزگشایی ``""`` می‌دهد؛ اگر همان را به
+    پروایدر بفرستیم، درخواست با هدرِ خالی می‌رود و پاسخِ پروایدر («403 Authorization
+    failed») شبیهِ خرابیِ مدل دیده می‌شود. اینجا به‌جای ارسالِ کلیدِ خالی، خطای صریحِ
+    کلید می‌دهیم تا مقصر معلوم باشد.
+    """
+    stored = stored or ""
+    if not stored:
+        return ""          # سرویسِ بدونِ کلید (مثلاً endpoint محلی) — معتبر است
+    key = _sec_decrypt(stored)
+    if not key:
+        raise AIProviderError(
+            "Stored API key could not be decrypted (SECRETS_KEY mismatch یا مقدارِ خراب) — "
+            "decrypt failed؛ کلید را دوباره و یک‌خطی ثبت کنید.",
+            transient=False)
+    return key
+
+
 def resolve_endpoint(m):
     """(kind, base_url, api_key) یک مدل — با اولویتِ **فراهم‌کننده** (فاز ۲، ADR-۲).
 
@@ -465,10 +486,9 @@ def resolve_endpoint(m):
         p = q("SELECT kind, base_url, api_key FROM ai_providers WHERE id=?", (pid,), one=True)
         if p is not None:
             kind = p["kind"] or detect_kind(p["base_url"])
-            key = _sec_decrypt(p["api_key"] or "")
-            return kind, (p["base_url"] or "").rstrip("/"), key
+            return kind, (p["base_url"] or "").rstrip("/"), _stored_key(p["api_key"])
     kind = m["kind"] or detect_kind(m["base_url"])
-    return kind, (m["base_url"] or "").rstrip("/"), _sec_decrypt(m["api_key"] or "")
+    return kind, (m["base_url"] or "").rstrip("/"), _stored_key(m["api_key"])
 
 
 async def _call_model_impl(m, system, user):

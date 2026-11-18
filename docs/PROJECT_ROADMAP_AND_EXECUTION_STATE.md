@@ -359,6 +359,23 @@ make the bot admin in **both**, register a **public** AI model, and ask from a *
 Telegram account. The super admin has no daily AI cap and never receives an `ai_plan_grants` row, so
 "charged to the asker" and "quota exhausted" are unobservable from that account.
 
+**Key/authorization diagnosis (2026-11-19).** The owner reported that a model which works outside
+the bot fails inside it. The bot's two 🔴 super-admin notifications were provider *rejections* —
+NVIDIA `HTTP 403: Authorization failed` and vyceai `HTTP 400: The model 'agnes-3.0-flash' does not
+exist` — so the key write/read path was audited and three real defects were closed:
+
+| Defect | How it made a healthy key look broken | Fix |
+|---|---|---|
+| `/providers add <name> <base_url> <key…>` stored `" ".join(args[3:])` silently | a key pasted with a space/newline, or one carrying a zero-width/LRM/BOM character, was sent malformed | one `secret_store.clean_api_key` (strip `Cf`, trim edges, **reject** inner whitespace/`Cc`/`Cs`, log only a count) used by `create_provider`, `update_provider`, `add_model`, `update_model` and the panel wizard (`ui_inputs._input_value`) |
+| `decrypt` returns `""` when the current `SECRETS_KEY` cannot open the stored key | the bot sent `Bearer ` and the provider's `403` was attributed to the model | `ai_models._stored_key` fails closed with an explicit `decrypt failed` error before any network call |
+| the provider panel showed only a masked key | a truncated key was indistinguishable from an invalid one | `providers._public` exposes `key_len`/`has_key`; `_pline` prints `key=<length>` or `key=UNREADABLE` |
+
+**Owner runbook for the two 🔴 rows.** `/providers` now prints each stored key's length.
+Length ≠ the working key ⇒ re-enter the key on one line. Length correct and `/providers test <id>`
+still `403` ⇒ the provider rejects that key/account (re-issue or use another provider). `400 … does
+not exist` ⇒ the model id is wrong; pick one from `/providers discover <id>`. Disable or delete rows
+that stay 🔴 — `AI_MAX_MODEL_ATTEMPTS=2` lets two dead rows starve a healthy third.
+
 **Status:** `PENDING`. Phase 4 is declared live-verified only when a green `qa-live` report artifact is
 recorded in §5.
 
@@ -510,6 +527,12 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-18 | **phase4/live-acceptance** | `ruff check newsbot tests tools run.py` · `python -m pyflakes newsbot tests tools run.py` · `python -m mypy newsbot` · `python tools/final_verification.py` | All checks passed · clean · **Success: no issues found in 50 source files** · **17/17** |
 | 2026-11-18 | **phase4/live-acceptance** (final tree) | GitHub CI `test` on PR #86 | **SUCCESS** (3m45s) |
 | 2026-11-18 | `main` @ `88675f3` (PR #86) | `gh pr merge 86 --squash --delete-branch`; protection compared field by field | merge SHA `88675f355d15acf69209f0e97c541f6692bdbc59` (2026-11-18T20:31:59Z) · **all 15 fields identical to both backups** · CI `test: SUCCESS` |
+
+| 2026-11-19 | **fix/key-entry-hardening** (test-first) | `pytest tests/test_api_key_entry.py -q` | **24 passed** — RED first: 20 failed, then 1 more red for the panel-wizard path |
+| 2026-11-19 | **fix/key-entry-hardening** | `pytest` the affected files + the UI trio (providers, rotation, Q&A, AI, quota, authz, UI, config docs) on the final tree | **198 passed** |
+| 2026-11-19 | **fix/key-entry-hardening** | `pytest --collect-only -q` | **1078 collected** (README badge and count line updated to match) |
+| 2026-11-19 | **fix/key-entry-hardening** | full `pytest -q` (local, Windows) | **1059 passed, 19 failed in 601.44s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
+| 2026-11-19 | **fix/key-entry-hardening** | `ruff check newsbot tests tools` · `python -m mypy` · `python tools/final_verification.py` · `run.py --check` (dummy env) | All checks passed · **Success: no issues found in 50 source files** · **17/17** · exit **0** |
 
 **Not run / unavailable:** the live `qa-live` run itself (`PENDING` on the owner — §4.5), coverage
 percentage (no coverage tool in dev requirements), live VPS deployment verification, Cloudflare D1 live

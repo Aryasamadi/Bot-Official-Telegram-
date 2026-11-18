@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from newsbot.db import q
-from newsbot.secret_store import decrypt as _dec, encrypt as _enc
+from newsbot.secret_store import clean_api_key, decrypt as _dec, encrypt as _enc
 
 # مهلتِ آزمونِ اتصال — کوتاه و固定: این تماس روی مسیرِ راه‌اندازی/مدیریت است، نه مسیرِ نشر.
 TEST_TIMEOUT = 15
@@ -71,8 +71,12 @@ def _public(row, with_key: bool = False):
         return None
     d = dict(row)
     enc = d.get("api_key") or ""
-    d["api_key"] = enc if with_key else _mask(_dec(enc) if enc else "")
+    plain = _dec(enc) if enc else ""
+    d["api_key"] = enc if with_key else _mask(plain)
     d["has_key"] = bool(enc)
+    # طولِ کلیدِ رمزگشایی‌شده (نه مقدار) برای تشخیصِ «کلیدِ بریده/آلوده» از «کلیدِ بی‌اعتبار».
+    # 0 با has_key=True ⇒ کلید رمزگشایی نمی‌شود (SECRETS_KEY اشتباه) ⇒ UNREADABLE در UI.
+    d["key_len"] = len(plain) if enc else 0
     return d
 
 
@@ -121,9 +125,10 @@ def create_provider(name: str, base_url: str, api_key: str, owner_id=None, enabl
     if find_provider(base_url, owner_id):
         raise ValueError("فراهم‌کننده‌ای با همین نشانی از قبل ثبت شده است")
     name = (str(name or "").strip() or _hostname(base_url))[:60]
+    key = clean_api_key(api_key)          # نویسهٔ نامرئی/فاصله ⇒ خطای صریح در همان لحظهٔ ثبت
     return q("INSERT INTO ai_providers(owner_id,name,kind,base_url,api_key,enabled,created_at) "
              "VALUES(?,?,?,?,?,?,?)",
-             (owner_id, name, kind_of(base_url), base_url, _enc(str(api_key or "").strip()), int(enabled), _now()),
+             (owner_id, name, kind_of(base_url), base_url, _enc(key), int(enabled), _now()),
              commit=True)
 
 
@@ -137,7 +142,7 @@ def update_provider(pid: int, **fields):
         f["base_url"] = normalize_base_url(f["base_url"])
         f["kind"] = kind_of(f["base_url"])
     if "api_key" in f:
-        f["api_key"] = _enc(str(f["api_key"]).strip())
+        f["api_key"] = _enc(clean_api_key(f["api_key"]))
     if "enabled" in f:
         f["enabled"] = int(bool(f["enabled"]))
     cols = []

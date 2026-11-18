@@ -10,10 +10,31 @@
 """
 import base64
 import hashlib
+import unicodedata
 from newsbot import config
 from newsbot.logutils import log
 
 PREFIX = "enc:v1:"
+
+
+def clean_api_key(value):
+    """کلیدِ API را برای ذخیره آماده می‌کند: نویسه‌های نامرئی حذف، فاصلهٔ کناری بریده.
+
+    چرا سخت‌گیر است: کلیدی که با خطِ‌جدید/فاصله (از یک دستورِ چندکلمه‌ای) یا با
+    نویسهٔ نامرئی (ZWSP/LRM/BOM — رایج در کپیِ متنِ راست‌به‌چپ) ذخیره شود، شکلِ
+    ظاهریِ درست دارد ولی پروایدر آن را رد می‌کند و کاربر فقط «403 Authorization
+    failed» می‌بیند و به‌اشتباه فکر می‌کند مدل خراب است. هیچ کلیدِ واقعی‌ای فاصله
+    ندارد، پس هر فاصلهٔ باقی‌مانده یعنی ورودیِ خراب ⇒ خطای صریح، نه ذخیرهٔ بی‌صدا.
+    """
+    raw = str(value or "")
+    removed = sum(1 for ch in raw if unicodedata.category(ch) == "Cf")
+    key = "".join(ch for ch in raw if unicodedata.category(ch) != "Cf").strip()
+    if removed:
+        # فقط تعداد؛ هرگز خودِ کلید.
+        log.warning("کلید API: %d نویسهٔ نامرئی حذف شد (کپیِ آلوده)", removed)
+    if any(ch.isspace() or unicodedata.category(ch) in ("Cc", "Cs") for ch in key):
+        raise ValueError("کلید API نباید فاصله یا نویسهٔ کنترلی داشته باشد؛ دوباره و یک‌خطی بفرستید.")
+    return key
 
 
 def _fernet():

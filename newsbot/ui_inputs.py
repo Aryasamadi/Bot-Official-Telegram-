@@ -19,6 +19,7 @@ from newsbot.logutils import log, log_event
 from newsbot.timeutils import now_utc, parse_dt
 from newsbot.ratelimit import rate_ok, rate_left
 from newsbot.net_http import is_private_host, FetchError
+from newsbot.secret_store import clean_api_key
 from newsbot.core_users import admin_limits, get_user, is_super, user_lang, can_admin
 from newsbot.core_channels import (channel_owned, channel_by_chat, add_channel, update_channel_meta,
                                    get_channel, publication_pending, check_transfer_token,
@@ -96,17 +97,28 @@ def _input_value(field, raw, lang, name_limit=100):
         except (ValueError, TypeError, UnicodeError):
             invalid("نشانی معتبر HTTP(S) بدون فاصله، نام کاربری، رمز یا # وارد کنید." + (" برای مدل http:// یا https:// الزامی است." if field == "base_url" else ""),
                     "Enter a valid HTTP(S) URL without spaces, credentials or #." + (" Model URLs require http:// or https://." if field == "base_url" else ""))
-    if field in ("api_key", "model", "code"):
-        limit = 256 if field == "model" else 24 if field == "code" else None
+    if field == "api_key":
+        # همان پاک‌سازیِ مسیرِ ذخیره (secret_store.clean_api_key): نویسهٔ نامرئی حذف،
+        # فاصله/کنترل ⇒ خطای صریح در همان لحظهٔ ورود (نه 403 مبهم از پروایدر).
+        try:
+            key = clean_api_key(raw)
+        except ValueError:
+            invalid("کلید نباید فاصله یا نویسهٔ کنترلی داشته باشد؛ دوباره و یک‌خطی بفرستید.",
+                    "The key must not contain whitespace or control characters; send it again on one line.")
+        if not key:
+            invalid("کلید نباید خالی باشد؛ برای سرویس بدون کلید، - بفرستید.",
+                    "Enter a nonempty key without whitespace, or - for an unauthenticated service.")
+        return "" if key == "-" else key
+    if field in ("model", "code"):
+        limit = 256 if field == "model" else 24
         if not raw or any(c.isspace() or ord(c) < 32 or 127 <= ord(c) <= 159 for c in raw) or (limit and len(raw) > limit):
-            if field == "api_key": invalid("کلید نباید خالی یا دارای فاصله باشد؛ برای سرویس بدون کلید، - بفرستید.", "Enter a nonempty key without whitespace, or - for an unauthenticated service.")
             if field == "model": invalid("شناسه مدل باید ۱ تا ۲۵۶ نویسه و بدون فاصله باشد.", "Model ID must contain 1–256 characters without whitespace.")
             invalid("کد تخفیف باید ۱ تا ۲۴ نویسه و بدون فاصله باشد.", "Discount code must contain 1–24 characters without whitespace.")
         # callback_data تلگرام سقف ۶۴ بایت دارد؛ بلندترین قالب s:disc_e:<code>:max_uses است
         if field == "code":
             if ":" in raw: invalid("کد تخفیف نمی‌تواند شامل «:» باشد.", "Discount code cannot contain ':'.")
             if len(raw.upper().encode("utf-8")) > 46: invalid("کد برای دکمه‌های مدیریت بیش از حد بلند است.", "Code is too long for the admin buttons; use a shorter one.")
-        return "" if field == "api_key" and raw == "-" else raw
+        return raw
     if field in ("name", "name_en"):
         if not text or len(text) > name_limit or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in text): invalid(f"نام باید ۱ تا {name_limit} نویسه و بدون نویسه کنترلی باشد.", f"Name must contain 1–{name_limit} characters without control characters.")
         return text

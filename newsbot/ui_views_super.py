@@ -220,10 +220,28 @@ P_HELP = (
 )
 
 
+def _key_tag(p):
+    """برچسبِ سلامتِ کلید برای پنل: طول (تشخیصِ بریدگی) یا UNREADABLE، هرگز خودِ مقدار.
+
+    ردیف‌های ``list_providers`` فیلدهای ``has_key``/``key_len`` دارند؛ ردیفِ خام هم
+    پشتیبانی می‌شود تا آزمون‌ها و مسیرهای دیگر همان رفتار را ببینند.
+    """
+    keys = p.keys() if hasattr(p, "keys") else ()
+    if "key_len" in keys and "has_key" in keys:
+        if not p["has_key"]:
+            return "key=—"
+        return f"key={p['key_len']}" if p["key_len"] else "key=UNREADABLE"
+    stored = p["api_key"] or ""
+    if not stored:
+        return "key=—"
+    n = len(decrypt_key(stored))
+    return f"key={n}" if n else "key=UNREADABLE"
+
+
 def _pline(p, lang):
     st = "✅" if p["last_test_ok"] else ("—" if not p["last_test_at"] else "⛔")
     scope = "عمومی" if p["owner_id"] is None else ("شخصی #%s" % p["owner_id"] if lang != "en" else "own #%s" % p["owner_id"])
-    line = f"\n#{p['id']} <b>{esc(p['name'])}</b> · <code>{esc(p['base_url'])}</code> · {esc(p['kind'])} · {st} · {scope}"
+    line = f"\n#{p['id']} <b>{esc(p['name'])}</b> · <code>{esc(p['base_url'])}</code> · {esc(p['kind'])} · {st} · {scope} · {_key_tag(p)}"
     if p["last_test_at"]:
         line += f" · {esc(p['last_test_at'][:16])}"
     if p["last_test_error"]:

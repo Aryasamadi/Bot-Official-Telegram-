@@ -12,10 +12,10 @@
 |---|---|
 | **Repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Default branch** | `main` |
-| **Current working branch** | **phase4/live-acceptance** (Phase 4 live-acceptance harness; from `main` @ `a925994`) |
-| **Branch base commit** | `a925994b3e5bf77ee4800bba711af0f697db8de3` (records-only PR #85) |
-| **Last verified commit** | `a925994` on `main` (PR #85 squash-merge, 2026-11-17) |
-| **Last state update** | 2026-11-18 (UTC) |
+| **Current working branch** | **docs/phase4-live-harness-record** (records-only, from `main` @ `88675f3`) |
+| **Branch base commit** | `88675f355d15acf69209f0e97c541f6692bdbc59` (PR #86 squash-merge — the live-acceptance harness) |
+| **Last verified commit** | `88675f3` on `main` (PR #86 squash-merge, 2026-11-18) |
+| **Last state update** | 2026-11-19 (UTC) |
 | **Overall status** | `IN_PROGRESS` — Phases 1–3 are `COMPLETED`; **Phase 4's code is merged but its live acceptance is `PENDING`** (§4.5), so Phase 4 is not declared live-verified; Phase 5 has not started |
 | **Current phase** | Phase 4 of 10 — `IN_PROGRESS` (all Phase 4 code PRs merged; the live acceptance run is `PENDING` on the owner — §4.5) |
 | **Current sub-step** | Phase 4 live-acceptance harness (this PR) — the live run is `PENDING` on the owner's three secrets and Telegram setup (§4.5) |
@@ -34,7 +34,8 @@ and the implementation plan. The current branch **phase4/live-acceptance** adds 
 live-acceptance harness (`tools/qa_live_acceptance.py`), the manual-only workflow
 (`.github/workflows/qa-live.yml`), the owner runbook (`docs/QA_LIVE_ACCEPTANCE.md`) and id-only ignore
 log lines in `newsbot/qa.py` so that "the bot saw the message and refused" is distinguishable from "the
-bot received nothing".
+bot received nothing". That harness merged on 2026-11-18 as **PR #86 → `88675f3`**; the live run is the
+only thing between Phase 4 and `COMPLETED`.
 Before Phase 4, Phase 3 (round-robin rotation) was completed the same way: one phase per explicit owner
 instruction, each rebased onto the then-current `main`, squashed, with the review gate lifted and restored.
 **Done so far:** Phase 0 audit; this file; README/docs aligned; P1-1 regression guards; the disposition of
@@ -50,10 +51,11 @@ Two operational notes. First, **#55 was closed by GitHub**, not by a decision: m
 `--delete-branch` removed #55's base branch, and a PR whose base disappears is closed; it could not be
 reopened, so its content was rebased onto `main` and re-opened as **#64**. Second, `#64` also enabled
 Dependabot, which opened **#68–#78** (dependency bumps, several major). Those are recorded as **D-4**.
-**Exact next action:** merge this harness PR, then the owner adds the three repository secrets and
-performs the Telegram sequence (§4.5); the assistant triggers `qa-live`, records the report in §5 and
-only then declares Phase 4 live-verified. **Phase 5 does not start before that** — and even then it
-starts only on an explicit owner instruction.
+**Exact next action:** the harness is merged (#86 → `88675f3`), so the next step is the owner's:
+add `BOT_TOKEN`, `SUPER_ADMIN_IDS` and `SECRETS_KEY` as repository secrets and perform the Telegram
+sequence (§4.5, `docs/QA_LIVE_ACCEPTANCE.md`). The assistant then triggers `qa-live`, records the
+report in §5 and only then declares Phase 4 live-verified. **Phase 5 does not start before that** —
+and even then it starts only on an explicit owner instruction.
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -87,7 +89,7 @@ starts only on an explicit owner instruction.
 **Completed phases:** **Phase 1 — `COMPLETED` 2026-11-13** (P1-1: #56 `e3e321e`, #57 `533f753`; P1-2: #46→#50, oldest-first; closed by #58 `0f4b90a`).
 **Phase 2 — `COMPLETED` 2026-11-13** (P2-1: #51 `16a7353`, #52 `886e19d`, #53 `bf34390`; P2-2: #60 `bf73b39`).
 **Phase 3 — `COMPLETED` 2026-11-14** (P3-2: #62 `51bb8d2` — rotation engine + `/rotation`; P3-1: #54 `7f48ec4` — OBS-001/003/008/010/014, DB-007; review fixes #66 `3f78e51`; repo hygiene #64 `fa7f25f`, which replaced #55 after GitHub auto-closed it). **Every Phase 3 PR is merged.**
-**Phase 4 — code merged 2026-11-16, live acceptance `PENDING`** (P4-1: #83 `f850d44` — schema v12, `newsbot/qa.py`, group handler, per-channel admin toggle; P4-2: #84 `0985e3e` — plan-level AI quota + quota UI; P4-0: #82 `f4afa0e` — design + implementation plan, merged last because it cites the Phase 4 files; live-acceptance harness: the current branch). **Every Phase 4 code PR is merged; the phase itself waits on the live run (§4.5).**
+**Phase 4 — code merged 2026-11-16, live acceptance `PENDING`** (P4-1: #83 `f850d44` — schema v12, `newsbot/qa.py`, group handler, per-channel admin toggle; P4-2: #84 `0985e3e` — plan-level AI quota + quota UI; P4-0: #82 `f4afa0e` — design + implementation plan, merged last because it cites the Phase 4 files; live-acceptance harness: #86 `88675f3`). **Every Phase 4 code and harness PR is merged; the phase itself waits on the live run (§4.5).**
 
 **PRs owned by each phase** (a phase is not `COMPLETED` while one of its own PRs is open — §9 rule 10):
 
@@ -96,7 +98,7 @@ starts only on an explicit owner instruction.
 | 1 | #46, #47, #48, #49, #50, #56, #57 | **all merged** — Phase 1 `COMPLETED` 2026-11-13 |
 | 2 | #51, #52, #53, #60 | **all merged** — Phase 2 `COMPLETED` 2026-11-13 |
 | 3 | #54, #62, #66, #64 all merged | Phase 3 **`COMPLETED`** 2026-11-14 |
-| 4 | #83, #84, #82 merged · live-acceptance harness PR open | Phase 4 **`IN_PROGRESS`** — code merged 2026-11-16, live acceptance `PENDING` (§4.5) · the records-only follow-up PR (like #81 after Phase 3) is not a phase PR |
+| 4 | #83, #84, #82, #86 merged | Phase 4 **`IN_PROGRESS`** — code and harness merged (2026-11-16 · 2026-11-18), live acceptance `PENDING` (§4.5) · this records-only PR is not a phase PR |
 
 ---
 
@@ -317,7 +319,7 @@ the bot really receives a reply to a channel post **inside the linked discussion
 channel's `chat_id`; the automatic forward of a post really carries `sender_chat.type == channel` and
 the post id; and one answer is really delivered once while the **asker's own** AI quota drops.
 
-**What is now in the repo (this PR).**
+**What is now in the repo (PR #86 → `88675f3`).**
 
 | Piece | Path | What it does |
 |---|---|---|
@@ -506,6 +508,8 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-18 | **phase4/live-acceptance** (post-review fixes) | full `pytest -q` (local, Windows) | **1035 passed, 19 failed in 639.44s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
 | 2026-11-18 | **phase4/live-acceptance** (post-review fixes) | `pytest --collect-only -q` | **1054 collected** (README badge and count line updated to match) |
 | 2026-11-18 | **phase4/live-acceptance** | `ruff check newsbot tests tools run.py` · `python -m pyflakes newsbot tests tools run.py` · `python -m mypy newsbot` · `python tools/final_verification.py` | All checks passed · clean · **Success: no issues found in 50 source files** · **17/17** |
+| 2026-11-18 | **phase4/live-acceptance** (final tree) | GitHub CI `test` on PR #86 | **SUCCESS** (3m45s) |
+| 2026-11-18 | `main` @ `88675f3` (PR #86) | `gh pr merge 86 --squash --delete-branch`; protection compared field by field | merge SHA `88675f355d15acf69209f0e97c541f6692bdbc59` (2026-11-18T20:31:59Z) · **all 15 fields identical to both backups** · CI `test: SUCCESS` |
 
 **Not run / unavailable:** the live `qa-live` run itself (`PENDING` on the owner — §4.5), coverage
 percentage (no coverage tool in dev requirements), live VPS deployment verification, Cloudflare D1 live
@@ -555,6 +559,7 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 4 delivery | #83 **MERGED** as `f850d44830b49d0fed8a53c78cf633714012d815` (2026-11-16) · CI `test: SUCCESS` · #84 **MERGED** as `0985e3ebd4839df3110896c085bd4f8cf652d7ce` (2026-11-16) · CI `test: SUCCESS` · #82 **MERGED** as `f4afa0ebcbc037446402fb3c51c1f04eeebf6eb2` (2026-11-16, last Phase 4 PR — design + plan + close-out). The review gate was lifted for each merge only and restored with **all 15 fields verified identical** every time |
 | Phase 4 result | **CODE COMPLETE — live acceptance `PENDING`** — every Phase 4 code PR (#83, #84, #82) is merged and the §4.4 code criteria are met, but §4.5's live run has not happened yet. The records-only PR #85 (`a925994`) wrote #82's exact SHA and the final-`main` evidence |
 | Phase 4 live-acceptance harness | Branch **phase4/live-acceptance** from `main` @ `a925994` — commit **028407e** (id-only ignore log lines) · **09b6039** (precondition checker) · **eaa79ad** (per-row attribution + 13 checks) · **1bd8104** (supervisor + report) · **f44372a** (manual `qa-live` workflow) · the runbook/state/README commit. Merged after CI `test: SUCCESS` and the usual gate protocol |
+| Phase 4 harness merge | **PR #86 — MERGED** as `88675f355d15acf69209f0e97c541f6692bdbc59` (2026-11-18T20:31:59Z) · CI `test: SUCCESS` (3m45s) · review gate lifted for the merge only and restored with **all 15 fields verified identical** to both backups |
 | Phase 4 live run | **`PENDING`** — recorded here only after the `qa-live` report artifact exists (§4.5) |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**

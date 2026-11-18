@@ -316,3 +316,62 @@ def test_the_toggle_callback_returns_to_the_channel_panel():
     from newsbot import ui_dispatch
     src = inspect.getsource(ui_dispatch)
     assert "qa_enabled" in src, "کال‌بکِ a:tog:<cid>:qa_enabled باید به پنلِ کانال برگردد"
+
+
+# ── خطِ لاگِ id-only برای مسیرهای سکوت (پذیرشِ زندهٔ فاز ۴) ────────────────────────
+# بدونِ این خط، «ربات پیام را دید و رد کرد» با «ربات هیچ پیامی نگرفت» یکی به‌نظر می‌رسد
+# و بررسیِ زندهٔ مسیرهای ignore بی‌معنا می‌شد. هیچ متنی از سؤال/پست لاگ نمی‌شود.
+def _ignored_lines(caplog):
+    return [r.getMessage() for r in caplog.records if "qa: ignored" in r.getMessage()]
+
+
+def test_an_unregistered_channel_logs_one_ignore_line_with_reason(isolated_db, caplog, monkeypatch):
+    _stub_ai(monkeypatch)
+    with caplog.at_level("INFO", logger="core"):
+        asyncio.run(qa.on_group_reply(_update(_group_msg(reply=_channel_post())), NS(bot=_Bot())))
+    lines = _ignored_lines(caplog)
+    assert len(lines) == 1 and "reason=unregistered_channel" in lines[0]
+    assert "chat=-555" in lines[0] and "msg=10" in lines[0] and "user=900001" in lines[0]
+
+
+def test_a_toggle_off_logs_one_ignore_line_with_reason(chan, caplog, monkeypatch):
+    _stub_ai(monkeypatch)
+    update_settings(chan["id"], qa_enabled=False)
+    with caplog.at_level("INFO", logger="core"):
+        asyncio.run(qa.on_group_reply(_update(_group_msg(reply=_channel_post())), NS(bot=_Bot())))
+    lines = [ln for ln in _ignored_lines(caplog) if "reason=toggle_off" in ln]
+    assert len(lines) == 1 and "chat=-555" in lines[0] and "user=900001" in lines[0]
+
+
+def test_a_foreign_group_logs_one_ignore_line_with_reason(chan, caplog, monkeypatch):
+    _stub_ai(monkeypatch)
+    with caplog.at_level("INFO", logger="core"):
+        asyncio.run(qa.on_group_reply(_update(_group_msg(reply=_channel_post())),
+                                      NS(bot=_Bot(linked=-999999))))
+    lines = [ln for ln in _ignored_lines(caplog) if "reason=foreign_group" in ln]
+    assert len(lines) == 1 and "chat=-555" in lines[0]
+
+
+def test_a_reply_to_a_user_message_is_logged_only_at_debug(chan, caplog, monkeypatch):
+    _stub_ai(monkeypatch)
+    user_msg = NS(text="سلام", caption=None, sender_chat=None, forward_from_chat=None,
+                  forward_from_message_id=None, is_automatic_forward=False, message_id=4)
+    with caplog.at_level("DEBUG", logger="core"):
+        asyncio.run(qa.on_group_reply(_update(_group_msg(reply=user_msg)), NS(bot=_Bot())))
+    assert [ln for ln in _ignored_lines(caplog) if "reason=not_a_post" in ln]
+
+
+def test_a_message_without_a_reply_is_logged_only_at_debug(chan, caplog, monkeypatch):
+    _stub_ai(monkeypatch)
+    with caplog.at_level("DEBUG", logger="core"):
+        asyncio.run(qa.on_group_reply(_update(_group_msg(reply=None)), NS(bot=_Bot())))
+    assert [ln for ln in _ignored_lines(caplog) if "reason=not_a_reply" in ln]
+
+
+def test_the_ignore_line_carries_no_question_or_post_text(chan, caplog, monkeypatch):
+    _stub_ai(monkeypatch)
+    with caplog.at_level("DEBUG", logger="core"):
+        asyncio.run(qa.on_group_reply(
+            _update(_group_msg(text="سؤالِ محرمانه", reply=_channel_post(text="متنِ محرمانهٔ پست"))),
+            NS(bot=_Bot())))
+    assert "محرمانه" not in caplog.text

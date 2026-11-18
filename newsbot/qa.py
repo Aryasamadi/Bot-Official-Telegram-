@@ -139,25 +139,31 @@ async def on_group_reply(update, context):
     user = getattr(update, "effective_user", None)
     if msg is None or user is None:
         return                                    # پیامِ کانال/ناشناس
+    chat_id = int(getattr(msg, "chat_id", 0) or 0)
+    img_id = int(getattr(msg, "message_id", 0) or 0)
+    uid = int(getattr(user, "id", 0) or 0)
     reply = getattr(msg, "reply_to_message", None)
     if reply is None:
+        log.debug("qa: ignored chat=%s msg=%s user=%s reason=not_a_reply", chat_id, img_id, uid)
         return                                    # سؤال باید reply به پست باشد
     post = detect_post(reply)
     if not post:
+        log.debug("qa: ignored chat=%s msg=%s user=%s reason=not_a_post", chat_id, img_id, uid)
         return                                    # reply به پیامِ یک کاربر، نه پستِ کانال
     ch = await arun(channel_by_chat, post["channel_chat_id"])
     if not ch:
+        log.info("qa: ignored chat=%s msg=%s user=%s reason=unregistered_channel",
+                 chat_id, img_id, uid)
         return                                    # کانالِ ثبت‌نشده ⇒ سکوت (fail-closed)
     st = await arun(get_settings, ch["id"])
     if not st.get("qa_enabled", True):
+        log.info("qa: ignored chat=%s msg=%s user=%s reason=toggle_off", chat_id, img_id, uid)
         return                                    # کلیدِ per-channel در پنلِ مدیر خاموش است
-    chat_id = int(getattr(msg, "chat_id", 0) or 0)
     linked = await linked_channel_id(context.bot, chat_id)
     if linked is None or int(linked) != int(ch["chat_id"]):
+        log.info("qa: ignored chat=%s msg=%s user=%s reason=foreign_group", chat_id, img_id, uid)
         return                                    # گروهِ دیگر / فورواردِ دستی در گروهِ بی‌ربط ⇒ سکوت
 
-    uid = int(user.id)
-    img_id = int(getattr(msg, "message_id", 0) or 0)
     text = post_text(reply, config.QA_CONTEXT_MAX_CHARS)
     ask = question_text(msg, config.QA_QUESTION_MAX_CHARS)
     if not text or not ask:

@@ -359,7 +359,7 @@ make the bot admin in **both**, register a **public** AI model, and ask from a *
 Telegram account. The super admin has no daily AI cap and never receives an `ai_plan_grants` row, so
 "charged to the asker" and "quota exhausted" are unobservable from that account.
 
-**Key/authorization diagnosis (2026-11-19).** The owner reported that a model which works outside
+**Key/authorization diagnosis (2026-11-19, PR #88 → `6d5b4ae`).** The owner reported that a model which works outside
 the bot fails inside it. The bot's two 🔴 super-admin notifications were provider *rejections* —
 NVIDIA `HTTP 403: Authorization failed` and vyceai `HTTP 400: The model 'agnes-3.0-flash' does not
 exist` — so the key write/read path was audited and three real defects were closed:
@@ -534,6 +534,9 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-19 | **fix/key-entry-hardening** | full `pytest -q` (local, Windows) | **1059 passed, 19 failed in 601.44s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
 | 2026-11-19 | **fix/key-entry-hardening** | `ruff check newsbot tests tools` · `python -m mypy` · `python tools/final_verification.py` · `run.py --check` (dummy env) | All checks passed · **Success: no issues found in 50 source files** · **17/17** · exit **0** |
 
+| 2026-11-19 | **fix/key-entry-hardening** (final tree) | GitHub CI `test` on PR #88 | **SUCCESS** (3m18s) |
+| 2026-11-19 | `main` @ `6d5b4ae` (PR #88) | `gh pr merge 88 --squash --delete-branch`; protection compared field by field | merge SHA `6d5b4aee954a2a1b36a095d79f7dbd5fc1bc8bb1` (2026-11-18T22:36:46Z) · **all 15 fields identical to both backups** · CI `test: SUCCESS` |
+
 **Not run / unavailable:** the live `qa-live` run itself (`PENDING` on the owner — §4.5), coverage
 percentage (no coverage tool in dev requirements), live VPS deployment verification, Cloudflare D1 live
 migration.
@@ -584,6 +587,7 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 4 live-acceptance harness | Branch **phase4/live-acceptance** from `main` @ `a925994` — commit **028407e** (id-only ignore log lines) · **09b6039** (precondition checker) · **eaa79ad** (per-row attribution + 13 checks) · **1bd8104** (supervisor + report) · **f44372a** (manual `qa-live` workflow) · the runbook/state/README commit. Merged after CI `test: SUCCESS` and the usual gate protocol |
 | Phase 4 harness merge | **PR #86 — MERGED** as `88675f355d15acf69209f0e97c541f6692bdbc59` (2026-11-18T20:31:59Z) · CI `test: SUCCESS` (3m45s) · review gate lifted for the merge only and restored with **all 15 fields verified identical** to both backups |
 | Phase 4 live run | **`PENDING`** — recorded here only after the `qa-live` report artifact exists (§4.5) |
+| Key-entry hardening (owner-reported "healthy model fails in the bot") | **PR #88 — MERGED** as `6d5b4aee954a2a1b36a095d79f7dbd5fc1bc8bb1` (2026-11-18T22:36:46Z) · CI `test: SUCCESS` (3m18s) · review gate lifted for the merge only and restored with **all 15 fields verified identical** to both backups |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)

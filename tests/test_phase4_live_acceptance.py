@@ -402,11 +402,11 @@ def test_a_missing_channel_is_a_precondition_failure(tmp_path):
     def resolve(snap):
         raise acc.Precondition("CHANNEL_NOT_REGISTERED")
 
-    proc = FakeProc()
+    ft, proc = FakeTime(), FakeProc()
     code, report = acc.supervise(
-        _cfg(tmp_path), spawn=lambda: proc, snapshot=lambda p: acc.EMPTY_SNAPSHOT,
-        read_log=lambda p: "در حال اجرا…", clock=FakeTime().clock, sleep=lambda s: None,
-        resolve=resolve)
+        _cfg(tmp_path, duration_s=300), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=resolve)
     assert code == 2 and "CHANNEL_NOT_REGISTERED" in report["problems"] and proc.terminated
 
 
@@ -514,3 +514,67 @@ def test_the_runbook_names_the_secrets_and_the_telegram_steps():
         assert needle in body
     for needle in ("غیرسوپر", "toggle_off", "foreign_group", "ai_limit", "۳۵۰"):
         assert needle in body
+
+
+# ── بازبینی مستقل: رفعِ نقص‌های پیداشده پیش از merge ──────────────────────────────
+def test_a_fresh_db_waits_for_registration_instead_of_exiting_immediately(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [WAIT, PASS])
+    ft, proc = FakeTime(), FakeProc()
+    calls = {"n": 0}
+
+    def resolve(snap):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise acc.Precondition("CHANNEL_NOT_REGISTERED")
+        return -100111, -555
+
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=resolve)
+    assert code == 0 and calls["n"] == 2 and report["problems"] == []
+
+
+def test_an_unregistered_channel_waits_until_the_duration_then_exits_2(tmp_path):
+    def resolve(snap):
+        raise acc.Precondition("CHANNEL_NOT_REGISTERED")
+
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=resolve)
+    assert code == 2 and "CHANNEL_NOT_REGISTERED" in report["problems"] and proc.terminated
+
+
+def test_a_counter_delta_in_a_window_without_a_row_event_is_carried_forward():
+    prev = _snap()
+    mid = _snap(usage=[_u(900001, 1)])
+    # اسنپ‌شات‌ها تجمعی‌اند: ردیفِ usage در پنجرهٔ بعد هم وجود دارد (فقط تغییر نمی‌کند).
+    after = _snap(rows=[_qa(status="pending")], usage=[_u(900001, 1)])
+    events1, carry1 = acc.attribute_carry(prev, mid, {})
+    assert events1 == [] and carry1["usage"] == {900001: 1}
+    events2, carry2 = acc.attribute_carry(mid, after, carry1)
+    assert len(events2) == 1 and events2[0]["usage"] == {900001: 1}
+    assert carry2["usage"] == {}
+
+
+def test_carried_counter_deltas_are_not_charged_to_another_user():
+    prev = _snap()
+    mid = _snap(usage=[_u(5, 1)])
+    after = _snap(rows=[_qa(status="pending")], usage=[_u(5, 1)])
+    _, carry = acc.attribute_carry(prev, mid, {})
+    events, rest = acc.attribute_carry(mid, after, carry)
+    assert events[0]["usage"] == {} and rest["usage"] == {5: 1}
+
+
+def test_a_debug_only_ignore_line_does_not_satisfy_the_security_check():
+    log = "2026-11-17 10:00:02 | DEBUG | qa: ignored chat=-555 msg=20 user=900001 reason=not_a_reply\n"
+    snap = _snap(rows=[_qa()], channels=[_c_row()], models=[_m_row()])
+    got = _by_name(_ctx(snap, transitions=[_tr(usage={900001: 1})], log=log, scenario="full"))
+    assert got["ignored_with_a_reason"]["status"] == "NOT_OBSERVED"
+
+
+def test_the_db_cache_save_tolerates_a_missing_db():
+    block = _wf().split("name: Save the test DB", 1)[1]
+    assert "continue-on-error: true" in block

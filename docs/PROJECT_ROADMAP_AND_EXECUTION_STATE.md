@@ -337,6 +337,15 @@ saved with `if: always()` under a per-run key with the `qa-live-db-v1-` prefix, 
 `qa_answers.answer` is blanked before the job ends, the DB is **never** uploaded as an artifact, and a
 stable `SECRETS_KEY` is mandatory — a changing key makes the cached provider secret undecryptable.
 
+**Registration wait (post-review fix).** `supervise` resolves the channel and linked group **inside**
+the polling loop, retrying until they appear: on a `fresh` DB the owner registers the channel and model
+*after* the workflow has started and the bot is up, so a one-shot resolve would have made the first run
+impossible. If registration never appears, the run ends with exit `2` and `CHANNEL_NOT_REGISTERED` —
+never a false success. Counter deltas seen in a window with no `qa_answers` event are carried into the
+next window and attached only to a row of the **same user** (the `qa_claim` → `ai_claim` → `qa_finish`
+sequence can straddle a 10 s boundary); two distinct row keys in one window remain `ERROR`, never a
+guess.
+
 **Exit codes:** `0` = every required check of the chosen scenario observed · `1` = the duration elapsed
 first · `2` = a precondition failed (token / admin id / `SECRETS_KEY` / DB path / `getMe` / channel /
 linked group / super-asker).
@@ -490,11 +499,12 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-16 | `main` @ `f4afa0e` (final Phase 4 `main`) | `pytest --collect-only -q` · `ruff check newsbot tests tools run.py` · `python -m pyflakes newsbot tests` · `python tools/final_verification.py` | **1003 collected** · All checks passed · clean · **17/17** |
 | 2026-11-18 | **phase4/live-acceptance** | `pytest tests/test_phase4_qa_core.py -q` (after the ignore-log change) | **37 passed** (6 new tests; red first: 5 failed) |
 | 2026-11-18 | **phase4/live-acceptance** | `pytest tests/test_phase4_live_acceptance.py -q` (built task by task) | **39 passed** — 9 env/`--check`, 15 attribution/checks (red first: 15 failed), 8 supervisor/report (red first: 8 failed), 6 workflow guards (red first: 6 failed), 1 runbook (red first: `FileNotFoundError`) |
-| 2026-11-18 | **phase4/live-acceptance** | `pytest tests/test_phase4_live_acceptance.py tests/test_repo_integrity.py tests/test_phase1_10_state_alignment.py -q` | **48 passed** |
+| 2026-11-18 | **phase4/live-acceptance** (post-review fixes) | `pytest tests/test_phase4_live_acceptance.py -q` | **45 passed** — 6 new tests for the review findings (red first: 5 failed, 1 invariant passed) |
+| 2026-11-18 | **phase4/live-acceptance** (post-review fixes) | `pytest tests/test_phase4_live_acceptance.py tests/test_repo_integrity.py tests/test_phase1_10_state_alignment.py -q` | **54 passed** |
 | 2026-11-18 | **phase4/live-acceptance** | `tools/qa_live_acceptance.py --check` with a **dummy** token | `problems: [GETME_FAILED]`, exit **2**, token absent from the output (`token_len` printed only) |
 | 2026-11-18 | **phase4/live-acceptance** | `run.py --check` with dummy env vars | **exit 0** — «خودآزمایی موفق»; no secret printed |
-| 2026-11-18 | **phase4/live-acceptance** | full `pytest -q` (local, Windows) | **1029 passed, 19 failed in 638.39s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
-| 2026-11-18 | **phase4/live-acceptance** | `pytest --collect-only -q` | **1048 collected** (README badge and count line updated to match) |
+| 2026-11-18 | **phase4/live-acceptance** (post-review fixes) | full `pytest -q` (local, Windows) | **1035 passed, 19 failed in 639.44s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure** |
+| 2026-11-18 | **phase4/live-acceptance** (post-review fixes) | `pytest --collect-only -q` | **1054 collected** (README badge and count line updated to match) |
 | 2026-11-18 | **phase4/live-acceptance** | `ruff check newsbot tests tools run.py` · `python -m pyflakes newsbot tests tools run.py` · `python -m mypy newsbot` · `python tools/final_verification.py` | All checks passed · clean · **Success: no issues found in 50 source files** · **17/17** |
 
 **Not run / unavailable:** the live `qa-live` run itself (`PENDING` on the owner — §4.5), coverage

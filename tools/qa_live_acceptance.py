@@ -233,13 +233,8 @@ def grant_delta(prev, cur):
     return out
 
 
-def attribute(prev, cur):
-    """رویدادهای پنجره + انتسابِ شمارنده‌ها.
-
-    اگر در یک پنجره فقط **یک** ردیفِ سؤال تغییر کرده باشد، اختلافِ شمارنده‌ها به همان
-    ردیف نسبت داده می‌شود؛ اگر دو ردیفِ متفاوت تغییر کرده باشند، نتیجه `ambiguous` است و
-    ابزار حدس نمی‌زند (اجرا شکست می‌خورد و آن مرحله تکرار می‌شود).
-    """
+def _row_events(prev, cur):
+    """رویدادهای پنجره بدونِ انتسابِ شمارندهها (پایهٔ هر دو انتساب)."""
     before = {(int(r.get("chat_id") or 0), int(r.get("msg_id") or 0)): r for r in prev.qa_rows}
     after = {(int(r.get("chat_id") or 0), int(r.get("msg_id") or 0)): r for r in cur.qa_rows}
     events = []
@@ -250,16 +245,65 @@ def attribute(prev, cur):
         elif (before[key].get("status") or "") != (row.get("status") or ""):
             events.append({"key": list(key), "kind": "status", "to": row.get("status"),
                            "usage": {}, "grants": {}, "ambiguous": False})
-    if not events:
-        return []
     if len({tuple(e["key"]) for e in events}) > 1:
         for e in events:
             e["ambiguous"] = True
-        return events
-    u, g = usage_delta(prev, cur), grant_delta(prev, cur)
-    if u or g:
-        events[0]["usage"], events[0]["grants"] = u, g
     return events
+
+
+def _merge_deltas(a, b):
+    out = {int(k): int(v) for k, v in (a or {}).items()}
+    for key, value in (b or {}).items():
+        key, value = int(key), int(value)
+        out[key] = out.get(key, 0) + value
+        if not out[key]:
+            del out[key]
+    return out
+
+
+def attribute(prev, cur):
+    """رویدادهای پنجره + انتسابِ شمارندهها (همان پنجره).
+
+    اگر در یک پنجره فقط **یک** ردیفِ سؤال تغییر کرده باشد، اختلافِ شمارندهها به همان
+    ردیف نسبت داده میشود؛ اگر دو ردیفِ متفاوت تغییر کرده باشند، نتیجه `ambiguous` است و
+    ابزار حدس نمیزند (اجرا شکست میخورد و آن مرحله تکرار میشود).
+    """
+    events = _row_events(prev, cur)
+    if not events or any(e["ambiguous"] for e in events):
+        return events
+    events[0]["usage"], events[0]["grants"] = usage_delta(prev, cur), grant_delta(prev, cur)
+    return events
+
+
+def attribute_carry(prev, cur, carry):
+    """مانند `attribute` ولی شمارندههای بیصاحب را به پنجرهٔ بعد منتقل میکند.
+
+    `qa_claim` ردیف `pending` را می نویسد، سپس `ai_claim` شمارنده را زیاد می کند و بعد
+    `qa_finish` وضعیت را `done` می کند. اگر مرزِ ۱۰ ثانیهای بینِ این دو نوشتن بیفتد،
+    اختلافِ شمارنده هرگز به ردیف نمی رسد و بررسی «هزینه از پرسشگر» دروغین می شود.
+    انتقال فقط به همان کاربر (و گرانتِ همان کاربر) چسبانده می شود؛ باقیماندهها
+    منتقل می مانند، ولی هرگز به سؤالِ دیگری نسبت داده نمی شوند.
+    """
+    carry = carry or {}
+    events = _row_events(prev, cur)
+    pending_u = _merge_deltas(carry.get("usage"), usage_delta(prev, cur))
+    pending_g = _merge_deltas(carry.get("grants"), grant_delta(prev, cur))
+    if not events or any(e["ambiguous"] for e in events):
+        return events, {"usage": pending_u, "grants": pending_g}
+    key = tuple(events[0]["key"])
+    row = next((r for r in cur.qa_rows
+                if (int(r.get("chat_id") or 0), int(r.get("msg_id") or 0)) == key), None)
+    uid = int((row or {}).get("user_id") or 0)
+    attached_u = {k: v for k, v in pending_u.items() if k == uid}
+    owned_grants = set()
+    for g in cur.grants:
+        if int(g.get("user_id") or 0) == uid:
+            owned_grants.add(int(g.get("id") or 0))
+    attached_g = {k: v for k, v in pending_g.items() if k in owned_grants}
+    events[0]["usage"] = attached_u
+    events[0]["grants"] = attached_g
+    return events, {"usage": {k: v for k, v in pending_u.items() if k != uid},
+                    "grants": {k: v for k, v in pending_g.items() if k not in owned_grants}}
 
 
 # ── لاگ ────────────────────────────────────────────────────────────────────────────
@@ -422,9 +466,14 @@ def evaluate(ctx):
 
     ignored = parse_ignore_lines(ctx.log_text)
     unknown = [ln for ln in ignored if ln["reason"] not in IGNORE_REASONS]
+    # فقط مسیرهای امنیتی میتوانند این بررسی را سبز کنند؛ not_a_reply/not_a_post
+    # (که فقط DEBUG هستند) هیچ سدّی را اثبات نمیکنند و جای «سکوتِ عمدی» حساب نمیشوند.
+    security = [ln for ln in ignored if ln["reason"] in
+                ("unregistered_channel", "toggle_off", "foreign_group")]
     out.append(_check("ignored_with_a_reason",
-                      "NOT_OBSERVED" if (not ignored or unknown) else "OBSERVED",
-                      "count=%d unknown=%d" % (len(ignored), len(unknown))))
+                      "OBSERVED" if (security and not unknown) else "NOT_OBSERVED",
+                      "count=%d security=%d unknown=%d" %
+                      (len(ignored), len(security), len(unknown))))
 
     if not ctx.expected_group:
         out.append(_check("unrelated_group_silent", "NOT_OBSERVED", "group not resolved"))
@@ -649,9 +698,10 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
         if not (MIN_DURATION_MIN * 60 <= int(cfg.duration_s) <= MAX_DURATION_MIN * 60):
             raise Precondition("BAD_DURATION")
         proc = spawn()
+        # حلقهٔ آمادگی از clock تزریقشده استفاده نمیکند: یک fake clock میتوانست
+        # بیپایان بچرخد. تعداد تلاشها محدود و ثابت است.
         ready = False
-        deadline = clock() + READY_ATTEMPTS * READY_INTERVAL_S
-        while clock() < deadline:
+        for _ in range(READY_ATTEMPTS):
             log_text = read_log(cfg.log_path)
             if READY_MARKER in log_text:
                 ready = True
@@ -659,13 +709,25 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
             sleep(READY_INTERVAL_S)
         if not ready:
             raise Precondition("BOT_NOT_READY")
-        channel_chat_id, group_chat_id = resolve(snapshot(cfg.db_path))
+        channel_chat_id = group_chat_id = None
+        resolve_error = ""
         prev = snapshot(cfg.db_path)
         transitions = []
+        carry = {}
         while True:
             sleep(cfg.poll_s)
             cur = snapshot(cfg.db_path)
-            transitions.extend(attribute(prev, cur))
+            if channel_chat_id is None:
+                # اجرای `fresh` با DB خالی شروع میشود: کانال و مدل را مالک *پس از*
+                # بالا آمدن ربات در پنل ثبت میکند. تا آن زمان منتظر میمانیم، نه اینکه
+                # پیش از رسیدنِ دستورِ ثبت، اجرا را با خطای پیششرط تمام کنیم.
+                try:
+                    channel_chat_id, group_chat_id = resolve(cur)
+                    resolve_error = ""
+                except Precondition as e:
+                    resolve_error = e.code
+            events, carry = attribute_carry(prev, cur, carry)
+            transitions.extend(events)
             prev = cur
             log_text = read_log(cfg.log_path)
             ctx = EvalContext(scenario=cfg.scenario, started_at=started_at,
@@ -685,7 +747,11 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
                 code = 0
                 break
             if clock() - t0 >= cfg.duration_s:
-                code = 1
+                if channel_chat_id is None:
+                    problems.append(resolve_error or "CHANNEL_NOT_REGISTERED")
+                    code = 2
+                else:
+                    code = 1
                 break
     except Precondition as e:
         problems.append(e.code)

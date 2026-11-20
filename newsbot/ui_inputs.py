@@ -36,7 +36,7 @@ from newsbot.ai_models import add_model, get_model, update_model, test_model, ai
 from newsbot.discover import probe_source, _api_discover
 from newsbot.publish import bot_can_post
 from newsbot.text_format import sanitize_html, strip_tags
-from newsbot.ui_i18n import tr, WIZ, FIELD_LABEL, INT_FIELDS, gtext_set, TEXT_KEYS
+from newsbot.ui_i18n import tr, WIZ, FIELD_LABEL, INT_FIELDS, gtext_set, TEXT_KEYS, QA_FIELDS
 from newsbot.ui_widgets import (B, esc, render, popup, wiz_prompt, operation_status, uname, L,
                                 notify_supers, notify_user_fn, await_expired)
 from newsbot.ui_views_user import view_receipt_ok
@@ -148,6 +148,7 @@ def _input_value(field, raw, lang, name_limit=100):
         except (ValueError, TypeError): invalid("دما باید عددی بین ۰ و ۲ باشد.", "Temperature must be a finite number between 0 and 2.")
         if not 0 <= value <= 2: invalid("دما باید عددی بین ۰ و ۲ باشد.", "Temperature must be a finite number between 0 and 2.")
         return value
+    if field in QA_FIELDS and text == "": return None   # خالی = ارثبری از پیشفرضِ env
     if field == "daily_posts_cap":
         t = text.strip()
         if t == "": return None

@@ -288,6 +288,8 @@ def default_settings(lang="fa", channel_username=""):
             "include_media": True, "include_link": True, "signature": f"@{channel_username}" if channel_username else "@channel", "max_words": 500, "post_limit": config.POST_LIMIT_DEFAULT,
             "strict_ads": False, "interval_minutes": 60, "posts_per_cycle": 1, "hashtags": True, "daily_posts_cap": None,
             "qa_enabled": True,
+            # فاز ۵ — None یعنی «ارثبری از پیشفرضِ env»؛ پنلِ مدیر میتواند override کند.
+            "qa_cooldown_s": None, "qa_user_daily_max": None, "qa_post_daily_max": None,
             "last_run": None, "last_end": None, "last_result": "", "last_diag": None, "last_notified_diag": ""}
 
 def get_settings(cid):

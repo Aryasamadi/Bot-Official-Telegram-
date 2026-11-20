@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS rate_limits(key TEXT PRIMARY KEY, ts REAL);
 CREATE INDEX IF NOT EXISTS idx_ai_rotation_log_scope ON ai_rotation_log(scope, id);
 CREATE INDEX IF NOT EXISTS idx_qa_answers_user ON qa_answers(user_id);
 CREATE INDEX IF NOT EXISTS idx_qa_answers_channel ON qa_answers(channel_id);
+CREATE INDEX IF NOT EXISTS idx_qa_answers_user_day ON qa_answers(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_qa_answers_post_day ON qa_answers(channel_id, post_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_ai_grants_user ON ai_plan_grants(user_id);
 CREATE INDEX IF NOT EXISTS idx_art_ch_status ON articles(channel_id, status);
 CREATE INDEX IF NOT EXISTS idx_art_created ON articles(created_at);

@@ -15,7 +15,9 @@ from newsbot.core_channels import channel_by_chat, get_settings
 from newsbot.core_users import ensure_user
 from newsbot.db import arun, gget, gset, q, write
 from newsbot.logutils import log
+from newsbot.ratelimit import rate_ok
 from newsbot.text_format import strip_tags
+from newsbot.ui_i18n import tr
 from newsbot.timeutils import now_iso, now_utc, parse_dt
 
 # پیام‌های صادقانهٔ ما (بدونِ AI) — متنِ ثابت، تا مدل هرگز چیزی از خودش نسازد.
@@ -78,24 +80,32 @@ def cap_answer(text, max_chars):
 
 
 # ── ادعا و پایانِ کار (at-most-once) ───────────────────────────────────────────────
-def qa_claim(chat_id, msg_id, user_id, channel_id, post_id=0):
-    """True فقط اگر همین فراخوانی ردیفِ تازه ساخت.
+def claim(chat_id, msg_id, user_id, channel_id, post_id=0, settings=None, now=None):
+    """ادعای اتمیک با گاردریلِ فاز ۵؛ ``''`` = پذیرفته، در غیرِ اینصورت دلیلِ رد.
 
-    ``INSERT OR IGNORE`` تک‌دستوری و اتمیک است (SQLite و D1 هر دو) ⇒ اگر همان پیام دوباره
-    برسد (restart، retryِ شبکه، ``concurrent_updates``) ردیفِ موجود دست‌نخورده می‌ماند و
-    پاسخِ دوم ساخته نمی‌شود: تصمیمِ مالک ۲ — «حتی اگر پاسخ گم شود، تکرار نمی‌کنیم».
-    ``channel_id`` شناسهٔ چتِ تلگرامِ کانال است، نه شناسهٔ داخلی (تصمیمِ مالک ۵).
+    ``qa_quota`` تمامِ محدودیتها را در یک دستورِ اتمیک اعمال میکند (SQLite و D1).
+    ``channel_id`` شناسهٔ چتِ تلگرامِ کانال است، نه شناسهٔ داخلی (تصمیمِ مالک ۵ فاز ۴).
     """
-    now = now_iso()
+    from newsbot import qa_quota
+    from newsbot.core_users import is_super
+    from newsbot.timeutils import iso_fixed
+
+    at = iso_fixed(now) if now is not None else now_iso()
+    moment = now if now is not None else now_utc()
+    cooldown_s, user_max, post_max = qa_quota.effective_limits(settings)
+    since_user, since_post, cutoff = qa_quota.windows(user_id, settings, moment)
 
     def _go(conn):
-        cur = conn.execute(
-            "INSERT OR IGNORE INTO qa_answers(chat_id,msg_id,user_id,channel_id,post_id,status,answer,error,created_at,updated_at)"
-            " VALUES(?,?,?,?,?,'pending','','',?,?)",
-            (chat_id, msg_id, user_id, channel_id, post_id, now, now))
-        return int(getattr(cur, "rowcount", 0) or 0) == 1
+        return qa_quota.claim(conn, chat_id, msg_id, user_id, channel_id, post_id,
+                              since_user, since_post, cutoff, user_max, post_max,
+                              bypass=is_super(user_id), at=at)
 
-    return bool(write(_go))
+    return write(_go)
+
+
+def qa_claim(chat_id, msg_id, user_id, channel_id, post_id=0, settings=None, now=None):
+    """سازگاری با تماسهای قدیمی: ``True`` فقط وقتی که claim پذیرفته شد."""
+    return claim(chat_id, msg_id, user_id, channel_id, post_id, settings, now) == ""
 
 
 def qa_finish(chat_id, msg_id, status, answer="", error=""):
@@ -168,7 +178,9 @@ async def on_group_reply(update, context):
     ask = question_text(msg, config.QA_QUESTION_MAX_CHARS)
     if not text or not ask:
         # پیامِ صادقانهٔ ثابت، بدونِ هزینه و بدونِ AI؛ همچنان at-most-once.
-        if not await arun(qa_claim, chat_id, img_id, uid, ch["chat_id"], post["post_id"]):
+        reason = await arun(claim, chat_id, img_id, uid, ch["chat_id"], post["post_id"], st)
+        if reason:
+            log.info("qa: quota chat=%s msg=%s user=%s reason=%s", chat_id, img_id, uid, reason)
             return
         wait = NO_TEXT if not text else NO_QUESTION
         await _send(context, chat_id, img_id, wait)
@@ -178,8 +190,12 @@ async def on_group_reply(update, context):
         return
 
     await arun(ensure_user, uid, getattr(user, "username", "") or "", getattr(user, "full_name", "") or "")
-    if not await arun(qa_claim, chat_id, img_id, uid, ch["chat_id"], post["post_id"]):
-        log.info("qa: duplicate chat=%s msg=%s user=%s", chat_id, img_id, uid)
+    reason = await arun(claim, chat_id, img_id, uid, ch["chat_id"], post["post_id"], st)
+    if reason:
+        log.info("qa: quota chat=%s msg=%s user=%s reason=%s", chat_id, img_id, uid, reason)
+        if reason in ("user_cap", "post_cap") and rate_ok(f"qa:capmsg:{uid}:{ch['id']}", 300):
+            key = "qa_cap_user" if reason == "user_cap" else "qa_cap_post"
+            await _send(context, chat_id, img_id, tr(st.get("ui_lang") or "fa", key))
         return                                    # تصمیمِ مالک ۲: دوباره پاسخ نمی‌دهیم
 
     system, model_user = build_prompt(text, ask)

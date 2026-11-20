@@ -164,8 +164,16 @@ TXT = {
     "report": ("📊 گزارش", "📊 Report"), "test": ("🧪 تست فوری", "🧪 Quick test"), "sources": ("🌐 منابع ({n})", "🌐 Sources ({n})"), "content": ("✍️ محتوا", "✍️ Content"), "sched": ("⏰ زمان‌بندی", "⏰ Schedule"),
     "queue": ("📝 صف انتشار ({n})", "📝 Publish queue ({n})"), "rejected": ("♻️ ردشده‌ها", "♻️ Rejected"), "automation": ("{i} فعالیت ربات", "{i} Automation"), "ch_del": ("🗑 حذف کانال", "🗑 Remove channel"),
     "qa_btn": ("{i} پرسش‌وپاسخِ گروه", "{i} Group Q&A"),
+    "qa_cap_user": ("سهمیهٔ پرسش روزانهٔ شما در این کانال تمام شده است؛ فردا دوباره تلاش کنید.",
+                    "Your daily question limit in this channel is used up; try again tomorrow."),
+    "qa_cap_post": ("برای این پست به سقفِ پرسشِ امروز رسیدیم؛ زیرِ پستِ دیگری بپرسید.",
+                    "This post has reached today’s question limit; ask under another post."),
     "refresh": ("🔄 به‌روزرسانی", "🔄 Refresh"), "ch_del_q": ("❓ کانال «{title}» حذف شود؟\n🌐 منابع · ⚙️ تنظیمات · 📝 صف انتشار این کانال هم حذف می‌شوند", "❓ Remove “{title}”?\n🌐 Sources · ⚙️ Settings · 📝 Queue"), "ch_deleted": ("🗑 کانال حذف شد", "🗑 Channel removed"),
     "tog_enabled": ("🟢 ربات برای این کانال فعال شد", "🟢 Automation on"), "tog_disabled": ("🔴 ربات برای این کانال متوقف شد", "🔴 Automation off"),
+    "qa_settings": ("⚙️ تنظیماتِ پرسش و پاسخ", "⚙️ Q&A settings"),
+    "qa_panel_title": ("<b>⚙️ تنظیماتِ پرسش و پاسخ</b>\n⏱ cooldown: {cd}\n👤 سقفِ روزانهٔ کاربر: {ud}\n💬 سقفِ روزانهٔ پست: {pd}",
+                       "<b>⚙️ Q&A settings</b>\n⏱ Cooldown: {cd}\n👤 Daily per user: {ud}\n💬 Daily per post: {pd}"),
+    "qa_inherit": ("پیشفرض ({n})", "default ({n})"),
     # ---- تأیید دوسطحی اقدامات مخرب (فاز ۹ — UX-05/UISEC-05)
     "confirm_q": ("⚠️ <b>مطمئن هستید؟</b>\n\n{what}", "⚠️ <b>Are you sure?</b>\n\n{what}"),
     "confirm_del_q": ("🗑 «{name}» برای همیشه حذف شود؟", "🗑 Delete «{name}» permanently?"),
@@ -364,10 +372,14 @@ def reason_text(reason, lang):
     if r.startswith("ai_"): return ai_err_text(r, lang)
     return tr(lang, "rj_other")
 
-INT_FIELDS = {"max_words": (30, 600), "min_score": (0, 100), "post_limit": (300, 900), "interval_minutes": (config.MIN_INTERVAL, 1440), "posts_per_cycle": (1, config.MAX_PPC), "lookback_hours": (1, config.MAX_LOOKBACK)}
+INT_FIELDS = {"max_words": (30, 600), "min_score": (0, 100), "post_limit": (300, 900), "interval_minutes": (config.MIN_INTERVAL, 1440), "posts_per_cycle": (1, config.MAX_PPC), "lookback_hours": (1, config.MAX_LOOKBACK), "qa_cooldown_s": (0, 3600), "qa_user_daily_max": (1, 1000), "qa_post_daily_max": (1, 5000)}
 FIELD_LABEL = {"prompt": ("پرامپت نگارش", "Writing prompt"), "topic": ("موضوع کانال", "Channel topic"), "language": ("زبان خروجی (نام زبان را بنویسید: فارسی، English، Italian، …)", "Output language (type the language name: Italian, Chinese, English, …)"), "signature": ("امضای پایان پست (@channel = یوزرنیم کانال)", "Post signature (@channel = channel username)"),
                "daily_posts_cap": ("📊 سقف روزانهٔ پست — عددی تا سقف پلن خود بفرستید (خالی = بدون محدودیت)", "📊 Daily post cap — a number up to your plan max (blank = unlimited)"), "max_words": ("حداکثر تعداد کلمات پست", "Max post words"), "min_score": ("حداقل امتیاز قبولی (۰ تا ۱۰۰)", "Min score (0–100)"), "post_limit": ("سقف کاراکتر پست در کانال (۳۰۰ تا ۹۰۰، پیش‌فرض ۹۰۰)؛ ادامهٔ متن در «ادامه در ربات» نمایش داده می‌شود", "Channel post char limit (default 900); longer content → “continue in bot” (300–900)"),
-               "interval_minutes": (f"فاصله‌ی چرخه (دقیقه، ≥{config.MIN_INTERVAL})", f"Cycle interval (min, ≥{config.MIN_INTERVAL})"), "posts_per_cycle": (f"پست در هر چرخه (≤{config.MAX_PPC})", f"Posts per cycle (≤{config.MAX_PPC})"), "lookback_hours": (f"مقالات چند ساعت اخیر (≤{config.MAX_LOOKBACK})", f"Articles from last N hours (≤{config.MAX_LOOKBACK})")}
+               "interval_minutes": (f"فاصله‌ی چرخه (دقیقه، ≥{config.MIN_INTERVAL})", f"Cycle interval (min, ≥{config.MIN_INTERVAL})"), "posts_per_cycle": (f"پست در هر چرخه (≤{config.MAX_PPC})", f"Posts per cycle (≤{config.MAX_PPC})"), "lookback_hours": (f"مقالات چند ساعت اخیر (≤{config.MAX_LOOKBACK})", f"Articles from last N hours (≤{config.MAX_LOOKBACK})"),
+               "qa_cooldown_s": ("فاصلهٔ حداقل بین دو پرسش به ثانیه (۰ = خاموش؛ خالی = پیشفرض)", "Minimum seconds between two asks (0 = off; blank = default)"),
+               "qa_user_daily_max": ("حداکثر پرسشِ یک کاربر در روز در این کانال (خالی = پیشفرض)", "Max asks per user per day in this channel (blank = default)"),
+               "qa_post_daily_max": ("حداکثر پرسش در روز برای هر پست (خالی = پیشفرض)", "Max asks per post per day (blank = default)")}
+QA_FIELDS = ("qa_cooldown_s", "qa_user_daily_max", "qa_post_daily_max")
 SCHED_FIELDS = ("interval_minutes", "posts_per_cycle", "lookback_hours", "daily_posts_cap")
 TZ_NAMES = {"tehran": ("🇮🇷 تهران", "🇮🇷 Tehran"), "istanbul": ("🇹🇷 استانبول", "🇹🇷 Istanbul"), "dubai": ("🇦🇪 دبی", "🇦🇪 Dubai"), "kabul": ("🇦🇫 کابل", "🇦🇫 Kabul"), "karachi": ("🇵🇰 کراچی", "🇵🇰 Karachi"), "delhi": ("🇮🇳 دهلی", "🇮🇳 Delhi"),
             "moscow": ("🇷🇺 مسکو", "🇷🇺 Moscow"), "berlin": ("🇩🇪 برلین", "🇩🇪 Berlin"), "london": ("🇬🇧 لندن", "🇬🇧 London"), "beijing": ("🇨🇳 پکن", "🇨🇳 Beijing"), "tokyo": ("🇯🇵 توکیو", "🇯🇵 Tokyo"), "sydney": ("🇦🇺 سیدنی", "🇦🇺 Sydney"),

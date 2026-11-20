@@ -33,7 +33,7 @@ from newsbot.scheduler import report_text
 from newsbot.logutils import log, log_event
 from newsbot.text_format import fit_html, strip_tags
 from newsbot import rich_send
-from newsbot.ui_i18n import tr, TOGGLABLE, tz_city, FIELD_LABEL, SCHED_FIELDS
+from newsbot.ui_i18n import tr, TOGGLABLE, tz_city, FIELD_LABEL, SCHED_FIELDS, QA_FIELDS
 from newsbot.ui_widgets import (B, pairs, esc, render, popup, ask, wiz_start, operation_status, onoff,
                                 operation_text, run_user_operation, run_model_test,
                                 clear_interaction, L)
@@ -41,7 +41,7 @@ from newsbot.opctx import _current_operation
 from newsbot.ui_views_user import view_lang, set_language, view_plans, view_plan, do_free, do_request
 from newsbot.ui_views_admin import (view_admin_home, view_channel, channel_recheck, view_sources, view_source,
                                     view_content, view_cats, view_cat, view_crits, view_crit, hour_grid,
-                                    view_sched, view_quiet, view_tz, view_queue, view_article, view_my_ai,
+                                    view_qa, view_sched, view_quiet, view_tz, view_queue, view_article, view_my_ai,
                                     view_my_ai_model, view_my_plan, run_test, mand_gate,
                                     PLAN_FIELDS, MODEL_FIELDS, fl)
 from newsbot.ui_views_super import (view_super_home, view_health, view_s_plans, view_s_plan, view_s_discs,
@@ -209,6 +209,7 @@ async def _dispatch(update, context, data):
         if not ch: await popup(update, context, tr(lang, "notfound")); return await view_admin_home(update, context)
         s = get_settings(cid)
         if b == "ch": return await view_channel(update, context, cid)
+        if b == "qa": return await view_qa(update, context, cid)
         if b == "rep": return await render(update, context, report_text(uid, cid, lang), [[B(tr(lang, "refresh"), f"a:rep:{cid}")], [B(tr(lang, "back"), f"a:ch:{cid}")]])
         if b == "test": return await run_test(update, context, cid)
         if b == "qreset": return await render(update, context, tr(lang, "queue_reset_q"), [[B(tr(lang, "yes"), f"a:qreset2:{cid}"), B(tr(lang, "no"), f"a:que:{cid}")]])
@@ -241,7 +242,7 @@ async def _dispatch(update, context, data):
             if d == "daily_posts_cap":
                 capv = admin_limits(uid).get("daily_posts")
                 if capv is not None: extra = "\n" + tr(lang, "cap_range", n=capv)
-            return await ask(update, context, f"{FIELD_LABEL[d][1 if lang == 'en' else 0]}\n<code>{esc(shown)[:3500]}</code>{extra}", "field", f"a:sch:{cid}" if d in SCHED_FIELDS else f"a:con:{cid}", cid=cid, field=d)
+            return await ask(update, context, f"{FIELD_LABEL[d][1 if lang == 'en' else 0]}\n<code>{esc(shown)[:3500]}</code>{extra}", "field", f"a:qa:{cid}" if d in QA_FIELDS else f"a:sch:{cid}" if d in SCHED_FIELDS else f"a:con:{cid}", cid=cid, field=d)
         if b == "mode": new = "review" if s["mode"] == "auto" else "auto"; update_settings(cid, mode=new); await popup(update, context, tr(lang, "mode_set_auto" if new == "auto" else "mode_set_review")); return await view_sched(update, context, cid)
         if b == "sch": return await view_sched(update, context, cid)
         if b == "quiet": return await view_quiet(update, context, cid)

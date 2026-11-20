@@ -24,7 +24,7 @@ from newsbot.ai_models import (hostname, list_models, get_model, ai_err_text, er
 from newsbot.core_articles import ready_count, count_articles, articles_by_status, get_article
 from newsbot.cycle import run_channel_cycle, Diag
 from newsbot.text_format import strip_tags, fit_html
-from newsbot.ui_i18n import tr, STATUS, reason_text, TZ_NAMES, tz_city
+from newsbot.ui_i18n import tr, STATUS, reason_text, TZ_NAMES, tz_city, QA_FIELDS, FIELD_LABEL
 from newsbot.ui_widgets import (B, U, pairs, esc, onoff, cap, L, uname, render, popup,
                                 operation_status, _ai_status_reporter)
 from newsbot.opctx import _current_operation
@@ -87,6 +87,7 @@ async def view_channel(update, context, cid):
           [B(tr(lang, "rejected"), f"a:rej:{cid}"), B(tr(lang, "automation", i="🟢" if on else "🔴"), f"a:tog:{cid}:enabled")],
           [B(tr(lang, "my_ai"), f"a:myai:{cid}"), B(tr(lang, "ch_del"), f"a:chdel:{cid}")],
           [B(tr(lang, "qa_btn", i="🟢" if s.get("qa_enabled") else "🔴"), f"a:tog:{cid}:qa_enabled")],
+          [B(tr(lang, "qa_settings"), f"a:qa:{cid}")],
           [B(tr(lang, "back"), "a:home")]]
     # NEW v4: اگر کانال اجباری تنظیم شده و این ادمین عضو نیست، هشدار + دکمه‌های Join/Check بالای پنل
     if mandatory_configured(lang):
@@ -261,6 +262,28 @@ async def view_crit(update, context, cid, i):
 # زمان‌بندی، خاموشی، منطقه‌ی زمانی شهری
 # ══════════════════════════════════════════════════════════════════════════
 def hour_grid(prefix): return [[B(f"{h:02d}", f"{prefix}:{h}") for h in range(r, r + 6)] for r in range(0, 24, 6)]
+
+async def view_qa(update, context, cid):
+    """فاز ۵ — سه override سهمیهٔ Q&A؛ خالی یعنی ارثبری از پیشفرضِ env."""
+    uid = update.effective_user.id
+    lang = L(update)
+    if not channel_owned(cid, uid):
+        return await view_admin_home(update, context)
+    s = get_settings(cid)
+    from newsbot.qa_quota import effective_limits
+    cooldown, user_max, post_max = effective_limits(s)
+    shown = {"qa_cooldown_s": cooldown, "qa_user_daily_max": user_max,
+             "qa_post_daily_max": post_max}
+    def _label(key):
+        value = shown[key]
+        return tr(lang, "qa_inherit", n=value) if s.get(key) is None else str(value)
+    text = tr(lang, "qa_panel_title", cd=_label("qa_cooldown_s"),
+              ud=_label("qa_user_daily_max"), pd=_label("qa_post_daily_max"))
+    kb = [[B(f"{FIELD_LABEL[k][1 if lang == 'en' else 0]}: {_label(k)}",
+             f"a:set:{cid}:{k}")] for k in QA_FIELDS]
+    kb.append([B(tr(lang, "back"), f"a:ch:{cid}")])
+    await render(update, context, text, kb)
+
 
 async def view_sched(update, context, cid):
     uid = update.effective_user.id; lang = L(update); ch = channel_owned(cid, uid)

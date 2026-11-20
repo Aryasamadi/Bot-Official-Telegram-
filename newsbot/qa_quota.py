@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from newsbot import config
 from newsbot.core_users import admin_offset
-from newsbot.timeutils import iso_fixed, now_iso, offset_now, today_str
+from newsbot.timeutils import iso_fixed, now_iso, offset_now
 
 def _number(settings, key, default, lo, hi):
     value = (settings or {}).get(key)
@@ -44,8 +44,12 @@ def windows(uid, settings, now):
     user_off = admin_offset(uid)
     stored_tz = (settings or {}).get("tz") or (settings or {}).get("utc_offset")
     channel_off = offset_now(stored_tz) if stored_tz is not None else config.DEFAULT_UTC_OFFSET
-    since_user = day_start(today_str(user_off), user_off)
-    since_post = day_start(today_str(channel_off), channel_off)
+    # روزِ محلی از همان لحظهای که claim میشود مشتق میشود، نه از ساعتِ دیوارِ proces؛
+    # وگرنه تستها (و مرزِ روز در اجرای طولانی) به زمانِ اجرا وابسته میشوند.
+    user_day = (now + timedelta(hours=user_off)).strftime("%Y-%m-%d")
+    channel_day = (now + timedelta(hours=channel_off)).strftime("%Y-%m-%d")
+    since_user = day_start(user_day, user_off)
+    since_post = day_start(channel_day, channel_off)
     cutoff = iso_fixed(now - timedelta(seconds=cooldown_s))
     return since_user, since_post, cutoff
 

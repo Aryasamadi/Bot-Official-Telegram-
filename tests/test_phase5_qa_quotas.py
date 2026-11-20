@@ -240,3 +240,11 @@ def test_the_normal_phase4_path_still_answers_once(chan, monkeypatch):
     u = _update(_group_msg(reply=_channel_post()))
     asyncio.run(qa.on_group_reply(u, NS(bot=bot)))
     assert len(bot.sent) == 1
+
+
+def test_day_windows_use_the_injected_now_not_the_wall_clock(monkeypatch):
+    """CI caught this: a test run after 20:30 UTC changed the local day and broke all caps."""
+    monkeypatch.setattr(qa_quota, "today_str", lambda offset="3.5": "2000-01-01", raising=False)
+    since_user, since_post, _cutoff = qa_quota.windows(7, {}, now)
+    assert since_user == "2026-11-19T20:30:00.000000+00:00"
+    assert since_post == "2026-11-19T20:30:00.000000+00:00"

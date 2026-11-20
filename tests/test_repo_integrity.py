@@ -28,6 +28,10 @@ PROPOSED_PATHS = {
     "deploy/systemd/newsbot.service",   # OPS-001 — پیشنهادِ فایل واحد سرویس
     "deploy/env.example",               # OPS-001 — پیشنهادِ تک‌منبعِ APP_DIR/SERVICE
     "tests/test_deploy_gate.py",        # OPS-032 — در PR #21 (نگهبانِ دروازهٔ تأییدِ استقرار)
+    # فاز ۵ — مسیرهای پیشنهادیِ طراحی/نقشهٔ Q&A quotas؛ در PRِ کد ساخته میشوند و از اینجا حذف میشوند.
+    "newsbot/qa_quota.py",
+    "tests/test_phase5_qa_quotas.py",
+    "tests/test_phase5_qa_quota_ui.py",
 }
 
 # فایل‌های سطح ریشه که مراجعه به آن‌ها باید معتبر باشد

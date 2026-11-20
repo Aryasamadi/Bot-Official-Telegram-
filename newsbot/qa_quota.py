@@ -8,7 +8,7 @@ ON CONFLICT DO NOTHING`` تمامِ محدودیتها را در یک دستور
 from datetime import datetime, timedelta
 
 from newsbot import config
-from newsbot.core_users import admin_offset, is_super
+from newsbot.core_users import admin_offset
 from newsbot.timeutils import iso_fixed, now_iso, offset_now, today_str
 
 def _number(settings, key, default, lo, hi):

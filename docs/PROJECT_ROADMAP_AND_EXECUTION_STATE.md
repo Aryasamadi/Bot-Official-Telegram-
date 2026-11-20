@@ -12,13 +12,13 @@
 |---|---|
 | **Repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Default branch** | `main` |
-| **Current working branch** | **docs/phase5-start-record** (records-only, from `main` @ `74abc16`) |
-| **Branch base commit** | `74abc160a67f56f2eabc0ebd3d0fd9d88a7daee0` (PR #89 squash-merge — PR #88's merge record) |
-| **Last verified commit** | `74abc16` on `main` (PR #89 squash-merge, 2026-11-19) |
+| **Current working branch** | **docs/phase5-delivery-record** (records-only, from `main` @ `1e6e8eb`) |
+| **Branch base commit** | `1e6e8ebed85e79554c1302101fc3c6e390530ad4` (PR #92 squash-merge — Phase 5 code) |
+| **Last verified commit** | `1e6e8eb` on `main` (PR #92 squash-merge, 2026-11-20) |
 | **Last state update** | 2026-11-20 (UTC) |
-| **Overall status** | `IN_PROGRESS` — Phases 1–3 are `COMPLETED`; **Phase 4's code is merged and its live acceptance is deferred to Phase 10** (owner, 2026-11-20 — D-7); **Phase 5 has started** by explicit owner instruction |
-| **Current phase** | Phase 4 of 10 — `IN_PROGRESS` (code merged; live acceptance deferred to Phase 10, D-7) · **Phase 5 is the active work**: `IN_PROGRESS` (design stage, Q&A quotas) |
-| **Current sub-step** | Phase 5 design: per-post/day cap, cooldown, per-user daily cap, enforced atomically in the backend (§2, Phase 5 constraint) |
+| **Overall status** | `IN_PROGRESS` — Phases 1–3 are `COMPLETED`; **Phase 4's code is merged and its live acceptance is deferred to Phase 10** (owner, 2026-11-20 — D-7); **Phase 5's code, tests, design and plan are merged**, its live scenario is also owned by the Phase 10 single run |
+| **Current phase** | Phase 4 of 10 — `IN_PROGRESS` (code merged; live acceptance deferred to Phase 10, D-7) · **Phase 5**: code complete and merged (D-7 covers its live scenario too) |
+| **Current sub-step** | Phase 5 delivery record: code **#92 → `1e6e8eb`**, design/plan **#91 → `7adb0da`**; next phase starts only on explicit owner instruction |
 | **Owner authorization** | Required for every phase. Phase 1 authorized 2026-11-12. The owner ruled on 2026-11-12: every PR of a phase must be **merged** when that phase completes, and each existing PR (#46–#56) gets its disposition **inside its own phase**. |
 
 ---
@@ -51,9 +51,17 @@ Dependabot, which opened **#68–#78** (dependency bumps, several major). Those 
 (`44506386031`, on `74abc16`) ended `exit 2 / CHANNEL_NOT_REGISTERED` after the full budget because the
 channel was never registered in the runner's bot (`get_chat` answered `Chat not found`); no code change
 is pending from it.
-**Exact next action:** Phase 5 — Q&A quotas (per-post/day, cooldown, per-user daily cap, atomic in the
-backend), with the owner's constraint that usage must be **neither an absolute limit nor runaway
-consumption**. Phase 5 starts with its design, not with code.
+**Phase 5 result:** the guardrails are merged. One atomic `INSERT … SELECT … WHERE … ON CONFLICT DO
+NOTHING` on `qa_answers` enforces the per-user cooldown (default 30 s), the per-user daily cap
+(default 30) and the per-post daily cap (default 50) at claim time — no counter table, no schema
+version bump, and a refused ask never reaches `ai_chat`. Each channel can override all three values
+in the admin panel; blank means inherit from env. Super admins are unlimited. Cooldown refusals are
+silent; daily-cap refusals get one short throttled notice. Design and plan are in **#91 → `7adb0da`**;
+code and 30 new tests in **#92 → `1e6e8eb`**. The Phase 5 live scenario is covered by the single
+Phase 10 run together with Phase 4's deferred acceptance (D-7); this phase does **not** claim a live
+verification.
+
+**Exact next action:** Phase 6 — `typing` indicator, on explicit owner instruction only.
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -68,7 +76,7 @@ consumption**. Phase 5 starts with its design, not with code.
 | 2 | Provider-centric model data + backend | Independent Providers (name / base URL / token), connection test, model discovery with manual fallback, encrypted keys | **`COMPLETED`** 2026-11-13 | 1 |
 | 3 | Round-robin model rotation engine | Every request takes the next model in order; atomic cursor; restart/concurrency safe; per-request audit | **`COMPLETED`** 2026-11-14 | 2 |
 | 4 | Reply-to-channel-post Q&A core | Answer questions replied to a channel post, with controlled post context and idempotent delivery | **`IN_PROGRESS`** — code merged 2026-11-16 (#83, #84, #82; key hardening #88); live acceptance **deferred to Phase 10** by the owner on 2026-11-20 (D-7) | 2, 3 |
-| 5 | Q&A quotas | Per-post/day, cooldown, per-user daily cap — enforced atomically in the backend | **`IN_PROGRESS`** — started 2026-11-20 on explicit owner instruction (the "wait for Phase 4 live" rule waived for this transition) | 4 |
+| 5 | Q&A quotas | Per-post/day, cooldown, per-user daily cap — enforced atomically in the backend | **`IN_PROGRESS`** — code/design/tests merged 2026-11-20 (design+plan #91 → `7adb0da`, code #92 → `1e6e8eb`); the live scenario is covered by the single Phase 10 run (D-7), so no live verification is claimed here | 4 |
 | 6 | Typing lifecycle | Show `typing` while waiting; always stop it; no orphan tasks | `NOT_STARTED` | 4 |
 | 7 | Onboarding, home menu, message routing | Language → welcome → "start" → add channel; free plan without an extra button; stable state | `NOT_STARTED` | 1 (4 for reply routing) |
 | 8 | Deeplink "back to channel" | Return the user to the exact source post, or explain the platform limit honestly | `NOT_STARTED` | 1 |
@@ -538,9 +546,22 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-19 | **fix/key-entry-hardening** (final tree) | GitHub CI `test` on PR #88 | **SUCCESS** (3m18s) |
 | 2026-11-19 | `main` @ `6d5b4ae` (PR #88) | `gh pr merge 88 --squash --delete-branch`; protection compared field by field | merge SHA `6d5b4aee954a2a1b36a095d79f7dbd5fc1bc8bb1` (2026-11-18T22:36:46Z) · **all 15 fields identical to both backups** · CI `test: SUCCESS` |
 
-**Not run / unavailable:** the live `qa-live` run itself (`PENDING` on the owner — §4.5), coverage
-percentage (no coverage tool in dev requirements), live VPS deployment verification, Cloudflare D1 live
-migration.
+| 2026-11-20 | **docs/phase5-design-plan** | `pytest tests/test_repo_integrity.py tests/test_phase1_10_state_alignment.py -q` after adding the three proposed paths to `PROPOSED_PATHS` | **9 passed** — the first CI run failed on the docs PR because `newsbot/qa_quota.py` and the two new test files were cited before they existed; the guard's allowlist fixed it |
+| 2026-11-20 | **docs/phase5-design-plan** (final tree) | GitHub CI `test` on PR #91 | **SUCCESS** (2m39s) |
+| 2026-11-20 | `main` @ `7adb0da` (PR #91) | `gh pr merge 91 --squash --delete-branch`; protection compared field by field | merge SHA `7adb0da2ddf80ffcc01cad0b06210a0d628a1297` (2026-11-20T18:55:56Z) · **all 15 fields identical to both backups** · CI `test: SUCCESS` |
+| 2026-11-20 | **phase5/qa-quotas** | `pytest tests/test_phase5_qa_quotas.py -q` (Task 1 red then green) | **2 passed** |
+| 2026-11-20 | **phase5/qa-quotas** | `pytest tests/test_phase5_qa_quotas.py tests/test_phase4_qa_core.py tests/test_phase4_schema.py -q` (Task 2 red then green) | **61 passed** — red runs exposed two plan defects: the cooldown-after test reused `user_max=1`, and the concurrency test used 8 distinct users; both corrected with ledgered rulings |
+| 2026-11-20 | **phase5/qa-quotas** | `pytest tests/test_phase5_qa_quotas.py tests/test_phase4_qa_core.py -q` (Task 3) | **59 passed** |
+| 2026-11-20 | **phase5/qa-quotas** | `pytest tests/test_phase5_qa_quota_ui.py tests/test_phase5_qa_quotas.py -q` (Task 4 red then green) | **29 passed** |
+| 2026-11-20 | **phase5/qa-quotas** (whole-branch self-review) | two new RED→GREEN tests: lost D1 insert race ⇒ `duplicate`; panel labels localised instead of raw field ids | both passed after the fix; final targeted run **30 passed** |
+| 2026-11-20 | **phase5/qa-quotas** (final tree) | full `pytest -q` (local, Windows) | **1089 passed, 19 failed in 615.97s** — the 19 are exactly the §5.1 Windows-only bash-path failures (4 + 15); **no new failure**. The README guard caught the stale 1078/۱۰۷۸ count and both numbers were raised to 1108/۱۱۰۸ |
+| 2026-11-20 | **phase5/qa-quotas** (final tree) | `pytest --collect-only -q` · `ruff check .` · `python -m mypy newsbot` · `python tools/final_verification.py` · `run.py --check` (dummy env) | **1108 collected** · All checks passed · **Success: no issues found in 51 source files** · **17/17** · exit **0** |
+| 2026-11-20 | **phase5/qa-quotas** (final tree) | GitHub CI `test` on PR #92 | **SUCCESS** (3m09s) |
+| 2026-11-20 | `main` @ `1e6e8eb` (PR #92) | `gh pr merge 92 --squash --delete-branch`; protection compared field by field | merge SHA `1e6e8ebed85e79554c1302101fc3c6e390530ad4` (2026-11-20T20:05:53Z) · **all 15 fields identical to both backups** · CI `test: SUCCESS` |
+
+**Not run / unavailable:** the live `qa-live` run itself (Phase 4 acceptance **and** Phase 5's quota
+scenario, both deferred to the single Phase 10 run — D-7 / §4.5), coverage percentage (no coverage tool
+in dev requirements), live VPS deployment verification, Cloudflare D1 live migration.
 
 ### 5.1 The 19 local failures on the final `main` (measured, not assumed)
 
@@ -587,8 +608,11 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 4 result | **CODE COMPLETE — live acceptance `PENDING`** — every Phase 4 code PR (#83, #84, #82) is merged and the §4.4 code criteria are met, but §4.5's live run has not happened yet. The records-only PR #85 (`a925994`) wrote #82's exact SHA and the final-`main` evidence |
 | Phase 4 live-acceptance harness | Branch **phase4/live-acceptance** from `main` @ `a925994` — commit **028407e** (id-only ignore log lines) · **09b6039** (precondition checker) · **eaa79ad** (per-row attribution + 13 checks) · **1bd8104** (supervisor + report) · **f44372a** (manual `qa-live` workflow) · the runbook/state/README commit. Merged after CI `test: SUCCESS` and the usual gate protocol |
 | Phase 4 harness merge | **PR #86 — MERGED** as `88675f355d15acf69209f0e97c541f6692bdbc59` (2026-11-18T20:31:59Z) · CI `test: SUCCESS` (3m45s) · review gate lifted for the merge only and restored with **all 15 fields verified identical** to both backups |
-| Phase 4 live run | **`PENDING`** — recorded here only after the `qa-live` report artifact exists (§4.5) |
+| Phase 4 live run | **`DEFERRED TO PHASE 10`** by the owner on 2026-11-20 (D-7) — recorded here only after the single release-run `qa-live` report artifact exists (§4.5) |
 | Key-entry hardening (owner-reported "healthy model fails in the bot") | **PR #88 — MERGED** as `6d5b4aee954a2a1b36a095d79f7dbd5fc1bc8bb1` (2026-11-18T22:36:46Z) · CI `test: SUCCESS` (3m18s) · review gate lifted for the merge only and restored with **all 15 fields verified identical** to both backups |
+| Phase 5 design + plan | **PR #91 — MERGED** as `7adb0da2ddf80ffcc01cad0b06210a0d628a1297` (2026-11-20T18:55:56Z) · CI `test: SUCCESS` (2m39s) · gate restored with **all 15 fields identical**. Spec: `docs/superpowers/specs/2026-11-20-phase5-qa-quotas-design.md` · plan: `docs/superpowers/plans/2026-11-20-phase5-qa-quotas.md` |
+| Phase 5 code | Branch **phase5/qa-quotas** from `main` @ `7adb0da` — commits **accde94** (config) · **6ff2a1e** (atomic claim) · **70a9a48** (handler) · **45be39c** (admin panel) · **9a9cb7e** (review fixes) · **b12e290** (ruff cleanup). Merged as **PR #92 → `1e6e8ebed85e79554c1302101fc3c6e390530ad4`** (2026-11-20T20:05:53Z) · CI `test: SUCCESS` (3m09s) · gate restored with **all 15 fields identical** |
+| Phase 5 result | **CODE COMPLETE — no live verification claimed**: 30 new tests, 1108 collected, full Windows suite 1089 passed / 19 known failures, `ruff`/`mypy`/`final_verification.py`/`run.py --check` all clean. The Phase 5 quota scenario is checked in the single Phase 10 run together with Phase 4 (D-7) |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)
@@ -656,7 +680,7 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 | D-4 | Dependabot (enabled by #64) opened #68–#78: `python 3.13-slim → 3.15-slim`, `actions/checkout 4 → 7`, `setup-python 5 → 7`, `upload-artifact 4 → 7`, `gitleaks-action 2 → 3`, `appleboy/ssh-action 1.2.2 → 1.2.5`, `python-dateutil 2.9 → 4.0`, `tzlocal → 5.4.5`, `soupsieve → 4.1`, `regex → 2026.11.9`, `ruff 0.14 → 0.17`. Several are **major** bumps that change CI/deploy behaviour | deferred to Phase 10 (dependency and release hardening), one PR at a time with a real CI run |
 | D-5 | `qa_answers` has **no retention or pruning policy**: at-most-once needs the row keyed by `(chat_id, msg_id)` forever, so the table grows with every answered question (one small row per answer; no question or answer text is stored) | deferred; revisit in Phase 10 with a measured row-count/age threshold if volume justifies it — **deleting rows would re-open the at-most-once guarantee**, so any pruning must keep the key |
 | D-6 | The Actions cache used by `qa-live` holds the **test** database across runs (key prefix `qa-live-db-v1-`), and that DB can contain an encrypted provider key. `qa_answers.answer` is blanked and the DB is never uploaded as an artifact, but a cached artifact still outlives the run until the cache expires | accepted for the test-only workflow; the stable `SECRETS_KEY` is mandatory (`SECRETS_KEY_REQUIRED` blocks a keyless run). Revisit in Phase 10 alongside B-5's key rotation |
-| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`) | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS` and the release is not "live-verified" |
+| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS`, Phase 5 stays code-complete but not live-verified, and the release is not "live-verified" |
 
 ---
 

@@ -164,6 +164,10 @@ TXT = {
     "report": ("📊 گزارش", "📊 Report"), "test": ("🧪 تست فوری", "🧪 Quick test"), "sources": ("🌐 منابع ({n})", "🌐 Sources ({n})"), "content": ("✍️ محتوا", "✍️ Content"), "sched": ("⏰ زمان‌بندی", "⏰ Schedule"),
     "queue": ("📝 صف انتشار ({n})", "📝 Publish queue ({n})"), "rejected": ("♻️ ردشده‌ها", "♻️ Rejected"), "automation": ("{i} فعالیت ربات", "{i} Automation"), "ch_del": ("🗑 حذف کانال", "🗑 Remove channel"),
     "qa_btn": ("{i} پرسش‌وپاسخِ گروه", "{i} Group Q&A"),
+    "qa_cap_user": ("سهمیهٔ پرسش روزانهٔ شما در این کانال تمام شده است؛ فردا دوباره تلاش کنید.",
+                    "Your daily question limit in this channel is used up; try again tomorrow."),
+    "qa_cap_post": ("برای این پست به سقفِ پرسشِ امروز رسیدیم؛ زیرِ پستِ دیگری بپرسید.",
+                    "This post has reached today’s question limit; ask under another post."),
     "refresh": ("🔄 به‌روزرسانی", "🔄 Refresh"), "ch_del_q": ("❓ کانال «{title}» حذف شود؟\n🌐 منابع · ⚙️ تنظیمات · 📝 صف انتشار این کانال هم حذف می‌شوند", "❓ Remove “{title}”?\n🌐 Sources · ⚙️ Settings · 📝 Queue"), "ch_deleted": ("🗑 کانال حذف شد", "🗑 Channel removed"),
     "tog_enabled": ("🟢 ربات برای این کانال فعال شد", "🟢 Automation on"), "tog_disabled": ("🔴 ربات برای این کانال متوقف شد", "🔴 Automation off"),
     # ---- تأیید دوسطحی اقدامات مخرب (فاز ۹ — UX-05/UISEC-05)

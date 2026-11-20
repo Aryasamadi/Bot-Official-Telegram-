@@ -15,7 +15,9 @@ from newsbot.core_channels import channel_by_chat, get_settings
 from newsbot.core_users import ensure_user
 from newsbot.db import arun, gget, gset, q, write
 from newsbot.logutils import log
+from newsbot.ratelimit import rate_ok
 from newsbot.text_format import strip_tags
+from newsbot.ui_i18n import tr
 from newsbot.timeutils import now_iso, now_utc, parse_dt
 
 # پیام‌های صادقانهٔ ما (بدونِ AI) — متنِ ثابت، تا مدل هرگز چیزی از خودش نسازد.
@@ -176,7 +178,9 @@ async def on_group_reply(update, context):
     ask = question_text(msg, config.QA_QUESTION_MAX_CHARS)
     if not text or not ask:
         # پیامِ صادقانهٔ ثابت، بدونِ هزینه و بدونِ AI؛ همچنان at-most-once.
-        if not await arun(qa_claim, chat_id, img_id, uid, ch["chat_id"], post["post_id"]):
+        reason = await arun(claim, chat_id, img_id, uid, ch["chat_id"], post["post_id"], st)
+        if reason:
+            log.info("qa: quota chat=%s msg=%s user=%s reason=%s", chat_id, img_id, uid, reason)
             return
         wait = NO_TEXT if not text else NO_QUESTION
         await _send(context, chat_id, img_id, wait)
@@ -186,8 +190,12 @@ async def on_group_reply(update, context):
         return
 
     await arun(ensure_user, uid, getattr(user, "username", "") or "", getattr(user, "full_name", "") or "")
-    if not await arun(qa_claim, chat_id, img_id, uid, ch["chat_id"], post["post_id"]):
-        log.info("qa: duplicate chat=%s msg=%s user=%s", chat_id, img_id, uid)
+    reason = await arun(claim, chat_id, img_id, uid, ch["chat_id"], post["post_id"], st)
+    if reason:
+        log.info("qa: quota chat=%s msg=%s user=%s reason=%s", chat_id, img_id, uid, reason)
+        if reason in ("user_cap", "post_cap") and rate_ok(f"qa:capmsg:{uid}:{ch['id']}", 300):
+            key = "qa_cap_user" if reason == "user_cap" else "qa_cap_post"
+            await _send(context, chat_id, img_id, tr(st.get("ui_lang") or "fa", key))
         return                                    # تصمیمِ مالک ۲: دوباره پاسخ نمی‌دهیم
 
     system, model_user = build_prompt(text, ask)

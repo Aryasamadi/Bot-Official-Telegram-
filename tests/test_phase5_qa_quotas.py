@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """فاز ۵ — سهمیهٔ پرسش و پاسخ: cooldown، سقفِ روزانهٔ کاربر و سقفِ روزانهٔ پست."""
+import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace as NS
 
 import pytest
 
-from newsbot import config, qa, qa_quota
+from newsbot import ai_models as amod
+from newsbot import config, qa, qa_quota, ratelimit
+from newsbot.core_channels import add_channel, channel_by_chat
 from newsbot.db import q
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,3 +124,99 @@ def test_effective_limits_fall_back_on_invalid_override():
 
 def test_day_start_uses_the_given_offset():
     assert qa_quota.day_start("2026-11-20", 3.5) == "2026-11-19T20:30:00.000000+00:00"
+
+
+# ── هندلر: رفتار در برابرِ ردِ سهمیه ────────────────────────────────────────────────
+class _Bot:
+    def __init__(self, linked=-100111):
+        self.linked, self.sent = linked, []
+
+    async def get_chat(self, gid):
+        return NS(linked_chat_id=self.linked)
+
+    async def send_message(self, chat_id, text, **kw):
+        self.sent.append({"chat_id": chat_id, "text": text, **kw})
+        return NS(message_id=1)
+
+
+def _channel_post(text="متن پست", mid=77):
+    return NS(sender_chat=NS(id=-100111, type="channel"), forward_from_chat=None,
+              forward_from_message_id=mid, text=text, caption=None,
+              is_automatic_forward=True, message_id=5)
+
+
+def _group_msg(gid=-555, mid=10, text="این پست دربارهٔ چیست؟", reply=None):
+    return NS(chat_id=gid, message_id=mid, text=text, caption=None,
+              chat=NS(type="supergroup"), reply_to_message=reply, date=None)
+
+
+def _update(msg, uid=900001):
+    return NS(effective_message=msg,
+              effective_user=NS(id=uid, username="u", full_name="U"))
+
+
+@pytest.fixture
+def chan(isolated_db):
+    add_channel(900001, -100111, "کانال", "", 900001)
+    return channel_by_chat(-100111)
+
+
+def _stub_ai(monkeypatch, out="پاسخِ مدل"):
+    async def fake(system, user, **kw):
+        return out, "m", None
+    monkeypatch.setattr(amod, "ai_chat", fake)
+
+
+def test_a_cap_refusal_sends_one_short_notice(chan, monkeypatch):
+    monkeypatch.setattr(qa, "claim", lambda *a, **k: "user_cap")
+    called = []
+
+    async def fake_ai(*a, **k):
+        called.append(1)
+        return "x", "m", None
+    monkeypatch.setattr(amod, "ai_chat", fake_ai)
+    ratelimit._rl.clear()
+    bot = _Bot()
+    asyncio.run(qa.on_group_reply(
+        _update(_group_msg(reply=_channel_post())), NS(bot=bot)))
+    assert len(bot.sent) == 1 and called == []
+
+
+def test_the_cap_notice_is_throttled(chan, monkeypatch):
+    monkeypatch.setattr(qa, "claim", lambda *a, **k: "post_cap")
+    ratelimit._rl.clear()
+    bot = _Bot()
+    for mid in (11, 12):
+        asyncio.run(qa.on_group_reply(
+            _update(_group_msg(mid=mid, reply=_channel_post())), NS(bot=bot)))
+    assert len(bot.sent) == 1
+
+
+def test_a_cooldown_refusal_is_silent_and_never_calls_ai(chan, monkeypatch):
+    monkeypatch.setattr(qa, "claim", lambda *a, **k: "cooldown")
+    called = []
+
+    async def fake_ai(*a, **k):
+        called.append(1)
+        return "x", "m", None
+    monkeypatch.setattr(amod, "ai_chat", fake_ai)
+    bot = _Bot()
+    asyncio.run(qa.on_group_reply(
+        _update(_group_msg(reply=_channel_post())), NS(bot=bot)))
+    assert bot.sent == [] and called == []
+
+
+def test_an_empty_reply_in_cooldown_is_silent(chan, monkeypatch):
+    monkeypatch.setattr(qa, "claim", lambda *a, **k: "cooldown")
+    bot = _Bot()
+    asyncio.run(qa.on_group_reply(
+        _update(_group_msg(reply=_channel_post(text=None))), NS(bot=bot)))
+    assert bot.sent == []
+
+
+def test_the_normal_phase4_path_still_answers_once(chan, monkeypatch):
+    _stub_ai(monkeypatch)
+    bot = _Bot()
+    u = _update(_group_msg(reply=_channel_post()))
+    asyncio.run(qa.on_group_reply(u, NS(bot=bot)))
+    assert len(bot.sent) == 1

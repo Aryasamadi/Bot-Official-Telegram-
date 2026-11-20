@@ -231,6 +231,10 @@ QA_CONTEXT_MAX_CHARS = _env_int("QA_CONTEXT_MAX_CHARS", 4000, 200, 20000)
 QA_QUESTION_MAX_CHARS = _env_int("QA_QUESTION_MAX_CHARS", 1000, 50, 5000)
 QA_ANSWER_MAX_CHARS = _env_int("QA_ANSWER_MAX_CHARS", 900, 100, 4000)
 QA_LINK_CACHE_MIN = _env_int("QA_LINK_CACHE_MIN", 360, 5, 10080)
+# فاز ۵ — گاردریلِ پرسش (پیشفرضِ نصب؛ هر کانال می‌تواند در پنل override کند).
+QA_COOLDOWN_S = _env_int("QA_COOLDOWN_S", 30, 0, 3600)             # ۰ = خاموش
+QA_USER_DAILY_MAX = _env_int("QA_USER_DAILY_MAX", 30, 1, 1000)
+QA_POST_DAILY_MAX = _env_int("QA_POST_DAILY_MAX", 50, 1, 5000)
 FETCH_CONCURRENCY = _env_int("FETCH_CONCURRENCY", 8)
 CYCLE_CONCURRENCY = _env_int("CYCLE_CONCURRENCY", 2)
 MAX_CYCLES_PER_TICK = _env_int("MAX_CYCLES_PER_TICK", 4)

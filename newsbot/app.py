@@ -215,7 +215,10 @@ def preflight(check=False):
                             ("RETRY_AFTER_MAX", config.RETRY_AFTER_MAX, 5, 600), ("ABUSE_RATE_SEC", config.ABUSE_RATE_SEC, 0.0, 60.0),
                             ("RECOVER_EVERY_MIN", config.RECOVER_EVERY_MIN, 1, 1440), ("STALE_UPDATE_MAX_MIN", config.STALE_UPDATE_MAX_MIN, 5, 1440),
                             ("MAX_QUEUE_SIZE", config.MAX_QUEUE_SIZE, 1, 100000), ("PAY_STUCK_MIN", config.PAY_STUCK_MIN, 1, 1440),
-                            ("AWAIT_TTL_SEC", config.AWAIT_TTL_SEC, 60, 86400)):
+                            ("AWAIT_TTL_SEC", config.AWAIT_TTL_SEC, 60, 86400),
+                             ("QA_COOLDOWN_S", config.QA_COOLDOWN_S, 0, 3600),
+                             ("QA_USER_DAILY_MAX", config.QA_USER_DAILY_MAX, 1, 1000),
+                             ("QA_POST_DAILY_MAX", config.QA_POST_DAILY_MAX, 1, 5000)):
         if not lo <= val <= hi: bad.append(f"{nm} بیرون از بازه‌ی مجاز {lo}..{hi} است: {val}")
     if config.POST_LIMIT_MAX > config.CAPTION_LIMIT - 100:   # قاعده‌ی سخت: کپشن هرگز نباید پست را دو پیام کند
         bad.append(f"POST_LIMIT_MAX ({config.POST_LIMIT_MAX}) باید حداقل ۱۰۰ کاراکتر زیر سقف تلگرام ({config.CAPTION_LIMIT}) بماند")

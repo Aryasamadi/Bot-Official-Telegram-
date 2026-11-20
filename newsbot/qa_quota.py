@@ -82,6 +82,10 @@ def claim(conn, chat_id, msg_id, user_id, channel_id, post_id,
                         user_id, cooldown_cutoff))
     if int(getattr(cur, "rowcount", 0) or 0) == 1:
         return ""
+    # روی D1 دو فراخوانی میتوانند هر دو پیشبررسی را بگذرانند؛ برندهٔ مسابقه تک است.
+    if conn.execute("SELECT 1 FROM qa_answers WHERE chat_id=? AND msg_id=?",
+                    (chat_id, msg_id)).fetchone():
+        return "duplicate"
     # تشخیصِ دلیل فقط برای لاگ/پیام است؛ enforcement همان دستورِ بالاست.
     used_user = int(conn.execute(
         "SELECT COUNT(*) AS n FROM qa_answers WHERE user_id=? AND created_at>=?",

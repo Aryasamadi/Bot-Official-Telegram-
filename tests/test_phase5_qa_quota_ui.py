@@ -38,6 +38,7 @@ def test_view_qa_renders_three_buttons_and_inherited_values(chan, monkeypatch):
     async def fake_render(update, context, text, kb=None, force_new=False):
         seen["text"] = text
         seen["buttons"] = [b.callback_data for row in (kb or []) for b in row]
+        seen["labels"] = [b.text for row in (kb or []) for b in row]
 
     monkeypatch.setattr(vadmin, "render", fake_render)
     monkeypatch.setattr(vadmin, "L", lambda update: "fa")
@@ -45,6 +46,7 @@ def test_view_qa_renders_three_buttons_and_inherited_values(chan, monkeypatch):
     monkeypatch.setattr(vadmin, "get_settings", lambda cid: default_settings())
     asyncio.run(vadmin.view_qa(_update(), _context(), chan["id"]))
     assert all(f"a:set:{chan['id']}:{k}" in seen["buttons"] for k in QA_FIELDS)
+    assert all(k not in label for k in QA_FIELDS for label in seen["labels"])
     assert "30" in seen["text"] and "50" in seen["text"]
 
 

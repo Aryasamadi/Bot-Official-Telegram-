@@ -24,7 +24,7 @@ from newsbot.ai_models import (hostname, list_models, get_model, ai_err_text, er
 from newsbot.core_articles import ready_count, count_articles, articles_by_status, get_article
 from newsbot.cycle import run_channel_cycle, Diag
 from newsbot.text_format import strip_tags, fit_html
-from newsbot.ui_i18n import tr, STATUS, reason_text, TZ_NAMES, tz_city, QA_FIELDS
+from newsbot.ui_i18n import tr, STATUS, reason_text, TZ_NAMES, tz_city, QA_FIELDS, FIELD_LABEL
 from newsbot.ui_widgets import (B, U, pairs, esc, onoff, cap, L, uname, render, popup,
                                 operation_status, _ai_status_reporter)
 from newsbot.opctx import _current_operation
@@ -279,7 +279,8 @@ async def view_qa(update, context, cid):
         return tr(lang, "qa_inherit", n=value) if s.get(key) is None else str(value)
     text = tr(lang, "qa_panel_title", cd=_label("qa_cooldown_s"),
               ud=_label("qa_user_daily_max"), pd=_label("qa_post_daily_max"))
-    kb = [[B(f"{tr(lang, k)}: {_label(k)}", f"a:set:{cid}:{k}")] for k in QA_FIELDS]
+    kb = [[B(f"{FIELD_LABEL[k][1 if lang == 'en' else 0]}: {_label(k)}",
+             f"a:set:{cid}:{k}")] for k in QA_FIELDS]
     kb.append([B(tr(lang, "back"), f"a:ch:{cid}")])
     await render(update, context, text, kb)
 

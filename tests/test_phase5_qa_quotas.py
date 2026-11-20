@@ -91,6 +91,26 @@ def test_concurrent_claims_at_cap_one_produce_exactly_one_row(isolated_db):
     assert q("SELECT COUNT(*) AS n FROM qa_answers", one=True)["n"] == 1
 
 
+def test_a_lost_insert_race_is_reported_as_duplicate(isolated_db):
+    """دو فراخوانیِ D1 میتوانند هر دو پیشبررسی را بگذرانند؛ برنده یکی است."""
+    from newsbot.db import db
+    from newsbot.timeutils import iso_fixed
+    real = db()
+
+    class Race:
+        def execute(self, sql, params=()):
+            cur = real.execute(sql, params)
+            if sql.strip().startswith("INSERT INTO qa_answers"):
+                return NS(rowcount=0, fetchone=lambda: None)
+            return cur
+
+    reason = qa_quota.claim(
+        Race(), 1, 1, 7, -100, 55,
+        "0001-01-01T00:00:00.000000+00:00", "0001-01-01T00:00:00.000000+00:00",
+        "2026-11-20T12:00:00.000000+00:00", 1, 100, at=iso_fixed(now))
+    assert reason == "duplicate"
+
+
 def test_a_yesterday_ask_is_outside_today_window(isolated_db):
     q("INSERT INTO qa_answers(chat_id,msg_id,user_id,channel_id,post_id,status,answer,error,created_at,updated_at)"
       " VALUES(1,1,7,-100,55,'done','','','2026-11-19T12:00:00.000000+00:00','')")

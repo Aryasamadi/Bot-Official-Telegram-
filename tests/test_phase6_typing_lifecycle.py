@@ -151,7 +151,8 @@ def test_three_failures_mute_the_chat_for_thirty_seconds(fast_clock):
         assert len(bot.calls) <= 4
         assert -555 not in ca._active
         assert ca._muted_until[-555] > time.monotonic()
-        assert ca._muted_until[-555] - time.monotonic() <= 31
+        remaining = ca._muted_until[-555] - time.monotonic()
+        assert 29.5 <= remaining <= 31, f"پنجرهٔ سکوت باید ~۳۰ ثانیه باشد، نه {remaining:.1f}s"
 
         before = len(bot.calls)
         async with ca.typing_while(bot, -555):      # داخلِ پنجرهٔ سکوت: صفر فراخوانیِ تازه
@@ -274,3 +275,20 @@ def test_stop_reason_is_exception_when_the_body_raises(fast_clock, caplog):
 
     asyncio.run(scenario())
     assert any("typing: stop chat=-7 reason=exception" in r.getMessage() for r in caplog.records)
+
+
+def test_a_crashing_heartbeat_never_breaks_the_caller_and_is_drained(fast_clock, monkeypatch, caplog):
+    async def boom(*args, **kwargs):
+        raise RuntimeError("heartbeat exploded")
+
+    monkeypatch.setattr(ca, "_heartbeat", boom)
+
+    async def scenario():
+        with caplog.at_level("DEBUG", logger="core"):
+            async with ca.typing_while(_Bot(), -99):
+                await asyncio.sleep(0.05)
+        assert -99 not in ca._active
+        assert not _typing_tasks()
+
+    asyncio.run(scenario())
+    assert any("heartbeat ended with error chat=-99" in r.getMessage() for r in caplog.records)

@@ -98,6 +98,11 @@ async def _reap(chat_id: int, rec: _Heartbeat, reason: str) -> None:
             continue
         except Exception:
             break
+    if task.done() and not task.cancelled():
+        try:
+            task.result()                    # تخلیهٔ استثنا: هیچ خطایی بی‌لاگ رها نشود
+        except Exception:
+            log.debug("typing: heartbeat ended with error chat=%s", chat_id, exc_info=True)
     if _active.get(chat_id) is rec:
         _active.pop(chat_id, None)
     log.debug("typing: stop chat=%s reason=%s", chat_id, "shutdown" if _shutdown else reason)

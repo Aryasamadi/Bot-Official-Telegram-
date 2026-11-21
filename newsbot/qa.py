@@ -9,7 +9,7 @@
 
 نکتهٔ امنیتی: متنِ سؤال و متنِ پاسخ هرگز نوشته نمی‌شوند؛ لاگ فقط شناسه و طول دارد.
 """
-from newsbot import ai_models, config
+from newsbot import ai_models, chat_action, config
 from newsbot.ai_models import budget_reset
 from newsbot.core_channels import channel_by_chat, get_settings
 from newsbot.core_users import ensure_user
@@ -198,20 +198,23 @@ async def on_group_reply(update, context):
             await _send(context, chat_id, img_id, tr(st.get("ui_lang") or "fa", key))
         return                                    # تصمیمِ مالک ۲: دوباره پاسخ نمی‌دهیم
 
-    system, model_user = build_prompt(text, ask)
-    budget_reset()                                # بودجهٔ ContextVar باید روی همین حلقه صفر شود
-    out, _label, err = await ai_models.ai_chat(system, model_user, owner_id=uid)
-    answer = cap_answer(out or "", config.QA_ANSWER_MAX_CHARS)
-    if err or not answer:
-        wait = NO_QUOTA if err == "ai_limit" else AI_FAIL
-        await _send(context, chat_id, img_id, wait)
-        await arun(qa_finish, chat_id, img_id, "failed", "", err or "empty_answer")
-        log.warning("qa: ai failed chat=%s msg=%s user=%s err=%s",
-                    chat_id, img_id, uid, err or "empty_answer")
-        return
+    # فاز ۶: typing فقط از لحظهای که پاسخ قرار است ساخته شود تا تحویلِ نهایی؛
+    # درخواستهای ردشده (cooldown/session/cap) پیش از این بلوک برمیگردند و هیچ action نمیزنند.
+    async with chat_action.typing_while(context.bot, chat_id, kind="qa"):
+        system, model_user = build_prompt(text, ask)
+        budget_reset()                            # بودجهٔ ContextVar باید روی همین حلقه صفر شود
+        out, _label, err = await ai_models.ai_chat(system, model_user, owner_id=uid)
+        answer = cap_answer(out or "", config.QA_ANSWER_MAX_CHARS)
+        if err or not answer:
+            wait = NO_QUOTA if err == "ai_limit" else AI_FAIL
+            await _send(context, chat_id, img_id, wait)
+            await arun(qa_finish, chat_id, img_id, "failed", "", err or "empty_answer")
+            log.warning("qa: ai failed chat=%s msg=%s user=%s err=%s",
+                        chat_id, img_id, uid, err or "empty_answer")
+            return
 
-    await _send(context, chat_id, img_id, answer)
-    await arun(qa_finish, chat_id, img_id, "done", answer, "")
+        await _send(context, chat_id, img_id, answer)
+        await arun(qa_finish, chat_id, img_id, "done", answer, "")
     log.info("qa: answered chat=%s msg=%s user=%s qlen=%d alen=%d",
              chat_id, img_id, uid, len(ask), len(answer))
 

@@ -12,6 +12,7 @@ from telegram.request import HTTPXRequest
 from newsbot import config
 from newsbot import runtime
 from newsbot import watchdog
+from newsbot import chat_action
 from newsbot.db import db, gget, gset, arun, close_db_pool, readonly_check
 from newsbot.logutils import log, log_event
 from newsbot.ratelimit import _rate_load_persisted
@@ -126,8 +127,12 @@ async def post_shutdown(app: Application):
     except Exception:
         log.exception("graceful drain failed")
     _me = asyncio.current_task()
-    # ARCH-06: همه‌ی تسک‌های نام‌دارِ طولانی (ارسال، عملیات کاربر، تفکر/چرخه) تا وسط کار رها نشوند
-    pend = [t for t in asyncio.all_tasks() if t is not _me and t.get_name().split(":")[0] in ("publication", "user", "thinking")]
+    # فاز ۶: ضربان‌گرهای «در حال تایپ» پیش از جمع‌کردنِ تسک‌ها لغو و جمع می‌شوند تا هیچ
+    # heartbeat‌ای از post_shutdown زنده‌تر نماند؛ سپس نام‌شان هم در فهرستِ لغو می‌آید.
+    chat_action.mark_shutdown()
+    await chat_action.stop_all_typing()
+    # ARCH-06: همه‌ی تسک‌های نام‌دارِ طولانی (ارسال، عملیات کاربر، تفکر/چرخه، تایپ) تا وسط کار رها نشوند
+    pend = [t for t in asyncio.all_tasks() if t is not _me and t.get_name().split(":")[0] in ("publication", "user", "thinking", "typing")]
     if pend:
         for t in pend: t.cancel()
         _done, left = await asyncio.wait(pend, timeout=_SHUTDOWN_CANCEL_TIMEOUT)
@@ -216,6 +221,8 @@ def preflight(check=False):
                             ("RECOVER_EVERY_MIN", config.RECOVER_EVERY_MIN, 1, 1440), ("STALE_UPDATE_MAX_MIN", config.STALE_UPDATE_MAX_MIN, 5, 1440),
                             ("MAX_QUEUE_SIZE", config.MAX_QUEUE_SIZE, 1, 100000), ("PAY_STUCK_MIN", config.PAY_STUCK_MIN, 1, 1440),
                             ("AWAIT_TTL_SEC", config.AWAIT_TTL_SEC, 60, 86400),
+                             ("TYPING_START_DELAY_S", config.TYPING_START_DELAY_S, 0, 30),
+                             ("TYPING_REFRESH_S", config.TYPING_REFRESH_S, 1, 5),
                              ("QA_COOLDOWN_S", config.QA_COOLDOWN_S, 0, 3600),
                              ("QA_USER_DAILY_MAX", config.QA_USER_DAILY_MAX, 1, 1000),
                              ("QA_POST_DAILY_MAX", config.QA_POST_DAILY_MAX, 1, 5000)):

@@ -231,6 +231,12 @@ QA_CONTEXT_MAX_CHARS = _env_int("QA_CONTEXT_MAX_CHARS", 4000, 200, 20000)
 QA_QUESTION_MAX_CHARS = _env_int("QA_QUESTION_MAX_CHARS", 1000, 50, 5000)
 QA_ANSWER_MAX_CHARS = _env_int("QA_ANSWER_MAX_CHARS", 900, 100, 4000)
 QA_LINK_CACHE_MIN = _env_int("QA_LINK_CACHE_MIN", 360, 5, 10080)
+
+# ── فاز ۶: نشانگرِ «در حال تایپ» (typing lifecycle) ──
+# TYPING_ENABLED فقط kill-switchِ سراسریِ نصب است.
+TYPING_ENABLED = os.getenv("TYPING_ENABLED", "1").strip() == "1"
+TYPING_START_DELAY_S = _env_float("TYPING_START_DELAY_S", 1.0, 0.0, 30.0)
+TYPING_REFRESH_S = _env_float("TYPING_REFRESH_S", 4.0, 1.0, 5.0)
 # فاز ۵ — گاردریلِ پرسش (پیشفرضِ نصب؛ هر کانال می‌تواند در پنل override کند).
 QA_COOLDOWN_S = _env_int("QA_COOLDOWN_S", 30, 0, 3600)             # ۰ = خاموش
 QA_USER_DAILY_MAX = _env_int("QA_USER_DAILY_MAX", 30, 1, 1000)

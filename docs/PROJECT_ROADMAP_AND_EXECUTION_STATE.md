@@ -61,7 +61,22 @@ code and 30 new tests in **#92 → `1e6e8eb`**. The Phase 5 live scenario is cov
 Phase 10 run together with Phase 4's deferred acceptance (D-7); this phase does **not** claim a live
 verification.
 
-**Exact next action:** Phase 6 — `typing` indicator, on explicit owner instruction only.
+
+**Phase 6 result:** the native `typing` lifecycle is **code-complete**. A single reusable
+`chat_action.typing_while(bot, chat_id, kind)` runs a refcounted per-chat heartbeat: it starts after
+1 s, refreshes every 4 s, mutes that chat for 30 s after three consecutive send failures, and is
+cancelled and awaited on every exit path. It is installed around `work()` in `run_user_operation`
+and around the AI-and-delivery block in `on_group_reply`; every quota refusal returns **before** the
+block and therefore emits no chat action. `post_shutdown` marks shutdown, reaps all heartbeats, and
+includes `typing:` in its cancellation list — a handler resuming after shutdown cannot register a new
+heartbeat. Config is env-only (`TYPING_ENABLED`, `TYPING_START_DELAY_S`, `TYPING_REFRESH_S`). The
+whole-branch review initially found a genuine P1 G3 hole (a heartbeat could be created after
+`post_shutdown`); it was fixed test-first and re-approved. Design/plan **#94 → `2bedda4`**; the
+Phase 5 day-window determinism defect found by that PR's CI was fixed in **#95 → `db135f1`**; code
+**#96 → `5eb8fea`**. Phase 6's live scenario joins the single Phase 10 run (D-7); this phase does
+**not** claim a live verification.
+
+**Exact next action:** Phase 7 — authorization boundaries, on explicit owner instruction only. Phase 6 is code-complete with its live scenario deferred to Phase 10 together with Phases 4 and 5 (D-7).
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -77,7 +92,7 @@ verification.
 | 3 | Round-robin model rotation engine | Every request takes the next model in order; atomic cursor; restart/concurrency safe; per-request audit | **`COMPLETED`** 2026-11-14 | 2 |
 | 4 | Reply-to-channel-post Q&A core | Answer questions replied to a channel post, with controlled post context and idempotent delivery | **`IN_PROGRESS`** — code merged 2026-11-16 (#83, #84, #82; key hardening #88); live acceptance **deferred to Phase 10** by the owner on 2026-11-20 (D-7) | 2, 3 |
 | 5 | Q&A quotas | Per-post/day, cooldown, per-user daily cap — enforced atomically in the backend | **`IN_PROGRESS`** — code/design/tests merged 2026-11-20 (design+plan #91 → `7adb0da`, code #92 → `1e6e8eb`); the live scenario is covered by the single Phase 10 run (D-7), so no live verification is claimed here | 4 |
-| 6 | Typing lifecycle | Show `typing` while waiting; always stop it; no orphan tasks | `NOT_STARTED` | 4 |
+| 6 | Typing lifecycle | Show `typing` while waiting; always stop it; no orphan tasks | **`IN_PROGRESS`** — code merged 2026-11-22 (#94 design/plan, #95 Phase 5 determinism fix, #96 code); whole-branch review APPROVED after a P1 shutdown hole was fixed; live scenario **deferred to Phase 10** (D-7) | 4 |
 | 7 | Onboarding, home menu, message routing | Language → welcome → "start" → add channel; free plan without an extra button; stable state | `NOT_STARTED` | 1 (4 for reply routing) |
 | 8 | Deeplink "back to channel" | Return the user to the exact source post, or explain the platform limit honestly | `NOT_STARTED` | 1 |
 | 9 | Temporary GitHub Actions harness | Manual-only workflow: token + super-admin id, READY, run for the target duration, clean shutdown | `NOT_STARTED` | 1 |
@@ -558,6 +573,15 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-20 | **phase5/qa-quotas** (final tree) | `pytest --collect-only -q` · `ruff check .` · `python -m mypy newsbot` · `python tools/final_verification.py` · `run.py --check` (dummy env) | **1108 collected** · All checks passed · **Success: no issues found in 51 source files** · **17/17** · exit **0** |
 | 2026-11-20 | **phase5/qa-quotas** (final tree) | GitHub CI `test` on PR #92 | **SUCCESS** (3m09s) |
 | 2026-11-20 | `main` @ `1e6e8eb` (PR #92) | `gh pr merge 92 --squash --delete-branch`; protection compared field by field | merge SHA `1e6e8ebed85e79554c1302101fc3c6e390530ad4` (2026-11-20T20:05:53Z) · **all 15 fields identical to both backups** · CI `test: SUCCESS` |
+| 2026-11-21 | branch **docs/phase6-design-plan** | GitHub CI `test` on PR #94 | first run FAILED on a real Phase 5 wall-clock-dependent quota test; after PR #95 and a rebase: **SUCCESS** (2m52s) |
+| 2026-11-21 | `main` @ `db135f1` (PR #95) | `gh pr merge 95 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (3m26s), **all 15 fields identical** to both backups |
+| 2026-11-21 | `main` @ `2bedda4` (PR #94) | `gh pr merge 94 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (2m52s), **all 15 fields identical** to both backups |
+| 2026-11-22 | branch **phase6/typing-lifecycle** @ `e4cc30f` | `pytest tests/test_phase6_typing_lifecycle.py -q -x` × 5 | **23 passed** on each of five consecutive runs (5.20–6.77 s); no flake |
+| 2026-11-22 | branch **phase6/typing-lifecycle** @ `e4cc30f` | `pytest tests/test_phase6_typing_lifecycle.py tests/test_phase8_concurrency.py tests/test_phase4_qa_core.py tests/test_phase5_qa_quotas.py tests/test_phase5_qa_quota_ui.py -q` | **104 passed in 10.97s** — no Phase 4/5/8 regression |
+| 2026-11-22 | branch **phase6/typing-lifecycle** @ `e4cc30f` | `pytest -q --collect-only -p no:cacheprovider` | **1132 tests collected**; README badge and Persian count updated; `test_phase1_10_state_alignment.py` 6 passed |
+| 2026-11-22 | branch **phase6/typing-lifecycle** @ `e4cc30f` | `ruff check .` / `mypy newsbot` / `tools/final_verification.py` / `run.py --check` (dummy env) | clean / 52 files clean / **17/17 exit 0** / exit 0, config healthy |
+| 2026-11-22 | branch **phase6/typing-lifecycle** @ `e4cc30f` | `pytest -q --tb=line -rf` (full Windows suite) | **19 failed, 1113 passed in 1210.22s (0:20:10)** — exactly the 19 known Windows-only failures from §5.1 (4 in `test_deploy_script.py`, 15 in `test_session3_cicd_docker_deploy_docs.py`); **no new failure**, Linux CI is green |
+| 2026-11-22 | `main` @ `5eb8fea` (PR #96) | `gh pr merge 96 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (3m14s), **all 15 fields identical** to both backups |
 
 **Not run / unavailable:** the live `qa-live` run itself (Phase 4 acceptance **and** Phase 5's quota
 scenario, both deferred to the single Phase 10 run — D-7 / §4.5), coverage percentage (no coverage tool
@@ -613,6 +637,10 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 5 design + plan | **PR #91 — MERGED** as `7adb0da2ddf80ffcc01cad0b06210a0d628a1297` (2026-11-20T18:55:56Z) · CI `test: SUCCESS` (2m39s) · gate restored with **all 15 fields identical**. Spec: `docs/superpowers/specs/2026-11-20-phase5-qa-quotas-design.md` · plan: `docs/superpowers/plans/2026-11-20-phase5-qa-quotas.md` |
 | Phase 5 code | Branch **phase5/qa-quotas** from `main` @ `7adb0da` — commits **accde94** (config) · **6ff2a1e** (atomic claim) · **70a9a48** (handler) · **45be39c** (admin panel) · **9a9cb7e** (review fixes) · **b12e290** (ruff cleanup). Merged as **PR #92 → `1e6e8ebed85e79554c1302101fc3c6e390530ad4`** (2026-11-20T20:05:53Z) · CI `test: SUCCESS` (3m09s) · gate restored with **all 15 fields identical** |
 | Phase 5 result | **CODE COMPLETE — no live verification claimed**: 30 new tests, 1108 collected, full Windows suite 1089 passed / 19 known failures, `ruff`/`mypy`/`final_verification.py`/`run.py --check` all clean. The Phase 5 quota scenario is checked in the single Phase 10 run together with Phase 4 (D-7) |
+| Phase 5 determinism fix | **PR #95 — MERGED** as `db135f120a0454ecb519f5024bcb72d630b3c69e` — `qa_quota.windows` now derives the local day from the claim's `now`, not the wall clock; CI caught it while running PR #94 |
+| Phase 6 design + plan | **PR #94 — MERGED** as `2bedda471eb7b3da06b6b14a111ac993c88f944d` · spec `docs/superpowers/specs/2026-11-21-phase6-typing-lifecycle-design.md` · plan `docs/superpowers/plans/2026-11-21-phase6-typing-lifecycle.md` · CI `test: SUCCESS` (2m52s) · gate restored with **all 15 fields identical** |
+| Phase 6 code | Branch **phase6/typing-lifecycle** from `main` @ `2bedda4` — commits **206fd56** (config), **f7d98ed** (context manager), **ec30cd3** (mute window + exception drain), **cd40add** (shutdown), **34d5d8a** (install sites), **fb254f1** + **e4cc30f** (README count), **2b9548f** (P1 shutdown-hole fix). Merged as **PR #96 → `5eb8fea562d956735975f01f8ef65ff99c626599`** · CI `test: SUCCESS` (3m14s) · gate restored with **all 15 fields identical** |
+| Phase 6 result | **CODE COMPLETE — no live verification claimed**: 23 new tests, 1132 collected, five consecutive green repeat runs, full Windows suite measured below, `ruff`/`mypy`/`final_verification.py`/`run.py --check` clean. The independent whole-branch reviewer found one P1 G3 hole (post-shutdown registration), fixed test-first in `2b9548f` and re-approved (`WHOLE_BRANCH_VERDICT: APPROVED`). Phase 6's live scenario joins Phase 4 and 5 in the single Phase 10 run (D-7) |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)
@@ -680,7 +708,8 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 | D-4 | Dependabot (enabled by #64) opened #68–#78: `python 3.13-slim → 3.15-slim`, `actions/checkout 4 → 7`, `setup-python 5 → 7`, `upload-artifact 4 → 7`, `gitleaks-action 2 → 3`, `appleboy/ssh-action 1.2.2 → 1.2.5`, `python-dateutil 2.9 → 4.0`, `tzlocal → 5.4.5`, `soupsieve → 4.1`, `regex → 2026.11.9`, `ruff 0.14 → 0.17`. Several are **major** bumps that change CI/deploy behaviour | deferred to Phase 10 (dependency and release hardening), one PR at a time with a real CI run |
 | D-5 | `qa_answers` has **no retention or pruning policy**: at-most-once needs the row keyed by `(chat_id, msg_id)` forever, so the table grows with every answered question (one small row per answer; no question or answer text is stored) | deferred; revisit in Phase 10 with a measured row-count/age threshold if volume justifies it — **deleting rows would re-open the at-most-once guarantee**, so any pruning must keep the key |
 | D-6 | The Actions cache used by `qa-live` holds the **test** database across runs (key prefix `qa-live-db-v1-`), and that DB can contain an encrypted provider key. `qa_answers.answer` is blanked and the DB is never uploaded as an artifact, but a cached artifact still outlives the run until the cache expires | accepted for the test-only workflow; the stable `SECRETS_KEY` is mandatory (`SECRETS_KEY_REQUIRED` blocks a keyless run). Revisit in Phase 10 alongside B-5's key rotation |
-| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS`, Phase 5 stays code-complete but not live-verified, and the release is not "live-verified" |
+| D-8 | Subagent dispatch failed mid-Phase-6 with `Free usage limit reached`; Tasks 3 and 4 were implemented inline by the controller and are recorded as such in their task reports. Task-scoped independent review was therefore unavailable for those two tasks; the independent whole-branch review did run and returned `APPROVED` after the P1 fix | recorded; no product impact |
+| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails and Phase 6's typing lifecycle | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS`, Phase 5 stays code-complete but not live-verified, and the release is not "live-verified" |
 
 ---
 

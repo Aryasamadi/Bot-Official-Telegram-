@@ -231,14 +231,28 @@ def test_stop_all_typing_reaps_every_heartbeat_and_is_idempotent(fast_clock):
 
 def test_mark_shutdown_overrides_the_stop_reason(fast_clock, caplog):
     async def scenario():
-        ca.mark_shutdown()
         with caplog.at_level("DEBUG", logger="core"):
-            async with ca.typing_while(_Bot(), -9):
+            async with ca.typing_while(_Bot(), -9):   # ضربانگر پیش از اعلان خاموشی آغاز شده
                 await asyncio.sleep(0.02)
+                ca.mark_shutdown()                     # خاموشی در میانهٔ عملیات اعلام میشود
 
     asyncio.run(scenario())
     assert any("typing: stop chat=-9 reason=shutdown" in r.getMessage() for r in caplog.records)
     assert ca._active == {}
+
+
+def test_no_heartbeat_can_register_after_shutdown_is_marked(fast_clock):
+    """بازبینِ کلی: تسکی که پس از mark_shutdown از DB برمیگردد نباید ضربانگر تازه بسازد."""
+    async def scenario():
+        bot = _Bot()
+        ca.mark_shutdown()
+        async with ca.typing_while(bot, -909, kind="qa"):
+            await asyncio.sleep(0.08)
+            assert ca._active == {}, "-post_shutdown نباید رکورد تازه ثبت شود"
+            assert not _typing_tasks(), "-post_shutdown نباید تسک تازه ساخته شود"
+        assert bot.calls == []
+
+    asyncio.run(scenario())
 
 
 def test_a_bot_without_send_chat_action_is_a_silent_noop(fast_clock):

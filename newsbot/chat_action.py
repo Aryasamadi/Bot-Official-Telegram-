@@ -112,10 +112,14 @@ async def _reap(chat_id: int, rec: _Heartbeat, reason: str) -> None:
 async def typing_while(bot, chat_id: int, kind: str = "op"):
     """در طولِ بلوک، نشانگرِ «در حال تایپ» را برای `chat_id` روشن نگه می‌دارد.
 
-    اگر ربات/قابلیت/چت در دسترس نباشد (یا چت در سکوتِ پس از شکست باشد) هیچ کاری نمی‌کند.
+    اگر ربات/قابلیت/چت در دسترس نباشد (یا چت در سکوتِ پس از شکست باشد، یا خاموشی اعلام
+    شده باشد) هیچ کاری نمیکند.
     """
     send = getattr(bot, "send_chat_action", None)
-    if bot is None or chat_id is None or not callable(send) or not config.TYPING_ENABLED:
+    # فاز ۶ (بازبینِ کلی): post_shutdown پرچم را پیش از جمع کردنِ ضربانگرها می نشاند.
+    # هندلری که پس از آن از DB برمیگردد نباید بتواند ضربانگر تازه ثبت کند و از خاموشی بگریزد.
+    if (_shutdown or bot is None or chat_id is None or not callable(send)
+            or not config.TYPING_ENABLED):
         yield
         return
 

@@ -11,6 +11,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from newsbot import config
+from newsbot import chat_action
 from newsbot.logutils import log, log_event, redact
 from newsbot.timeutils import now_utc
 from newsbot.text_format import strip_tags
@@ -425,7 +426,9 @@ async def run_user_operation(update, context, kind, channel, work, show_status=F
                 log_event("INFO", f"operation start type={kind} channel={channel}", uid)
                 operation_checkpoint()
                 if show_status: await operation_status(context, operation_text(lang, "running"))
-                result = await work()
+                # فاز ۶: نشانگرِ typing فقط در طولِ کارِ کاربر؛ پیامِ وضعیتِ نهایی بیرون از آن است.
+                async with chat_action.typing_while(getattr(context, "bot", None), op.chat_id, kind=kind):
+                    result = await work()
                 operation_checkpoint()
                 if op.failed: outcome = "failed"
                 return result

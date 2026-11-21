@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import pytest
+from types import SimpleNamespace as NS
 from telegram.constants import ChatAction
 
 from newsbot import chat_action as ca
@@ -338,3 +339,96 @@ def test_shutdown_clears_typing_registry_and_keeps_unrelated_tasks(fast_clock, m
         # unwind بدونِ KeyError: اگر finally رجیستری را دوباره حذف می‌کرد، همین‌جا می‌ترکید.
     finally:
         ca.reset_shutdown()
+
+
+# ── Task 4: نصب در مرزِ عملیات و در Q&A گروهِ بحث ────────────────────────────
+
+class _QABot:
+    """رباتِ Q&A: علاوه بر send_message / get_chat، chat action هم ثبت میکند."""
+
+    def __init__(self, linked=-100111):
+        self.linked, self.calls, self.sent = linked, [], []
+
+    async def send_chat_action(self, chat_id, action):
+        self.calls.append((chat_id, action))
+
+    async def get_chat(self, gid):
+        return NS(linked_chat_id=self.linked)
+
+    async def send_message(self, chat_id, text, **kw):
+        self.sent.append({"chat_id": chat_id, "text": text, **kw})
+        return NS(message_id=1)
+
+
+@pytest.fixture
+def qa_chan(isolated_db):
+    from newsbot.core_channels import add_channel, channel_by_chat
+    add_channel(900001, -100111, "کانال", "", 900001)
+    return channel_by_chat(-100111)
+
+
+def _qa_update():
+    reply = NS(sender_chat=NS(id=-100111, type="channel"), forward_from_chat=None,
+               forward_from_message_id=77, text="متن پست", caption=None,
+               is_automatic_forward=True, message_id=5)
+    msg = NS(chat_id=-555, message_id=10, text="سؤال؟", caption=None,
+             chat=NS(type="supergroup"), reply_to_message=reply, date=None)
+    return NS(effective_message=msg,
+              effective_user=NS(id=900001, username="u", full_name="U"))
+
+
+def test_run_user_operation_sends_typing_when_a_bot_is_present(fast_clock, monkeypatch):
+    from newsbot import ui_widgets as uw
+    monkeypatch.setattr(uw, "user_lang", lambda uid: "fa")
+    bot = _Bot()
+
+    async def work():
+        await asyncio.sleep(0.08)
+        return "ok"
+
+    update = NS(effective_user=NS(id=910001), effective_chat=NS(id=-555))
+    ctx = NS(bot=bot, user_data={})
+    result = asyncio.run(uw.run_user_operation(update, ctx, "test:phase6", None, work))
+    assert result == "ok"
+    assert any(cid == -555 and action == ChatAction.TYPING for cid, action in bot.calls)
+
+
+def test_run_user_operation_without_a_bot_is_safe(fast_clock, monkeypatch):
+    from newsbot import ui_widgets as uw
+    monkeypatch.setattr(uw, "user_lang", lambda uid: "fa")
+
+    async def work():
+        await asyncio.sleep(0.02)
+        return "ok"
+
+    update = NS(effective_user=NS(id=910002), effective_chat=NS(id=-556))
+    ctx = NS(user_data={})
+
+    async def scenario():
+        assert await uw.run_user_operation(update, ctx, "test:phase6:nobot", None, work) == "ok"
+        assert not _typing_tasks()
+
+    asyncio.run(scenario())
+
+
+def test_group_qa_uses_typing_during_the_ai_wait(fast_clock, qa_chan, monkeypatch):
+    from newsbot import ai_models as amod, qa
+
+    async def slow(system, user, **kw):
+        await asyncio.sleep(0.08)
+        return "پاسخِ مدل", "m", None
+
+    monkeypatch.setattr(amod, "ai_chat", slow)
+    bot = _QABot()
+    asyncio.run(qa.on_group_reply(_qa_update(), NS(bot=bot)))
+    assert len(bot.sent) == 1
+    assert any(cid == -555 and action == ChatAction.TYPING for cid, action in bot.calls)
+
+
+def test_a_quota_refusal_sends_no_chat_action(fast_clock, qa_chan, monkeypatch):
+    from newsbot import qa
+    monkeypatch.setattr(qa, "claim", lambda *a, **k: "cooldown")
+    bot = _QABot()
+    asyncio.run(qa.on_group_reply(_qa_update(), NS(bot=bot)))
+    assert bot.sent == []
+    assert bot.calls == []

@@ -12,6 +12,7 @@ from telegram.request import HTTPXRequest
 from newsbot import config
 from newsbot import runtime
 from newsbot import watchdog
+from newsbot import chat_action
 from newsbot.db import db, gget, gset, arun, close_db_pool, readonly_check
 from newsbot.logutils import log, log_event
 from newsbot.ratelimit import _rate_load_persisted
@@ -126,8 +127,12 @@ async def post_shutdown(app: Application):
     except Exception:
         log.exception("graceful drain failed")
     _me = asyncio.current_task()
-    # ARCH-06: همه‌ی تسک‌های نام‌دارِ طولانی (ارسال، عملیات کاربر، تفکر/چرخه) تا وسط کار رها نشوند
-    pend = [t for t in asyncio.all_tasks() if t is not _me and t.get_name().split(":")[0] in ("publication", "user", "thinking")]
+    # فاز ۶: ضربان‌گرهای «در حال تایپ» پیش از جمع‌کردنِ تسک‌ها لغو و جمع می‌شوند تا هیچ
+    # heartbeat‌ای از post_shutdown زنده‌تر نماند؛ سپس نام‌شان هم در فهرستِ لغو می‌آید.
+    chat_action.mark_shutdown()
+    await chat_action.stop_all_typing()
+    # ARCH-06: همه‌ی تسک‌های نام‌دارِ طولانی (ارسال، عملیات کاربر، تفکر/چرخه، تایپ) تا وسط کار رها نشوند
+    pend = [t for t in asyncio.all_tasks() if t is not _me and t.get_name().split(":")[0] in ("publication", "user", "thinking", "typing")]
     if pend:
         for t in pend: t.cancel()
         _done, left = await asyncio.wait(pend, timeout=_SHUTDOWN_CANCEL_TIMEOUT)

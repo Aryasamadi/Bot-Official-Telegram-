@@ -292,3 +292,49 @@ def test_a_crashing_heartbeat_never_breaks_the_caller_and_is_drained(fast_clock,
 
     asyncio.run(scenario())
     assert any("heartbeat ended with error chat=-99" in r.getMessage() for r in caplog.records)
+
+
+# ── Task 3: خاموشی، ضربان‌گرها را هم جمع می‌کند ──────────────────────────────
+
+def test_shutdown_clears_typing_registry_and_keeps_unrelated_tasks(fast_clock, monkeypatch):
+    """post_shutdown تسکِ typing را لغو و رجیستری را خالی می‌کند؛ تسک نامرتبط دست‌نخورده می‌ماند."""
+    import newsbot.app as APP
+
+    monkeypatch.setattr(APP, "_SHUTDOWN_CANCEL_TIMEOUT", 0.3)
+    monkeypatch.setattr(APP, "_SHUTDOWN_GRACE", 0.2)
+    ca.reset_shutdown()
+    try:
+        async def scenario():
+            async def long_typing():
+                async with ca.typing_while(_Bot(), -777, kind="qa"):
+                    await asyncio.sleep(30)
+
+            t1 = asyncio.create_task(long_typing(), name="typing:-777:qa")
+            t2 = asyncio.create_task(asyncio.sleep(30), name="other:keep")
+            await asyncio.sleep(0.05)
+            assert -777 in ca._active                      # ضربان‌گر واقعاً زنده است
+
+            await APP.post_shutdown(None)
+
+            typing_done = t1.done()
+            registry_empty = ca._active == {}
+            stray_typing = [t for t in asyncio.all_tasks()
+                            if t.get_name().startswith("typing:") and not t.done()]
+            unrelated_pending = not t2.done()
+            t2.cancel()                                      # نظافت داخلی حلقه (مثل تست فاز ۸)
+            try:
+                await t2
+            except asyncio.CancelledError:
+                pass
+            await asyncio.sleep(0)                           # فرصتِ unwind به context
+            return t1, typing_done, registry_empty, stray_typing, unrelated_pending
+
+        t1, typing_done, registry_empty, stray_typing, unrelated_pending = asyncio.run(scenario())
+        assert typing_done and t1.done(), "تسکِ typing پس از خاموشی تمام نشد"
+        assert t1.cancelled(), "تسکِ typing باید لغو شده باشد"
+        assert registry_empty and ca._active == {}, "رجیستریِ ضربان‌گرها خالی نشد"
+        assert not stray_typing, "هیچ تسکِ typing نباید زنده بماند"
+        assert unrelated_pending, "تسک نامرتبط نباید لغو شود"
+        # unwind بدونِ KeyError: اگر finally رجیستری را دوباره حذف می‌کرد، همین‌جا می‌ترکید.
+    finally:
+        ca.reset_shutdown()

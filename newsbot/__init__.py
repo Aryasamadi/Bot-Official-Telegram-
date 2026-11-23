@@ -10,4 +10,5 @@ __version__ = "4.0.0"
 # v10 (فاز ۲): رجیستریِ فراهم‌کننده — جدول ai_providers + ستونِ افزایشیِ ai_models.provider_id
 # v11 (فاز ۳): چرخشِ round-robin — ai_rotation (مکان‌نما + version برای CAS) و ai_rotation_log
 # v12 (فاز ۴): Q&A گروهی — qa_answers (at-most-once) و سهمیهٔ AI پلن‌ها — ai_plan_grants + plans.ai_quota
-SCHEMA_VERSION = 12
+# v13 (فاز ۷): ستونِ افزایشیِ users.onboarding_state — جریانِ نخستین ورود (بدون تغییرِ مخرب)
+SCHEMA_VERSION = 13

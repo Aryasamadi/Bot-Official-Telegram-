@@ -26,6 +26,14 @@ async def view_lang(update, context):
                   [[B("🇮🇷 فارسی", "lang:fa"), B("🇬🇧 English", "lang:en")],
                    [B(tr(L(update), "back"), "home")]])
 
+async def view_onboarding_welcome(update, context):
+    """فاز ۷: نخستین ورود — متنِ خوشآمدگویی و **فقط** یک دکمهٔ «شروع» (بدون میانبرهای خانه)."""
+    lang = L(update); u = update.effective_user
+    name = esc(u.first_name or u.full_name or u.username or u.id)
+    await render(update, context, gtext("welcome", lang, name=name),
+                  [[B(tr(lang, "onb_start_btn"), "onb:start")]])
+
+
 async def set_language(update, context, lang):
     """تغییر زبان صفر تا صد: زبانِ رابط، و در همه‌ی کانال‌ها پرامپت پیش‌فرض و متن‌های پیش‌فرضِ محتوا/گزارش هم به زبان تازه بازنویسی می‌شوند (فقط آن‌هایی که مدیر دستی عوض نکرده)."""
     uid = update.effective_user.id; set_lang(uid, lang)
@@ -38,16 +46,15 @@ async def go_home_safe(update, context):
     await go_home(update, context)
 
 async def view_user_home(update, context):
-    """صفحهٔ خانهٔ کاربر.
+    """صفحهٔ خانهٔ کاربر (فاز ۷ — منوی ساده).
 
-    PH-05/UI-014: پیش از این فقط **یک** دکمه (پلن‌ها) بود و مسیرِ دعوت (``u:ref``) از هیچ
-    صفحه‌ای قابل‌دسترس نبود ⇒ مشتریِ غیرفنی نمی‌توانست پشتیبانی/دعوت/راهنما/زبان را
-    پیدا کند (کاربر باید فرمان‌ها را از حفظ می‌دانست)."""
+    میانبرهای پلن/پشتیبانی/دعوت/راهنما حذف شدند؛ همان صفحهها از طریق فرمانها
+    (/create، /man، /ref، /help) در دسترساند. در خانه فقط ردیفِ زبان و — در صورتِ
+    پیکربندی — ردیفِ عضویت در کانال اجباری میماند.
+    """
     lang = L(update); u = update.effective_user
     text = gtext("welcome", lang, name=esc(u.first_name))
-    kb = [[B(tr(lang, "plans_btn"), "u:plans")],
-          [B(tr(lang, "sup_btn"), "u:man"), B(tr(lang, "ref_btn"), "u:ref")],
-          [B(tr(lang, "help_btn"), "u:help"), B(tr(lang, "lang_btn"), "u:lang")]]
+    kb = [[B(tr(lang, "lang_btn"), "u:lang")]]
     # کانال اجباریِ همین زبان: کاربر آن را می‌بیند، عضو می‌شود و عضویتش را بررسی می‌کند
     if mandatory_configured(lang):
         ok, join = await mandatory_membership(context.bot, u.id, lang)

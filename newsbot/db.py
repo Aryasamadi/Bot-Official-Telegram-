@@ -30,7 +30,7 @@ _LOOP_GUARD_STRICT = False     # tests/dev can turn this on to fail fast on sync
 _JOURNAL_MODE = None
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT, name TEXT, role TEXT DEFAULT 'user', plan_id INTEGER, plan_expires TEXT, next_plan_id INTEGER, next_plan_days INTEGER, free_used INTEGER DEFAULT 0, banned INTEGER DEFAULT 0, lang TEXT, remind_key TEXT, premium INTEGER DEFAULT 0, credit REAL DEFAULT 0, created_at TEXT, last_seen TEXT);
+CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT, name TEXT, role TEXT DEFAULT 'user', plan_id INTEGER, plan_expires TEXT, next_plan_id INTEGER, next_plan_days INTEGER, free_used INTEGER DEFAULT 0, banned INTEGER DEFAULT 0, lang TEXT, remind_key TEXT, premium INTEGER DEFAULT 0, credit REAL DEFAULT 0, created_at TEXT, last_seen TEXT, onboarding_state TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS plans(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, name_en TEXT, days INTEGER, daily_posts INTEGER, max_sources INTEGER, max_channels INTEGER, daily_tests INTEGER, price TEXT DEFAULT '', price_en TEXT DEFAULT '', price_num REAL DEFAULT 0, price_num_fa REAL DEFAULT 0, description TEXT DEFAULT '', description_en TEXT DEFAULT '', is_free INTEGER DEFAULT 0, active INTEGER DEFAULT 1, sort INTEGER DEFAULT 0, ai_quota INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS discounts(code TEXT PRIMARY KEY, percent INTEGER, expires TEXT, max_uses INTEGER DEFAULT 0, used INTEGER DEFAULT 0, active INTEGER DEFAULT 1, created_at TEXT);
 CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, chat_id INTEGER, title TEXT, username TEXT, verified_by INTEGER, created_at TEXT, settings TEXT, original_admin_id INTEGER);
@@ -180,6 +180,11 @@ MIGRATIONS += [("ai_models", "provider_id", "INTEGER")]
 # ── فاز ۴: سهمیهٔ AI در پلن‌ها (تصمیمِ مالک ۶) ──────────────────────────────────────
 # 0 = نامحدود. گرانتِ دوره در ai_plan_grants ساخته می‌شود؛ این ستون «سقفِ دوره» را تعریف می‌کند.
 MIGRATIONS += [("plans", "ai_quota", "INTEGER DEFAULT 0")]
+
+# ── فاز ۷: حالتِ جریانِ نخستین ورود (تصمیمِ کنترلر) ─────────────────────────────────
+# '' | welcome | adding_channel | done — ستونِ افزایشی، بدون حذف/تغییرِ دادهٔ موجود.
+# '' یعنی «هنوز جریانی آغاز نشده»؛ مقدارِ پیشفرض همان ردیف‌های قدیمی را پوشش میدهد.
+MIGRATIONS += [("users", "onboarding_state", "TEXT DEFAULT ''")]
 
 # ── خواندنِ اسکیما: باید روی SQLite *و* Cloudflare D1 درست کار کند ────────────────────
 # DB-27 (رخداد تولید ۲۰۲۶-۱۰-۲۱): تشخیصِ ستون‌های موجود روی D1 خالی برمی‌گشت و

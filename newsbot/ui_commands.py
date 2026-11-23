@@ -13,7 +13,7 @@ from newsbot.text_format import fit_html, preview_text
 from newsbot import rich_send
 from newsbot.ui_i18n import tr, gtext
 from newsbot.ui_widgets import B, render, popup, operation_text, run_user_operation, go_home
-from newsbot.ui_views_user import view_lang, view_plans, view_referral
+from newsbot.ui_views_user import view_lang, view_plans, view_referral, view_onboarding_welcome
 from newsbot.ui_views_admin import view_admin_home
 from newsbot.ui_views_super import view_super_home
 
@@ -77,7 +77,21 @@ async def cmd_start(update, context):
         elif arg.startswith("r_"):
             if not rate_ok(f"dl:{update.effective_user.id}", config.CB_RATE): return   # جلوی تقویتِ درخواست بیرونی با /start تکراری را می‌گیرد
             return await send_deeplink(update, context, arg[2:])
-    if not lang: return await view_lang(update, context)
+    uid = update.effective_user.id
+    from newsbot.core_channels import list_channels
+    from newsbot.core_users import get_onboarding_state, set_onboarding_state
+    # استثنای نقش (همانند go_home در ui_widgets): مدیر/سوپر حتی با زبان و بدون کانال
+    # مستقیم به پنلِ خود میرود و نباید پشت خوشامدگویی onboarding گیر کند.
+    fresh = (not is_super(uid) and not can_admin(uid)
+             and not list_channels(uid) and get_onboarding_state(uid) != "done")
+    if not lang:
+        # فاز ۷: حالت قبل از صفحهٔ زبان نوشته میشود تا set_language → go_home آن را ببیند
+        if fresh and get_onboarding_state(uid) != "welcome": set_onboarding_state(uid, "welcome")
+        return await view_lang(update, context)
+    if fresh and get_onboarding_state(uid) == "":
+        set_onboarding_state(uid, "welcome")
+    if fresh and get_onboarding_state(uid) == "welcome":
+        return await view_onboarding_welcome(update, context)
     await go_home(update, context)
 
 async def cmd_create(update, context):

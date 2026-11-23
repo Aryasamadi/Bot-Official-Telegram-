@@ -56,6 +56,8 @@ TXT = {
     "send_value": ("مقدار جدید را بفرستید", "Send the value"), "step": ("🧩 <b>{i}/{n}</b>", "🧩 <b>{i}/{n}</b>"), "empty": ("⚠️ موردی وجود ندارد", "⚠️ Empty"),
     "notfound": ("❌ یافت نشد", "❌ Not found"), "error": ("❌ {e}", "❌ {e}"),
     "choose_lang": ("🌐 <b>زبان / Language</b>", "🌐 <b>زبان / Language</b>"), "lang_set": ("✅ زبان: فارسی", "✅ English"), "banned": ("⛔ دسترسی شما به ربات مسدود شده است", "⛔ Access blocked"),
+    # فاز ۷: جریانِ نخستین ورود (یک دکمه در خوشآمدگویی و اعلانِ اعطای پلنِ رایگان)
+    "onb_start_btn": ("🚀 شروع", "🚀 Start"), "onb_granted": ("🎁 پلن رایگان شما فعال شد.", "🎁 Your free plan is now active."),
     "lang_set_n": (" · زبان {n} کانال هم تغییر کرد", " · {n} channel(s) relocalized"),
     "busy_click": ("⏳ لطفاً کمی صبر کنید", "⏳ Slow down a bit"),
     # ---- کاربر / پلن

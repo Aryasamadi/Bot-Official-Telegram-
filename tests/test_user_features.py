@@ -62,26 +62,27 @@ def test_mandatory_channel_invalid_id_falls_back_to_username():
     _reset_mandatory()
     mandatory_set("fa", on=True, id="not-a-number", user="fallback_ch")
     assert mandatory_target("fa") == "@fallback_ch"
+    _reset_mandatory()   # تستِ بعدی نباید کانال اجباریِ باقیمانده از اینجا را ببیند
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # ۲) رفرال — دستور /ref بدون دکمهٔ جدید
 # ══════════════════════════════════════════════════════════════════════════
-def test_ref_command_registered_and_the_home_screen_offers_the_referral_route():
-    """PH-05/UI-014: صفحهٔ خانه باید **دسترسی** به دعوت/پشتیبانی/راهنما/زبان بدهد.
+def test_ref_command_registered_and_the_home_screen_is_simple():
+    """فاز ۷: میانبرهای دعوت/پشتیبانی/راهنما/پلن از خانه حذف شدند؛ دسترسی از فرمانها است.
 
-    پیش از این، صفحهٔ خانه فقط یک دکمه (پلن‌ها) داشت و مسیرِ ``u:ref`` از هیچ صفحه‌ای
-    قابل‌دسترس نبود ⇒ مشتریِ غیرفنی نمی‌توانست پشتیبانی یا دعوت را پیدا کند."""
+    پیش از این صفحهٔ خانه میانبرهای u:ref/u:man/u:help/u:plans داشت؛ حالا فقط
+    ردیفِ زبان و کانال اجباری میماند و /ref همان صفحهٔ دعوت را نشان میدهد."""
     from newsbot.ui_views_user import view_user_home
     from newsbot.ui_commands import cmd_ref
     assert callable(cmd_ref), "دستور /ref باید وجود داشته باشد"
 
     import inspect
     src = inspect.getsource(view_user_home)
-    assert "u:ref" in src, "دکمهٔ دعوت باید در صفحهٔ خانه باشد"
-    assert "u:man" in src, "دکمهٔ پشتیبانی باید در صفحهٔ خانه باشد"
-    assert "u:help" in src and "u:lang" in src, "دکمهٔ راهنما و زبان باید در صفحهٔ خانه باشد"
-    assert "plans_btn" in src
+    for route in ("u:plans", "u:man", "u:ref", "u:help"):
+        assert f'"{route}"' not in src, f"دکمهٔ {route} نباید در خانه باشد"
+    assert '"u:lang"' in src, "دکمهٔ زبان باید در خانه بماند"
+    assert '"a:mand"' in src, "ردیفِ کانال اجباری باید در خانه بماند"
 
 
 def test_referral_reward_message_exists_for_both_langs():

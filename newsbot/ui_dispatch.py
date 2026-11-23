@@ -75,6 +75,32 @@ async def _dispatch(update, context, data):
     if data == "c:cancel":
         st = ud.pop("await", None); await popup(update, context, operation_text(lang, "cancelled"))
         return await dispatch(update, context, (st or {}).get("back", "home"))
+    # ---------------- فاز ۷: جریانِ نخستین ورود (پیشوندِ مستقلِ onb:، مسیرِ همان عملیاتِ کاربر)
+    if a == "onb" and b == "start":
+        from newsbot.core_users import set_onboarding_state, get_onboarding_state
+        from newsbot.core_plans import free_claim, free_release
+        from newsbot.concurrency import user_op_lock
+        # دکمهٔ کهنه (پس از تکمیل یا پس از ثبتِ کانال): نه اعطا و نه فرمِ دوباره — مستقیم خانه.
+        if list_channels(uid) or get_onboarding_state(uid) == "done":
+            return await go_home_safe(update, context)
+        # اعطای پلن فقط وقتی که پلنِ فعالی نیست، سهمیهٔ رایگان مصرف نشده و کانالی ثبت نشده است.
+        # قفلِ مالی همان قاعدهٔ do_free است (جلوگیری از TOCTOU در خواندنِ دوباره).
+        if not admin_limits(uid)["active"] and not get_user(uid)["free_used"] and not list_channels(uid):
+            async with user_op_lock(uid):
+                if not admin_limits(uid)["active"] and not get_user(uid)["free_used"] and not list_channels(uid):
+                    pid = next((p["id"] for p in list_plans() if p["is_free"]), None)   # list_plans() فقط فعالها را میدهد
+                    if pid is not None and free_claim(uid):
+                        granted = False
+                        try:
+                            exp, _ = assign_plan(uid, pid)
+                            granted = exp is not None
+                        except Exception as e:
+                            log.warning("onboarding free grant failed uid=%s: %s", uid, e)
+                        if granted: await popup(update, context, tr(lang, "onb_granted"))
+                        else: free_release(uid)     # جبرانِ claim وقتی واگذاری شکست خورد
+        # در هر حالت جریان به مرحلهٔ افزودن کانال میرود (حتی اگر اعطا انجام نشده باشد)
+        set_onboarding_state(uid, "adding_channel")
+        return await dispatch(update, context, "a:chadd")
     # ---------------- کاربر
     if a == "u":
         if b == "plans": return await view_plans(update, context)

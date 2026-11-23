@@ -342,17 +342,18 @@ def test_plan_free_only_touches_the_targeted_plan():
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
-# ۸) هر صفحهٔ قابل‌دسترس از مسیری، از صفحهٔ خانه هم قابل‌دسترس است
+# ۸) فاز ۷: صفحهٔ خانه ساده شد؛ صفحهها از فرمانها قابل‌دسترساند
 # ══════════════════════════════════════════════════════════════════════════════════════
-def test_the_home_screen_exposes_support_invite_help_and_language():
+# فاز ۷: میانبرهای صفحهٔ خانه حذف شدند؛ همان صفحهها از طریق فرمانها در دسترساند.
+def test_the_home_screen_has_no_shortcuts_but_keeps_language_and_mandatory_rows():
     """UI-014: صفحهٔ خانه فقط یک دکمه داشت و ``u:ref`` از هیچ‌جا قابل‌دسترس نبود."""
     from newsbot.ui_views_user import view_user_home
     home = inspect.getsource(view_user_home)
-    for route in ("u:plans", "u:man", "u:ref", "u:help", "u:lang"):
-        assert route in home, f"مسیرِ {route} از صفحهٔ خانه در دسترس نیست"
+    for route in ("u:plans", "u:man", "u:ref", "u:help"):
+        assert f'"{route}"' not in home, f"دکمهٔ {route} نباید در خانه باشد"
 
 
-def test_the_referral_route_is_reachable_from_the_home_screen():
+def test_the_referral_route_is_reachable_from_the_command():
     """مسیرِ دعوت باید واقعاً در روتر هم وجود داشته باشد (نه فقط در متنِ صفحه)."""
     disp = _src("newsbot/ui_dispatch.py")
     assert re.search(r'if b == "ref"', disp), "مسیرِ u:ref در روتر نیست"
@@ -361,6 +362,17 @@ def test_the_referral_route_is_reachable_from_the_home_screen():
 # ══════════════════════════════════════════════════════════════════════════════════════
 # ۹) بخشِ ۸ از PERMISSIONS.md دقیقاً همان مسیرهای دومرحله‌ایِ واقعی است
 # ══════════════════════════════════════════════════════════════════════════════════════
+def test_home_keeps_the_language_and_mandatory_rows():
+    from newsbot.ui_views_user import view_user_home
+    home = inspect.getsource(view_user_home)
+    assert '"u:lang"' in home and '"a:mand"' in home
+
+
+def test_the_ref_command_is_registered():
+    from newsbot.ui_commands import cmd_ref
+    assert callable(cmd_ref)
+
+
 def test_permissions_doc_lists_exactly_the_real_two_phase_routes():
     """UI-013: سند فهرستِ ناقص/نادرست می‌داد ⇒ بازبین، تصویرِ اشتباهی از مدلِ ایمنی داشت."""
     doc = _src("docs/PERMISSIONS.md")

@@ -77,9 +77,12 @@ async def _dispatch(update, context, data):
         return await dispatch(update, context, (st or {}).get("back", "home"))
     # ---------------- فاز ۷: جریانِ نخستین ورود (پیشوندِ مستقلِ onb:، مسیرِ همان عملیاتِ کاربر)
     if a == "onb" and b == "start":
-        from newsbot.core_users import set_onboarding_state
+        from newsbot.core_users import set_onboarding_state, get_onboarding_state
         from newsbot.core_plans import free_claim, free_release
         from newsbot.concurrency import user_op_lock
+        # دکمهٔ کهنه (پس از تکمیل یا پس از ثبتِ کانال): نه اعطا و نه فرمِ دوباره — مستقیم خانه.
+        if list_channels(uid) or get_onboarding_state(uid) == "done":
+            return await go_home_safe(update, context)
         # اعطای پلن فقط وقتی که پلنِ فعالی نیست، سهمیهٔ رایگان مصرف نشده و کانالی ثبت نشده است.
         # قفلِ مالی همان قاعدهٔ do_free است (جلوگیری از TOCTOU در خواندنِ دوباره).
         if not admin_limits(uid)["active"] and not get_user(uid)["free_used"] and not list_channels(uid):

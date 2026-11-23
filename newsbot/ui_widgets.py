@@ -657,9 +657,11 @@ async def go_home(update, context):
     if not user_lang(uid):
         from newsbot.ui_views_user import view_lang
         return await view_lang(update, context)
-    # فاز ۷: خانه باید جریانِ نخستین ورود را حتی وقتی زبان در همان مسیر (set_language) انتخاب شده، نشان دهد
+    # فاز ۷: خانه باید جریانِ نخستین ورود را حتی وقتی زبان در همان مسیر (set_language) انتخاب شده، نشان دهد.
+    # استثنا: مدیر/سوپر حتی با state='welcome' به پنلِ خود میرود (نباید پشت خوشامد گیر کند).
     from newsbot.core_users import get_onboarding_state
-    if get_onboarding_state(uid) == "welcome":
+    if (get_onboarding_state(uid) == "welcome"
+            and not is_super(uid) and not can_admin(uid)):
         from newsbot.ui_views_user import view_onboarding_welcome
         return await view_onboarding_welcome(update, context)
     from newsbot.ui_views_user import view_user_home

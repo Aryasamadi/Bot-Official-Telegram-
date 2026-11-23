@@ -385,6 +385,8 @@ async def handle_input(update, context, st):
         lim = admin_limits(uid)
         if lim["max_channels"] is not None and len(list_channels_wrap(uid)) >= lim["max_channels"]: return await popup(update, context, tr(lang, "limit_channels", n=lim["max_channels"]))
         cid = add_channel(uid, chat.id, chat.title or str(chat.id), chat.username or "", uid, lang); log_event("INFO", f"کانال ثبت شد: {chat.title} ({chat.id})", uid)
+        from newsbot.core_users import set_onboarding_state
+        set_onboarding_state(uid, "done")   # فاز ۷: اولین کانال، جریانِ نخستین ورود را میبندد
         done(tr(lang, "ch_added", title=esc(chat.title))); return await dispatch(update, context, f"a:ch:{cid}")
     if kind == "chtoken":
         # ضد brute-force روی توکن ۱۰ رقمی: برخلاف سقف ۳ تلاش در هر نشست، این‌جا نرخ هم محدود می‌شود

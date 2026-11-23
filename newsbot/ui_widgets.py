@@ -657,6 +657,11 @@ async def go_home(update, context):
     if not user_lang(uid):
         from newsbot.ui_views_user import view_lang
         return await view_lang(update, context)
+    # فاز ۷: خانه باید جریانِ نخستین ورود را حتی وقتی زبان در همان مسیر (set_language) انتخاب شده، نشان دهد
+    from newsbot.core_users import get_onboarding_state
+    if get_onboarding_state(uid) == "welcome":
+        from newsbot.ui_views_user import view_onboarding_welcome
+        return await view_onboarding_welcome(update, context)
     from newsbot.ui_views_user import view_user_home
     from newsbot.ui_views_admin import view_admin_home
     from newsbot.ui_views_super import view_super_home

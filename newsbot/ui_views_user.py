@@ -26,6 +26,14 @@ async def view_lang(update, context):
                   [[B("🇮🇷 فارسی", "lang:fa"), B("🇬🇧 English", "lang:en")],
                    [B(tr(L(update), "back"), "home")]])
 
+async def view_onboarding_welcome(update, context):
+    """فاز ۷: نخستین ورود — متنِ خوشآمدگویی و **فقط** یک دکمهٔ «شروع» (بدون میانبرهای خانه)."""
+    lang = L(update); u = update.effective_user
+    name = esc(u.first_name or u.full_name or u.username or u.id)
+    await render(update, context, gtext("welcome", lang, name=name),
+                  [[B(tr(lang, "onb_start_btn"), "onb:start")]])
+
+
 async def set_language(update, context, lang):
     """تغییر زبان صفر تا صد: زبانِ رابط، و در همه‌ی کانال‌ها پرامپت پیش‌فرض و متن‌های پیش‌فرضِ محتوا/گزارش هم به زبان تازه بازنویسی می‌شوند (فقط آن‌هایی که مدیر دستی عوض نکرده)."""
     uid = update.effective_user.id; set_lang(uid, lang)

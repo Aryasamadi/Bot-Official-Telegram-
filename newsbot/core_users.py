@@ -43,6 +43,26 @@ def user_lang(uid):
 
 def set_lang(uid, lang): q("UPDATE users SET lang=? WHERE id=?", (lang if lang in config.LANGS else "fa", uid), commit=True)
 
+
+# ── فاز ۷: حالتِ جریانِ نخستین ورود ──────────────────────────────────────────────
+# مقادیرِ مجاز دقیقاً همان چهار مقدارِ تصمیمِ کنترلراند؛ هر مقدارِ دیگری بیاثر رد میشود
+# (نه خطا و نه لاگ — تا ورودیِ کاربر نتواند مسیرِ ربات را منحرف کند).
+_ONBOARDING_STATES = ("", "welcome", "adding_channel", "done")
+
+
+def get_onboarding_state(uid):
+    """حالتِ فعلیِ onboarding کاربر — همیشه یکی از چهار مقدارِ مجاز (پیشفرض '')."""
+    r = q("SELECT onboarding_state FROM users WHERE id=?", (uid,), one=True)
+    state = r["onboarding_state"] if r else None
+    return state if state in _ONBOARDING_STATES else ""
+
+
+def set_onboarding_state(uid, state):
+    """تنظیمِ حالت؛ مقدارِ نامعتبر بیصدا نادیده گرفته میشود (هیچ نوشتنی روی DB نمیرود)."""
+    if state not in _ONBOARDING_STATES: return
+    q("UPDATE users SET onboarding_state=? WHERE id=?", (state, uid), commit=True)
+
+
 def list_users(role=None, limit=200000):
     return q("SELECT * FROM users " + (" WHERE role=?" if role else "") + " ORDER BY created_at DESC LIMIT ?", ((role, limit) if role else (limit,)))
 

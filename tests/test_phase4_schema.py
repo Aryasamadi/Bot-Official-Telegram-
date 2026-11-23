@@ -10,8 +10,8 @@ from newsbot import SCHEMA_VERSION
 from newsbot.db import q
 
 
-def test_schema_version_is_12(isolated_db):
-    assert SCHEMA_VERSION == 12
+def test_schema_version_is_13(isolated_db):
+    assert SCHEMA_VERSION == 13, "فاز ۷: users.onboarding_state ⇒ نسخه ۱۳"
 
 
 def test_the_qa_answers_table_has_the_expected_columns(isolated_db):

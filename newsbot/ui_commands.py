@@ -80,7 +80,10 @@ async def cmd_start(update, context):
     uid = update.effective_user.id
     from newsbot.core_channels import list_channels
     from newsbot.core_users import get_onboarding_state, set_onboarding_state
-    fresh = not list_channels(uid) and get_onboarding_state(uid) != "done"
+    # استثنای نقش (همانند go_home در ui_widgets): مدیر/سوپر حتی با زبان و بدون کانال
+    # مستقیم به پنلِ خود میرود و نباید پشت خوشامدگویی onboarding گیر کند.
+    fresh = (not is_super(uid) and not can_admin(uid)
+             and not list_channels(uid) and get_onboarding_state(uid) != "done")
     if not lang:
         # فاز ۷: حالت قبل از صفحهٔ زبان نوشته میشود تا set_language → go_home آن را ببیند
         if fresh and get_onboarding_state(uid) != "welcome": set_onboarding_state(uid, "welcome")

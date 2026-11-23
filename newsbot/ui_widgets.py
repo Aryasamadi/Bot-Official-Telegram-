@@ -658,9 +658,13 @@ async def go_home(update, context):
         from newsbot.ui_views_user import view_lang
         return await view_lang(update, context)
     # فاز ۷: خانه باید جریانِ نخستین ورود را حتی وقتی زبان در همان مسیر (set_language) انتخاب شده، نشان دهد.
-    # استثنا: مدیر/سوپر حتی با state='welcome' به پنلِ خود میرود (نباید پشت خوشامد گیر کند).
+    # statesِ ناتمامِ welcome و adding_channel هر دو به خوشامدگویی برمیگردند (خانهٔ ساده
+    # دکمهٔ add-channel ندارد). استثنا: مدیر/سوپر حتی با state='welcome'/'adding_channel'
+    # به پنلِ خود میرود (نباید پشت خوشامد گیر کند).
     from newsbot.core_users import get_onboarding_state
-    if (get_onboarding_state(uid) == "welcome"
+    from newsbot.core_channels import list_channels
+    if (get_onboarding_state(uid) in ("welcome", "adding_channel")
+            and not list_channels(uid)
             and not is_super(uid) and not can_admin(uid)):
         from newsbot.ui_views_user import view_onboarding_welcome
         return await view_onboarding_welcome(update, context)

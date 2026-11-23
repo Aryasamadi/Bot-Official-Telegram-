@@ -433,3 +433,86 @@ def test_reply_still_routes_to_qa_after_the_home_simplification(isolated_db, mon
     asyncio.run(qa.on_group_reply(upd, NS(bot=bot)))
     assert len(bot.sent) == 1
     assert bot.sent[0]["reply_to_message_id"] == 10
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# رگرسیونهای بررسیِ کُلّ شاخه — تلههای وضعیت
+# ══════════════════════════════════════════════════════════════════════════════════
+def test_admin_and_super_with_empty_state_skip_start_welcome(fresh_user, monkeypatch):
+    """P2: /start نباید مدیر/سوپرِ زبان دار و بی کانال را به خوشامدگویی بفرستد."""
+    from newsbot import config
+    from newsbot.core_plans import assign_plan
+    from newsbot.core_users import ensure_user
+    uid = fresh_user
+    _set_lang(uid, "fa")
+    assert get_onboarding_state(uid) == ""
+    assert not list(q("SELECT id FROM channels WHERE admin_id=?", (uid,)))
+
+    # manager معمولی (نقش admin از روی پلن) ⇒ پنلِ مدیر
+    pid = next(p["id"] for p in list_plans() if not p["is_free"])
+    assign_plan(uid, pid)
+    upd, ctx = _env(uid)
+    asyncio.run(cmd_start(upd, ctx))
+    assert "onb:start" not in ctx.buttons, "مدیر به خوشامدگویی onboarding فرستاده شد"
+    assert "a:chadd" in ctx.buttons, "مدیر به پنلِ خود نرسید"
+
+    # سوپر (SUPER_ADMIN_IDS) ⇒ پنلِ سوپر
+    monkeypatch.setattr(config, "SUPER_ADMIN_IDS", (uid,))
+    ensure_user(uid, "fresh", "Fresh")
+    upd, ctx = _env(uid)
+    asyncio.run(cmd_start(upd, ctx))
+    assert "onb:start" not in ctx.buttons
+    assert "s:report" in ctx.buttons, "سوپر به پنلِ سوپر نرسید"
+    assert get_onboarding_state(uid) == "", "وضعیتِ onboarding نباید برای مدیر نوشته شود"
+
+
+def test_plain_message_in_adding_channel_state_resumes_welcome(fresh_user):
+    """P3: کاربرِ غیرِ مدیریکه در adding_channel مانده، با پیامِ عادی یا /start
+    دوباره خوشامدگویی را ببیند — نه خانهٔ سادهای که دکمهٔ add-channel ندارد."""
+    uid = fresh_user
+    _set_lang(uid, "fa")
+    _set_state(uid, "adding_channel")
+
+    upd, ctx = _text_env(uid, "سلام", admins=())
+    ctx.user_data.pop("await", None)         # پیامِ عادی، نه ورودیِ فرم
+    asyncio.run(_on_message(upd, ctx))
+    assert "onb:start" in ctx.buttons, "پیامِ عادی به خوشامدگویی نرسید"
+    assert "u:lang" not in ctx.buttons, "به خانهٔ ساده افتاد"
+
+    upd, ctx = _env(uid)
+    asyncio.run(cmd_start(upd, ctx))
+    assert "onb:start" in ctx.buttons, "/start به خوشامدگویی نرسید"
+    assert "u:lang" not in ctx.buttons
+    assert get_onboarding_state(uid) == "adding_channel"
+
+
+def test_onb_start_uses_first_active_free_plan_when_others_are_inactive(fresh_user):
+    """پلنِ آزادِ غیرفعال نباید برای اعطای نخستین ورود انتخاب شود."""
+    from newsbot.core_plans import create_plan, update_plan
+    uid = fresh_user
+    _set_lang(uid, "fa")
+    seeded_free = next(p["id"] for p in list_plans() if p["is_free"])
+    update_plan(seeded_free, active=0)
+    stale = create_plan(name="StaleFree", name_en="StaleFree", is_free=1, sort=-1, days=1)
+    update_plan(stale, active=0)
+    active = create_plan(name="ActiveFree", name_en="ActiveFree", is_free=1, sort=5, days=9)
+
+    upd, ctx = _env(uid)
+    asyncio.run(dispatch(upd, ctx, "onb:start"))
+    assert get_user(uid)["plan_id"] == active, "باید نخستین پلنِ آزادِ فعال انتخاب شود"
+    assert get_user(uid)["free_used"] == 1
+
+
+def test_concurrent_free_claim_loss_does_not_assign_a_plan(fresh_user, monkeypatch):
+    """اگر claim توسط درخواستِ دیگری برنده شد، هیچ پلنی نباید واگذار شود."""
+    import newsbot.core_plans as cp
+    uid = fresh_user
+    _set_lang(uid, "fa")
+    monkeypatch.setattr(cp, "free_claim", lambda _uid: False)
+    upd, ctx = _env(uid)
+    asyncio.run(dispatch(upd, ctx, "onb:start"))
+    assert get_user(uid)["free_used"] == 0, "سهمیه نباید سوخته شود"
+    assert get_user(uid)["plan_id"] is None, "پلنی نباید واگذار شود"
+    assert get_user(uid)["role"] == "user", "نقشِ admin نباید اعطا شود"
+    assert get_onboarding_state(uid) == "adding_channel"
+    assert ctx.renders, "باید یک نمای پس از تلاشِ onb:start نشان داده شود"

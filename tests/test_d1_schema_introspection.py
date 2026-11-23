@@ -263,7 +263,7 @@ def test_table_cols_empty_when_table_missing(monkeypatch):
 
 def test_migration_does_not_re_add_existing_column_on_d1(monkeypatch):
     """رگرسیونِ اصلیِ رخداد: کاربری که next_plan_id را دارد نباید «duplicate column» بخورد."""
-    users = ["id", "username", "next_plan_id", "next_plan_days", "lang", "remind_key", "premium", "credit"]
+    users = ["id", "username", "next_plan_id", "next_plan_days", "lang", "remind_key", "premium", "credit", "onboarding_state"]
     fake = FakeD1({"users": users})
     conn = _d1(fake, monkeypatch)
     _apply_migrations(conn)

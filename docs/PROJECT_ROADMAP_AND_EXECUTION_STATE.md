@@ -90,7 +90,18 @@ state traps plus four schema-test regressions found by the full suite); all were
 (`0bd9e54`, `4ffd2a7`) and it then returned `APPROVED`. Phase 7's live scenario joins the single
 Phase 10 run (D-7); this phase does **not** claim a live verification.
 
-**Exact next action:** Phase 8 — deeplink «back to channel», on explicit owner instruction only. Phase 7 is code-complete with its live scenario deferred to Phase 10 together with Phases 4–6 (D-7).
+**Phase 8 result:** the deeplink page now carries **one localized URL button** back to the exact
+source post. On a successful publication the payload records `src: {chat_id, message_id, username}`;
+the URL uses `t.me/<username>/<id>` for a public channel and `t.me/c/<internal>/<id>` for a private
+one, with an honest member-only / "if you are a member" note where the platform cannot promise
+access. Old deeplinks are unchanged (no button, no note), a failed send writes no row, and a renamed
+handle heals on the next publication. Long legacy bodies carry exactly one button, on the last part.
+No schema change (`SCHEMA_VERSION` stays 13), no extra API call. Design/plan **#101 → `0264f52`**;
+code **#102 → `db86543`**. The whole-branch review returned `APPROVED` with three LOW findings and
+no fix required before merge; the rich-path keyboard's real-client behaviour and the deleted-post
+case stay explicit live gaps in the single Phase 10 run (D-7, D8-8/R2).
+
+**Exact next action:** Phase 9 — temporary GitHub Actions harness, on explicit owner instruction only. Phase 8 is code-complete with its live scenario deferred to Phase 10 together with Phases 4–7 (D-7).
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -108,7 +119,7 @@ Phase 10 run (D-7); this phase does **not** claim a live verification.
 | 5 | Q&A quotas | Per-post/day, cooldown, per-user daily cap — enforced atomically in the backend | **`IN_PROGRESS`** — code/design/tests merged 2026-11-20 (design+plan #91 → `7adb0da`, code #92 → `1e6e8eb`); the live scenario is covered by the single Phase 10 run (D-7), so no live verification is claimed here | 4 |
 | 6 | Typing lifecycle | Show `typing` while waiting; always stop it; no orphan tasks | **`IN_PROGRESS`** — code merged 2026-11-22 (#94 design/plan, #95 Phase 5 determinism fix, #96 code); whole-branch review APPROVED after a P1 shutdown hole was fixed; live scenario **deferred to Phase 10** (D-7) | 4 |
 | 7 | Onboarding, home menu, message routing | Language → welcome → "start" → add channel; free plan without an extra button; stable state | **`IN_PROGRESS`** — code merged 2026-11-24 (#98 design/plan, #99 code); `onboarding_state` + schema v13; whole-branch review APPROVED after a fix wave; live scenario **deferred to Phase 10** (D-7) | 1 (4 for reply routing) |
-| 8 | Deeplink "back to channel" | Return the user to the exact source post, or explain the platform limit honestly | `NOT_STARTED` | 1 |
+| 8 | Deeplink "back to channel" | Return the user to the exact source post, or explain the platform limit honestly | **`IN_PROGRESS`** — code merged 2026-11-25 (#101 design/plan, #102 code); one URL button + honest notes; whole-branch review `APPROVED`; live check **deferred to Phase 10** (D-7) | 1 |
 | 9 | Temporary GitHub Actions harness | Manual-only workflow: token + super-admin id, READY, run for the target duration, clean shutdown | `NOT_STARTED` | 1 |
 | 10 | Hardening, cleanup, release gate | Rotate secrets, dependency/secret scans, remove proven-dead code, full green suite, release runbook | `NOT_STARTED` | 1–9 |
 
@@ -439,6 +450,27 @@ the green report artifact in §5 before the release is declared.
 
 ---
 
+## 4.7 Phase 8 — deeplink and "back to channel"
+
+- **Source of truth:** the roadmap table above plus the external `PHASE0_AUDIT_REPORT.md` (section
+  «فاز ۸» and AUD-008). The design and the four-task plan are recorded in §7.
+- **Binding architecture:** ADD-only payload key inside the existing deeplink JSON; one shared URL
+  rule (`post_url`) for the journal link and the button; a native URL button with no extra API call
+  and no schema change.
+- **Binding decisions (D8-1…D8-8):** ids and the observed handle are recorded (D8-1); `msg_link`
+  delegates to `post_url` (D8-2); notes are keyed on what is known — public / private / unknown
+  (D8-3); labels live in `TXT` (D8-4); `SCHEMA_VERSION` stays 13 (D8-5); a successful publication
+  repairs a changed handle (D8-6); `markup_last_only=True` gives a split body one control (D8-7);
+  the rich path forwards `reply_markup` as the existing notification path does, with the real-client
+  check in Phase 10 (D8-8).
+- **Acceptance:** an old deeplink is unchanged; a new one has one button to the same post; private
+  and public channels are both handled; a deleted channel degrades honestly; a deleted post yields
+  Telegram's own "not found"; no id/URL enters the logs; `ruff`/`mypy` clean.
+- **Evidence discipline:** 14 phase-8 tests ×5 green; full Windows suite back to the known 19
+  failures only. Live confirmation of the button in a real client remains owned by Phase 10 (D-7).
+
+---
+
 ## 4.1 Disposition of the existing PR chain (#46–#56) — binding
 
 > **Owner rule (2026-11-12):** every existing pull request gets its disposition **inside the phase
@@ -623,6 +655,13 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-24 | branch **phase7/onboarding** @ `9b04268` | `ruff check .` / `mypy newsbot` / `final_verification.py` / `run.py --check` (dummy env) | clean / 52 files clean / **17/17 exit 0** / exit 0, config healthy |
 | 2026-11-24 | branch **phase7/onboarding** @ `9b04268` | `pytest -q --tb=line -rf` (final Windows suite) | **19 failed, 1136 passed in 661.62s (0:11:01)** — only the §5.1 Windows-only failures; the four mid-phase schema regressions were fixed and are gone |
 | 2026-11-24 | `main` @ `987a84f` (PR #99) | `gh pr merge 99 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (3m18s), **all 15 fields identical** to both backups |
+| 2026-11-25 | branch **docs/phase8-design-plan** | GitHub CI `test` on PR #101 | **SUCCESS** (3m21s) |
+| 2026-11-25 | branch **phase8/deeplink-back** @ `839934d` | `pytest tests/test_phase8_deeplink_back.py -q -x` × 5 | **14 passed** on each of five consecutive runs (2.23–3.85 s); no flake |
+| 2026-11-25 | branch **phase8/deeplink-back** | focused suites during Tasks 1–3 | RED 1 error on Task 1 (missing `post_url`) → 21 passed; Task 2 RED 2 failed/4 passed → 19 passed; Task 3 RED 6 failed/8 passed → 76 passed across phase8 + rich-messages + phase7 suites |
+| 2026-11-25 | branch **phase8/deeplink-back** @ `839934d` | `pytest -q --collect-only -p no:cacheprovider` | **1169 tests collected**; README badge and Persian count updated; `test_phase1_10_state_alignment.py` 6 passed |
+| 2026-11-25 | branch **phase8/deeplink-back** @ `839934d` | `ruff check .` / `mypy newsbot` / `final_verification.py` / `run.py --check` (dummy env) | clean / 52 files clean / **17/17 exit 0** / exit 0, config healthy |
+| 2026-11-25 | branch **phase8/deeplink-back** @ `839934d` | `pytest -q --tb=line -rf` (final Windows suite) | **19 failed, 1150 passed in 655.05s (0:10:55)** — only the §5.1 Windows-only failures |
+| 2026-11-25 | `main` @ `db86543` (PR #102) | `gh pr merge 102 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (3m14s), **all 15 fields identical** to both backups |
 
 **Not run / unavailable:** the live `qa-live` run itself (Phase 4 acceptance **and** Phase 5's quota
 scenario, both deferred to the single Phase 10 run — D-7 / §4.5), coverage percentage (no coverage tool
@@ -685,6 +724,9 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 7 design + plan | **PR #98 — MERGED** as `7482146870800195548dea7c704b4f6f4e244a8b` · spec `docs/superpowers/specs/2026-11-23-phase7-onboarding-closure-design.md` · plan `docs/superpowers/plans/2026-11-23-phase7-onboarding.md` · CI `test: SUCCESS` (3m22s) · gate restored with **all 15 fields identical**. The first draft of the spec was rejected by the builder check for treating already-fixed UI findings as the whole phase; the approved version implements AUD-006 |
 | Phase 7 code | Branch **phase7/onboarding** from `main` @ `7482146` — commits **988b0d4** (schema v13 + state helpers), **a7d824d** (stateful `/start` + free grant), **ad63238** (home menu + completion), **9a02426** + **9b04268** (README counts), **0bd9e54** (admin bypass + `adding_channel` resume), **4ffd2a7** (base DDL + PH-01 v13 fixture). Merged as **PR #99 → `987a84ff88c28d6d2f5382e58c0062f3eda66446`** · CI `test: SUCCESS` (3m18s) · gate restored with **all 15 fields identical** |
 | Phase 7 result | **CODE COMPLETE — no live verification claimed**: 21 new tests, 1155 collected, final Windows suite 1136 passed / the known 19 failures, `ruff`/`mypy`/`final_verification.py`/`run.py --check` clean. Whole-branch review first `CHANGES_REQUIRED` (two state traps + four D1/PH-01 regressions), then `APPROVED` after the fix wave. Phase 7's live scenario joins Phases 4–6 in the single Phase 10 run (D-7) |
+| Phase 8 design + plan | **PR #101 — MERGED** as `0264f52c8753f903fecec09990870a6668aeaf03` · spec `docs/superpowers/specs/2026-11-25-phase8-deeplink-back-design.md` · plan `docs/superpowers/plans/2026-11-25-phase8-deeplink-back.md` · CI `test: SUCCESS` (3m21s) · gate restored with **all 15 fields identical**. The builder check found five real gaps (stale handles, rich-path markup, split bodies, deleted rows, audit wording); all were resolved in the approved design |
+| Phase 8 code | Branch **phase8/deeplink-back** from `main` @ `0264f52` — commits **c236754** (one `post_url` rule), **2644242** (payload + rename healing), **67fa117** (button, notes, single-control split), **68dc7df** (ruff cleanup), **839934d** (README count). Merged as **PR #102 → `db86543baa6c9e3dad0e504a87c6a55a0f9547dd`** · CI `test: SUCCESS` (3m14s) · gate restored with **all 15 fields identical** |
+| Phase 8 result | **CODE COMPLETE — no live verification claimed**: 14 new tests, 1169 collected, final Windows suite 1150 passed / the known 19 failures, `ruff`/`mypy`/`final_verification.py`/`run.py --check` clean. Whole-branch `APPROVED` with three LOW findings (pre-existing re-settle indexing, corrupt `-100…` id, fa-only rendering assertions) and all deferred minors triaged as no-fix-before-merge. Phase 8's live check joins Phases 4–7 in the single Phase 10 run (D-7) |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)
@@ -754,7 +796,8 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 | D-6 | The Actions cache used by `qa-live` holds the **test** database across runs (key prefix `qa-live-db-v1-`), and that DB can contain an encrypted provider key. `qa_answers.answer` is blanked and the DB is never uploaded as an artifact, but a cached artifact still outlives the run until the cache expires | accepted for the test-only workflow; the stable `SECRETS_KEY` is mandatory (`SECRETS_KEY_REQUIRED` blocks a keyless run). Revisit in Phase 10 alongside B-5's key rotation |
 | D-8 | Subagent dispatch failed mid-Phase-6 with `Free usage limit reached`; Tasks 3 and 4 were implemented inline by the controller and are recorded as such in their task reports. Task-scoped independent review was therefore unavailable for those two tasks; the independent whole-branch review did run and returned `APPROVED` after the P1 fix | recorded; no product impact |
 | D-9 | Phase 7 subagent usage limits recurred (the Task 1 implementer committed then failed to send its final report); the controller supervised inline and verified its commit directly. The **full suite**, not the focused suites, caught four real schema-test regressions (base DDL missing the new column, PH-01 pinned to v12) — all fixed test-first before the code PR | recorded; no product impact |
-| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails, Phase 6's typing lifecycle and Phase 7's onboarding flow | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS`, Phase 5 stays code-complete but not live-verified, and the release is not "live-verified" |
+| D-11 | Phase 8 Task 1's implementer hit `Free usage limit reached` after writing its edits but before committing or reporting. The controller reconstructed the real RED failure, verified the partial diff, applied ruling R4 (a `KeyError` exposed by the stricter URL rule), committed and supervised inline. No product impact; the whole-branch review still ran independently | recorded; no product impact |
+| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails, Phase 6's typing lifecycle, Phase 7's onboarding flow and Phase 8's deeplink button (including whether the rich path honours `reply_markup`) | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS`, Phase 5 stays code-complete but not live-verified, and the release is not "live-verified" |
 
 ---
 

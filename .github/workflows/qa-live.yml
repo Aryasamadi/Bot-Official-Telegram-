@@ -6,16 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       duration_minutes:
-        description: 'حداکثر مدت اجرا (دقیقه، ۵ تا ۳۵۵)'
+        description: 'حداکثر مدت اجرا (دقیقه، ۵ تا ۳۴۰)'
         required: false
-        default: "350"
+        default: "340"
         type: string
       scenario:
         description: 'سناریو'
         required: false
         default: core
         type: choice
-        options: [core, full]
+        options: [core, full, duration]
       db_mode:
         description: 'دیتابیس: reuse از کش، یا fresh تازه'
         required: false
@@ -49,14 +49,36 @@ jobs:
           path: ${{ runner.temp }}/qa-live/newsbot.db
           key: qa-live-db-v1-${{ github.run_id }}
           restore-keys: qa-live-db-v1-
+      - name: Validate secure inputs
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.BOT_TOKEN }}
+          SUPER_ADMIN_IDS: ${{ secrets.SUPER_ADMIN_ID || secrets.SUPER_ADMIN_IDS }}
+          QA_DURATION: ${{ inputs.duration_minutes }}
+        run: |
+          # فقط کدِ وضعیت چاپ میشود؛ مقدارِ هیچ رازی نه در لاگ و نه در خطای فرمان نمیآید.
+          if [ -z "${QA_DURATION}" ] || ! printf '%s' "${QA_DURATION}" | grep -Eq '^[0-9]+$' \
+             || [ "${QA_DURATION}" -lt 5 ] || [ "${QA_DURATION}" -gt 340 ]; then
+            echo "BAD_DURATION"
+            exit 2
+          fi
+          if [ -z "${BOT_TOKEN}" ]; then
+            echo "TOKEN_MISSING"
+            exit 2
+          fi
+          if ! printf '%s' "${SUPER_ADMIN_IDS}" | grep -Eq '^[0-9,;[:space:]]+$' \
+             || ! printf '%s' "${SUPER_ADMIN_IDS}" | grep -Eq '[0-9]'; then
+            echo "SUPER_ID_INVALID"
+            exit 2
+          fi
+          echo "INPUTS_OK"
       - name: Install dependencies
         run: |
           python -m pip install "pip==26.2.2"
           pip install -r requirements.txt
       - name: Run the live acceptance
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          SUPER_ADMIN_IDS: ${{ secrets.SUPER_ADMIN_IDS }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.BOT_TOKEN }}
+          SUPER_ADMIN_IDS: ${{ secrets.SUPER_ADMIN_ID || secrets.SUPER_ADMIN_IDS }}
           SECRETS_KEY: ${{ secrets.SECRETS_KEY }}
           DB_BACKEND: sqlite
           DB_FILE: ${{ runner.temp }}/qa-live/newsbot.db

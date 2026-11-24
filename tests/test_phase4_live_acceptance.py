@@ -473,7 +473,9 @@ def test_the_workflow_has_the_required_settings():
     src = _wf()
     assert "permissions:\n  contents: read" in src
     assert "timeout-minutes: 360" in src
-    assert 'default: "350"' in src
+    assert 'default: "340"' in src
+    assert "name: Validate secure inputs" in src
+    assert "TELEGRAM_BOT_TOKEN" in src and "SUPER_ADMIN_ID" in src
     assert "qa-live-db-v1-${{ github.run_id }}" in src
     assert "restore-keys: qa-live-db-v1-" in src
     assert "actions/cache/restore@" in src and "actions/cache/save@" in src
@@ -492,8 +494,10 @@ def test_no_secret_is_used_inside_an_if_expression():
 def test_the_run_step_receives_the_three_secrets():
     src = _wf()
     block = src.split("name: Run the live acceptance", 1)[1].split("name:", 1)[0]
-    for name in ("BOT_TOKEN", "SUPER_ADMIN_IDS", "SECRETS_KEY"):
-        assert "${{ secrets.%s }}" % name in block
+    for needle in ("BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.BOT_TOKEN }}",
+                   "SUPER_ADMIN_IDS: ${{ secrets.SUPER_ADMIN_ID || secrets.SUPER_ADMIN_IDS }}",
+                   "SECRETS_KEY: ${{ secrets.SECRETS_KEY }}"):
+        assert needle in block
     assert "DB_FILE: ${{ runner.temp }}/qa-live/newsbot.db" in block
     assert "--scenario \"${{ inputs.scenario }}\"" in block
 
@@ -709,3 +713,41 @@ def test_a_leaked_long_super_id_never_appears_in_the_report(tmp_path):
     assert "SUPER_ADMIN_ID#1" in leak["detail"]
     assert super_id not in leak["detail"]
     assert super_id not in json.dumps(report, ensure_ascii=False)
+
+
+# ── Phase 9 / Task 3: ورودیها، اعتبارسنجی و رانبوک ────────────────────────────────
+def test_the_provider_flag_survives_load_env(monkeypatch):
+    """پرچمِ سطحِ step نباید بهدلیل ناشناسبودنش از env فرایند حذف شود (D-7)."""
+    monkeypatch.setenv("PROVIDER_CREDENTIALS_PRESENT", "1")
+    assert acc.load_env(None)["PROVIDER_CREDENTIALS_PRESENT"] == "1"
+
+
+def test_the_workflow_offers_a_duration_burn_in_scenario():
+    src = _wf()
+    block = src.split("scenario:", 1)[1].split("db_mode:", 1)[0]
+    assert "default: core" in block
+    assert "options: [core, full, duration]" in block
+
+
+def test_the_workflow_validates_a_super_id_list_without_echoing_values():
+    src = _wf()
+    block = src.split("name: Validate secure inputs", 1)[1].split("name:", 1)[0]
+    assert "SUPER_ID_INVALID" in block and "TOKEN_MISSING" in block
+    assert "[0-9,;[:space:]]" in block
+    assert 'echo "$SUPER' not in block and 'echo "$TOKEN' not in block
+
+
+def test_the_workflow_does_not_put_secrets_in_conditions():
+    for line in _wf().splitlines():
+        if line.strip().startswith("if:"):
+            assert "secrets." not in line
+
+
+def test_the_runbook_documents_the_phase9_budget_and_boundaries():
+    body = _src("docs/QA_LIVE_ACCEPTANCE.md")
+    section = body.split("## ۸)", 1)[1]
+    for needle in ("340", "350", "duration", "active_duration_s"):
+        assert needle in section
+    for surface in ("telegram_bot", "temporary_db", "provider_ai",
+                    "real_channel_publication", "runner_hard_cap"):
+        assert surface in section

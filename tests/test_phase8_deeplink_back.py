@@ -94,7 +94,7 @@ def test_failed_publish_records_nothing():
 
 
 def test_a_renamed_handle_is_refreshed_fail_safely(monkeypatch):
-    cid = _chan(822, "oldhandle")
+    _chan(822, "oldhandle")
     ch = channel_by_chat(822)
     msg = type("Msg", (), {"message_id": 5, "chat": type("C", (), {"username": "newhandle"})()})()
     pub_mod._note_channel_handle(ch, msg)

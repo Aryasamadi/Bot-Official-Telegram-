@@ -101,7 +101,18 @@ code **#102 → `db86543`**. The whole-branch review returned `APPROVED` with th
 no fix required before merge; the rich-path keyboard's real-client behaviour and the deleted-post
 case stay explicit live gaps in the single Phase 10 run (D-7, D8-8/R2).
 
-**Exact next action:** Phase 9 — temporary GitHub Actions harness, on explicit owner instruction only. Phase 8 is code-complete with its live scenario deferred to Phase 10 together with Phases 4–7 (D-7).
+**Phase 9 result:** the single manual `qa-live` harness is **code-complete**. The supervisor now
+counts active time from the `READY` marker and reports eight timing fields plus the explicit
+10-minute difference from 350; the `duration` scenario holds to the budget while `core`/`full` keep
+their early exit for D-7. The two secure inputs (`TELEGRAM_BOT_TOKEN`, `SUPER_ADMIN_ID`) are mapped
+to the names the code reads, validated fail-closed without echoing values, and accepted as id lists.
+The report carries a five-surface real / simulated / not-performed table; long super ids are checked
+for leaks without ever writing their value into the report. Design/plan **#104 → `c9c7f4f`**; code
+**#105 → `9cd7b61`**. The whole-branch review returned `APPROVED` with no fix required before merge;
+its open items (listed in §4.8) are carried into the single Phase 10 run (D-7). **No live dispatch is
+claimed** in this phase.
+
+**Exact next action:** Phase 10 — hardening, cleanup and release gate, on explicit owner instruction only. Phase 9 is code-complete; its live dispatch joins the single run with Phases 4–8 (D-7).
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -120,7 +131,7 @@ case stay explicit live gaps in the single Phase 10 run (D-7, D8-8/R2).
 | 6 | Typing lifecycle | Show `typing` while waiting; always stop it; no orphan tasks | **`IN_PROGRESS`** — code merged 2026-11-22 (#94 design/plan, #95 Phase 5 determinism fix, #96 code); whole-branch review APPROVED after a P1 shutdown hole was fixed; live scenario **deferred to Phase 10** (D-7) | 4 |
 | 7 | Onboarding, home menu, message routing | Language → welcome → "start" → add channel; free plan without an extra button; stable state | **`IN_PROGRESS`** — code merged 2026-11-24 (#98 design/plan, #99 code); `onboarding_state` + schema v13; whole-branch review APPROVED after a fix wave; live scenario **deferred to Phase 10** (D-7) | 1 (4 for reply routing) |
 | 8 | Deeplink "back to channel" | Return the user to the exact source post, or explain the platform limit honestly | **`IN_PROGRESS`** — code merged 2026-11-25 (#101 design/plan, #102 code); one URL button + honest notes; whole-branch review `APPROVED`; live check **deferred to Phase 10** (D-7) | 1 |
-| 9 | Temporary GitHub Actions harness | Manual-only workflow: token + super-admin id, READY, run for the target duration, clean shutdown | `NOT_STARTED` | 1 |
+| 9 | Temporary GitHub Actions harness | Manual-only workflow: token + super-admin id, READY, run for the target duration, clean shutdown | **`IN_PROGRESS`** — code merged 2026-11-25 (#104 design/plan, #105 code); READY-based timing + `duration` burn-in + secure inputs; whole-branch review `APPROVED`; live dispatch **deferred to Phase 10** (D-7) | 1 |
 | 10 | Hardening, cleanup, release gate | Rotate secrets, dependency/secret scans, remove proven-dead code, full green suite, release runbook | `NOT_STARTED` | 1–9 |
 
 **Status values:** `NOT_STARTED` · `IN_PROGRESS` · `BLOCKED` · `COMPLETED`
@@ -471,6 +482,35 @@ the green report artifact in §5 before the release is declared.
 
 ---
 
+## 4.8 Phase 9 — manual harness, scope and open items
+
+- **Source of truth:** the roadmap table above, the external `PHASE0_AUDIT_REPORT.md` (AUD-011,
+  AUD-013, section «فاز ۹») and the approved design/plan recorded in §7.
+- **Binding architecture:** one workflow only — `.github/workflows/qa-live.yml`; no schema, no bot
+  product-code change, no VPS/production DB/provider key, no live dispatch in this phase.
+- **Binding decisions D9-1…D9-10:** one workflow; 340 active minutes with the 10-minute difference
+  from 350 stated as a number; secret-backed inputs with forward-compatible aliases; id lists
+  accepted; `cleanup_duration_s` ends at the report write; long ids join the leak check; `duration`
+  holds to budget while `core`/`full` exit early; the Provider row is flag-driven.
+- **Acceptance:** manual-only trigger, minimal permissions, SHA pins, `timeout-minutes: 360`,
+  default `"340"`, five-surface boundary table, no secret value in logs/report/artifact names,
+  bounded readiness, clean `finally` shutdown, additive timing fields.
+- **Open items owned by Phase 10 / D-7 (non-blocking for this merge):**
+  1. A `duration` run with no observed Q&A traffic exits 1 at the budget by design; the runbook now
+     states this. Decide before consuming the artifact whether burn-in success should be code 0.
+  2. The workflow's fail-closed validation was checked by a real dummy-value shell run and source
+     guards, not by an executable boundary test; add one before treating the workflow as a gate.
+  3. `PROVIDER_CREDENTIALS_PRESENT` is preserved by `KNOWN_ENV` but has no dispatch input; a
+     credentialed D-7 dispatch needs a small workflow edit to report `provider_ai: real`.
+  4. `startup_duration_s` starts after process spawn and excludes pip-install time; the runbook
+     margin is ~10 minutes, not 20.
+  5. A real secret leak would still appear in the uploaded `bot.log` (pre-existing); scrub it before
+     publishing the artifact externally.
+  6. Negative super ids are rejected by the validation regex (fail-closed); Telegram user ids are
+     positive, so this is acceptable.
+
+---
+
 ## 4.1 Disposition of the existing PR chain (#46–#56) — binding
 
 > **Owner rule (2026-11-12):** every existing pull request gets its disposition **inside the phase
@@ -662,6 +702,13 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-25 | branch **phase8/deeplink-back** @ `839934d` | `ruff check .` / `mypy newsbot` / `final_verification.py` / `run.py --check` (dummy env) | clean / 52 files clean / **17/17 exit 0** / exit 0, config healthy |
 | 2026-11-25 | branch **phase8/deeplink-back** @ `839934d` | `pytest -q --tb=line -rf` (final Windows suite) | **19 failed, 1150 passed in 655.05s (0:10:55)** — only the §5.1 Windows-only failures |
 | 2026-11-25 | `main` @ `db86543` (PR #102) | `gh pr merge 102 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (3m14s), **all 15 fields identical** to both backups |
+| 2026-11-25 | branch **docs/phase9-design-plan** | GitHub CI `test` on PR #104 | **SUCCESS** (3m25s) |
+| 2026-11-25 | branch **phase9/manual-harness** @ `2351d48` | `pytest tests/test_phase4_live_acceptance.py -q -x` × 5 | **59 passed** on each of five consecutive runs (2.37–3.41 s); no flake |
+| 2026-11-25 | branch **phase9/manual-harness** | focused suites during Tasks 1–3 and the fix round | Task 1 RED 3 failed/45 passed → 48 passed · Task 2 RED 4 failed/49 passed → 53 passed, then a security fix RED 1 failed/53 passed → 54 passed · Task 3 RED 6 failed/53 passed → 59 passed |
+| 2026-11-25 | branch **phase9/manual-harness** @ `2351d48` | `pytest -q --collect-only -p no:cacheprovider` | **1183 tests collected**; README badge and Persian count updated; `test_phase1_10_state_alignment.py` 6 passed |
+| 2026-11-25 | branch **phase9/manual-harness** @ `2351d48` | `ruff check .` / `mypy newsbot` / `final_verification.py` / `run.py --check` (dummy env) | clean / 52 files clean / **17/17 exit 0** / exit 0, config healthy |
+| 2026-11-25 | branch **phase9/manual-harness** @ `2351d48` | `pytest -q --tb=line -rf` (final Windows suite) | **19 failed, 1164 passed in 662.02s (0:11:02)** — only the §5.1 Windows-only failures |
+| 2026-11-25 | `main` @ `9cd7b61` (PR #105) | `gh pr merge 105 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (3m36s), **all 15 fields identical** to both backups |
 
 **Not run / unavailable:** the live `qa-live` run itself (Phase 4 acceptance **and** Phase 5's quota
 scenario, both deferred to the single Phase 10 run — D-7 / §4.5), coverage percentage (no coverage tool
@@ -727,6 +774,9 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 8 design + plan | **PR #101 — MERGED** as `0264f52c8753f903fecec09990870a6668aeaf03` · spec `docs/superpowers/specs/2026-11-25-phase8-deeplink-back-design.md` · plan `docs/superpowers/plans/2026-11-25-phase8-deeplink-back.md` · CI `test: SUCCESS` (3m21s) · gate restored with **all 15 fields identical**. The builder check found five real gaps (stale handles, rich-path markup, split bodies, deleted rows, audit wording); all were resolved in the approved design |
 | Phase 8 code | Branch **phase8/deeplink-back** from `main` @ `0264f52` — commits **c236754** (one `post_url` rule), **2644242** (payload + rename healing), **67fa117** (button, notes, single-control split), **68dc7df** (ruff cleanup), **839934d** (README count). Merged as **PR #102 → `db86543baa6c9e3dad0e504a87c6a55a0f9547dd`** · CI `test: SUCCESS` (3m14s) · gate restored with **all 15 fields identical** |
 | Phase 8 result | **CODE COMPLETE — no live verification claimed**: 14 new tests, 1169 collected, final Windows suite 1150 passed / the known 19 failures, `ruff`/`mypy`/`final_verification.py`/`run.py --check` clean. Whole-branch `APPROVED` with three LOW findings (pre-existing re-settle indexing, corrupt `-100…` id, fa-only rendering assertions) and all deferred minors triaged as no-fix-before-merge. Phase 8's live check joins Phases 4–7 in the single Phase 10 run (D-7) |
+| Phase 9 design + plan | **PR #104 — MERGED** as `c9c7f4f9b703dae75888828222b3380a1b7aa9cd` · spec `docs/superpowers/specs/2026-11-25-phase9-manual-harness-design.md` · plan `docs/superpowers/plans/2026-11-25-phase9-manual-harness.md` · CI `test: SUCCESS` (3m25s) · gate restored with **all 15 fields identical**. The builder check found five real gaps (target vs cap, id lists, cleanup seconds, id leak semantics, Provider row), all resolved in the approved design |
+| Phase 9 code | Branch **phase9/manual-harness** from `main` @ `c9c7f4f` — commits **93b33b3** (READY-based timing), **56b1bc0** (burn-in + boundaries + leak check), **eda09be** (value-free id leak labels), **b8e06e6** (secure inputs, validation, runbook), **2351d48** (README count). Merged as **PR #105 → `9cd7b6184bee336c5e802ae37b52b2279d797153`** · CI `test: SUCCESS` (3m36s) · gate restored with **all 15 fields identical** |
+| Phase 9 result | **CODE COMPLETE — no live verification claimed**: 14 new tests, 1183 collected, final Windows suite 1164 passed / the known 19 failures, `ruff`/`mypy`/`final_verification.py`/`run.py --check` clean. Whole-branch `APPROVED`; Task 2's review caught a real secret-value leak into `report['checks']`, fixed test-first in `eda09be` and re-reviewed clean. §4.8 lists the open items carried into Phase 10 |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)
@@ -797,7 +847,7 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 | D-8 | Subagent dispatch failed mid-Phase-6 with `Free usage limit reached`; Tasks 3 and 4 were implemented inline by the controller and are recorded as such in their task reports. Task-scoped independent review was therefore unavailable for those two tasks; the independent whole-branch review did run and returned `APPROVED` after the P1 fix | recorded; no product impact |
 | D-9 | Phase 7 subagent usage limits recurred (the Task 1 implementer committed then failed to send its final report); the controller supervised inline and verified its commit directly. The **full suite**, not the focused suites, caught four real schema-test regressions (base DDL missing the new column, PH-01 pinned to v12) — all fixed test-first before the code PR | recorded; no product impact |
 | D-11 | Phase 8 Task 1's implementer hit `Free usage limit reached` after writing its edits but before committing or reporting. The controller reconstructed the real RED failure, verified the partial diff, applied ruling R4 (a `KeyError` exposed by the stricter URL rule), committed and supervised inline. No product impact; the whole-branch review still ran independently | recorded; no product impact |
-| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails, Phase 6's typing lifecycle, Phase 7's onboarding flow and Phase 8's deeplink button (including whether the rich path honours `reply_markup`) | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS`, Phase 5 stays code-complete but not live-verified, and the release is not "live-verified" |
+| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails, Phase 6's typing lifecycle, Phase 7's onboarding flow, Phase 8's deeplink button (including whether the rich path honours `reply_markup`) and Phase 9's manual harness (READY, timing fields, clean shutdown) | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS`, Phase 5 stays code-complete but not live-verified, and the release is not "live-verified" |
 
 ---
 

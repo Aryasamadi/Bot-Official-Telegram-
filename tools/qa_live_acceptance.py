@@ -829,9 +829,12 @@ def supervised_secret_values(env):
     """مقدارهای بررسیِ نشت: توکن، کلید و فقط شناسهٔ سوپرِ شش رقمی یا بیشتر."""
     values = {"BOT_TOKEN": (env or {}).get("BOT_TOKEN") or "",
               "SECRETS_KEY": (env or {}).get("SECRETS_KEY") or ""}
-    for super_id in admin_ids((env or {}).get("SUPER_ADMIN_IDS")):
-        if len(str(super_id)) >= 6:
-            values["SUPER_ADMIN_ID_%d" % super_id] = str(super_id)
+    # برچسبها نباید خودِ شناسه را لو بدهند: secret_values_present نامِ کلید را
+    # به تفصیلِ بررسی مینویسد و آن تفصیل در report ذخیره میشود.
+    long_ids = sorted(sid for sid in admin_ids((env or {}).get("SUPER_ADMIN_IDS"))
+                      if len(str(sid)) >= 6)
+    for index, super_id in enumerate(long_ids, start=1):
+        values["SUPER_ADMIN_ID#%d" % index] = str(super_id)
     return values
 
 

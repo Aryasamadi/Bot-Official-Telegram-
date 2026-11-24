@@ -691,3 +691,21 @@ def test_short_super_id_is_not_a_false_positive(tmp_path, monkeypatch):
         sleep=lambda s: None, resolve=lambda s: (-100111, -555))
     leak = next(c for c in report["checks"] if c["name"] == "no_secret_in_log")
     assert leak["status"] == "OBSERVED"
+
+
+def test_a_leaked_long_super_id_never_appears_in_the_report(tmp_path):
+    """وقتی شناسهٔ سوپر در لاگ هست، نامِ برچسب نباید خودِ شناسه را لو بدهد."""
+    super_id = "987654321"
+    ft = FakeTime()
+    cfg = _cfg(tmp_path, duration_s=300,
+               secret_values=acc.supervised_secret_values(
+                   {"BOT_TOKEN": TOKEN, "SUPER_ADMIN_IDS": super_id}))
+    _, report = acc.supervise(
+        cfg, spawn=lambda: FakeProc(), snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "در حال اجرا… chat=%s" % super_id, clock=ft.clock,
+        sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    leak = next(c for c in report["checks"] if c["name"] == "no_secret_in_log")
+    assert leak["status"] == "NOT_OBSERVED"
+    assert "SUPER_ADMIN_ID#1" in leak["detail"]
+    assert super_id not in leak["detail"]
+    assert super_id not in json.dumps(report, ensure_ascii=False)

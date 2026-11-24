@@ -158,7 +158,24 @@ def update_channel_meta(cid, title=None, username=None):
     if title is not None: q("UPDATE channels SET title=? WHERE id=?", (title, cid), commit=True)
     if username is not None: q("UPDATE channels SET username=? WHERE id=?", (username, cid), commit=True)
 
-def msg_link(ch, msg): return f"https://t.me/{ch['username']}/{msg.message_id}" if ch["username"] else f"https://t.me/c/{str(ch['chat_id'])[4:]}/{msg.message_id}"
+def post_url(chat_id, message_id, username=""):
+    """URL of a channel post: public form when a username exists, else the private c/ form."""
+    try:
+        mid = int(message_id)
+    except (TypeError, ValueError):
+        return ""
+    if mid <= 0:
+        return ""
+    handle = str(username or "").lstrip("@").strip()
+    if handle:
+        return f"https://t.me/{handle}/{mid}"
+    raw = str(chat_id if chat_id is not None else "")
+    if not raw.startswith("-100") or len(raw) <= 4:
+        return ""
+    return f"https://t.me/c/{raw[4:]}/{mid}"
+
+
+def msg_link(ch, msg): return post_url(ch["chat_id"], msg.message_id, ch["username"])
 
 # ══════════════════════════════════════════════════════════════════════════
 # کانال اجباری — مستقل برای هر زبان (fa/en)

@@ -240,7 +240,7 @@ def reserve_publication(aid, admin_id, count_usage, test_user, previous):
     except PublicationQuotaExceeded: return None
 
 def settle_publication(aid, ch, journal):
-    link = journal.get("link") or msg_link(ch, __import__("types").SimpleNamespace(message_id=journal["message_id"]))
+    link = journal.get("link") or msg_link(ch, __import__("types").SimpleNamespace(message_id=journal.get("message_id")))
     def _go(conn):
         a = conn.execute("SELECT * FROM articles WHERE id=?", (aid,)).fetchone()
         if not a: raise RuntimeError("article_missing")

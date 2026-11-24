@@ -418,7 +418,8 @@ def test_the_report_never_contains_a_secret_or_an_answer(tmp_path, monkeypatch):
         clock=FakeTime().clock, sleep=lambda s: None, resolve=lambda s: (-100111, -555))
     body = json.dumps(report, ensure_ascii=False)
     assert code == 0 and TOKEN not in body and "TEXT_OF_ANSWER" not in body
-    assert report["redactions"] == ["BOT_TOKEN", "SECRETS_KEY"]
+    assert report["redactions"] == ["BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "SUPER_ADMIN_ID",
+                                    "SUPER_ADMIN_IDS", "SECRETS_KEY"]
     assert report["log_sha256"] and report["bot_log_lines"] == 1
 
 
@@ -472,7 +473,9 @@ def test_the_workflow_has_the_required_settings():
     src = _wf()
     assert "permissions:\n  contents: read" in src
     assert "timeout-minutes: 360" in src
-    assert 'default: "350"' in src
+    assert 'default: "340"' in src
+    assert "name: Validate secure inputs" in src
+    assert "TELEGRAM_BOT_TOKEN" in src and "SUPER_ADMIN_ID" in src
     assert "qa-live-db-v1-${{ github.run_id }}" in src
     assert "restore-keys: qa-live-db-v1-" in src
     assert "actions/cache/restore@" in src and "actions/cache/save@" in src
@@ -491,8 +494,10 @@ def test_no_secret_is_used_inside_an_if_expression():
 def test_the_run_step_receives_the_three_secrets():
     src = _wf()
     block = src.split("name: Run the live acceptance", 1)[1].split("name:", 1)[0]
-    for name in ("BOT_TOKEN", "SUPER_ADMIN_IDS", "SECRETS_KEY"):
-        assert "${{ secrets.%s }}" % name in block
+    for needle in ("BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.BOT_TOKEN }}",
+                   "SUPER_ADMIN_IDS: ${{ secrets.SUPER_ADMIN_ID || secrets.SUPER_ADMIN_IDS }}",
+                   "SECRETS_KEY: ${{ secrets.SECRETS_KEY }}"):
+        assert needle in block
     assert "DB_FILE: ${{ runner.temp }}/qa-live/newsbot.db" in block
     assert "--scenario \"${{ inputs.scenario }}\"" in block
 
@@ -578,3 +583,171 @@ def test_a_debug_only_ignore_line_does_not_satisfy_the_security_check():
 def test_the_db_cache_save_tolerates_a_missing_db():
     block = _wf().split("name: Save the test DB", 1)[1]
     assert "continue-on-error: true" in block
+
+
+# ── Phase 9 / Task 1: زمانِ فعال از READY ────────────────────────────────────────
+def test_active_time_starts_at_ready_not_spawn(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    ft, proc = FakeTime(), FakeProc()
+    reads = {"n": 0}
+
+    def log(_path):
+        reads["n"] += 1
+        return "" if reads["n"] <= 3 else "در حال اجرا…"
+
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=log,
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 0
+    assert report["duration_basis"] == "ready_to_shutdown"
+    assert report["startup_duration_s"] == 6
+    assert report["active_duration_s"] == 10
+    assert report["cleanup_duration_s"] == 0
+
+
+def test_timeout_counts_only_the_active_budget(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [WAIT])
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 1 and proc.terminated
+    assert report["active_duration_s"] == 300 and report["startup_duration_s"] == 0
+
+
+def test_report_states_the_delta_from_350_minutes(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [WAIT])
+    class BigStep:
+        now = 0.0
+        def clock(self): return self.now
+        def sleep(self, _s): self.now += 600
+    ft = BigStep()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=340 * 60), spawn=lambda: FakeProc(),
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 1
+    assert report["configured_duration_s"] == 340 * 60
+    assert report["delta_vs_350_s"] == -600
+
+
+# ── Phase 9 / Task 2: سوزانده تا سقف، مرزها و گزارشِ بدونِ نشت ───────────────────
+def test_duration_scenario_holds_to_budget_even_when_all_checks_pass(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300, scenario="duration"), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 0 and report["scenario_mode"] == "hold_to_budget"
+    assert report["active_duration_s"] == 300
+
+
+def test_core_scenario_still_exits_early(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 0 and report["scenario_mode"] == "early_exit"
+    assert report["active_duration_s"] == 10
+
+
+def test_duration_mode_still_fails_when_ready_never_appears(tmp_path):
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300, scenario="duration"), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "",
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 2 and "BOT_NOT_READY" in report["problems"] and proc.terminated
+
+
+def test_report_carries_boundaries_without_any_secret_value(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    cfg = _cfg(tmp_path,
+               secret_values=acc.supervised_secret_values(
+                   {"BOT_TOKEN": TOKEN, "SUPER_ADMIN_IDS": "987654321"}),
+               env={"PROVIDER_CREDENTIALS_PRESENT": "0"})
+    _, report = acc.supervise(
+        cfg, spawn=lambda: FakeProc(), snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "در حال اجرا…", clock=FakeTime().clock,
+        sleep=lambda s: None, resolve=lambda s: (-100111, -555))
+    surfaces = {row["surface"] for row in report["boundaries"]}
+    assert surfaces == {"telegram_bot", "temporary_db", "provider_ai",
+                        "real_channel_publication", "runner_hard_cap"}
+    assert report["provider_credentials_present"] is False
+    body = json.dumps(report, ensure_ascii=False)
+    assert TOKEN not in body and "987654321" not in body and "TEXT_OF_ANSWER" not in body
+
+
+def test_short_super_id_is_not_a_false_positive(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    short = acc.supervised_secret_values({"BOT_TOKEN": TOKEN, "SUPER_ADMIN_IDS": "1"})
+    long = acc.supervised_secret_values({"BOT_TOKEN": TOKEN, "SUPER_ADMIN_IDS": "987654321"})
+    assert all(v != "1" for v in short.values()) and "987654321" in long.values()
+    cfg = _cfg(tmp_path, secret_values=short)
+    _, report = acc.supervise(
+        cfg, spawn=lambda: FakeProc(), snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "در حال اجرا… chat=1 msg=44", clock=FakeTime().clock,
+        sleep=lambda s: None, resolve=lambda s: (-100111, -555))
+    leak = next(c for c in report["checks"] if c["name"] == "no_secret_in_log")
+    assert leak["status"] == "OBSERVED"
+
+
+def test_a_leaked_long_super_id_never_appears_in_the_report(tmp_path):
+    """وقتی شناسهٔ سوپر در لاگ هست، نامِ برچسب نباید خودِ شناسه را لو بدهد."""
+    super_id = "987654321"
+    ft = FakeTime()
+    cfg = _cfg(tmp_path, duration_s=300,
+               secret_values=acc.supervised_secret_values(
+                   {"BOT_TOKEN": TOKEN, "SUPER_ADMIN_IDS": super_id}))
+    _, report = acc.supervise(
+        cfg, spawn=lambda: FakeProc(), snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "در حال اجرا… chat=%s" % super_id, clock=ft.clock,
+        sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    leak = next(c for c in report["checks"] if c["name"] == "no_secret_in_log")
+    assert leak["status"] == "NOT_OBSERVED"
+    assert "SUPER_ADMIN_ID#1" in leak["detail"]
+    assert super_id not in leak["detail"]
+    assert super_id not in json.dumps(report, ensure_ascii=False)
+
+
+# ── Phase 9 / Task 3: ورودیها، اعتبارسنجی و رانبوک ────────────────────────────────
+def test_the_provider_flag_survives_load_env(monkeypatch):
+    """پرچمِ سطحِ step نباید بهدلیل ناشناسبودنش از env فرایند حذف شود (D-7)."""
+    monkeypatch.setenv("PROVIDER_CREDENTIALS_PRESENT", "1")
+    assert acc.load_env(None)["PROVIDER_CREDENTIALS_PRESENT"] == "1"
+
+
+def test_the_workflow_offers_a_duration_burn_in_scenario():
+    src = _wf()
+    block = src.split("scenario:", 1)[1].split("db_mode:", 1)[0]
+    assert "default: core" in block
+    assert "options: [core, full, duration]" in block
+
+
+def test_the_workflow_validates_a_super_id_list_without_echoing_values():
+    src = _wf()
+    block = src.split("name: Validate secure inputs", 1)[1].split("name:", 1)[0]
+    assert "SUPER_ID_INVALID" in block and "TOKEN_MISSING" in block
+    assert "[0-9,;[:space:]]" in block
+    assert 'echo "$SUPER' not in block and 'echo "$TOKEN' not in block
+
+
+def test_the_workflow_does_not_put_secrets_in_conditions():
+    for line in _wf().splitlines():
+        if line.strip().startswith("if:"):
+            assert "secrets." not in line
+
+
+def test_the_runbook_documents_the_phase9_budget_and_boundaries():
+    body = _src("docs/QA_LIVE_ACCEPTANCE.md")
+    section = body.split("## ۸)", 1)[1]
+    for needle in ("340", "350", "duration", "active_duration_s"):
+        assert needle in section
+    for surface in ("telegram_bot", "temporary_db", "provider_ai",
+                    "real_channel_publication", "runner_hard_cap"):
+        assert surface in section

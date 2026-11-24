@@ -418,7 +418,8 @@ def test_the_report_never_contains_a_secret_or_an_answer(tmp_path, monkeypatch):
         clock=FakeTime().clock, sleep=lambda s: None, resolve=lambda s: (-100111, -555))
     body = json.dumps(report, ensure_ascii=False)
     assert code == 0 and TOKEN not in body and "TEXT_OF_ANSWER" not in body
-    assert report["redactions"] == ["BOT_TOKEN", "SECRETS_KEY"]
+    assert report["redactions"] == ["BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "SUPER_ADMIN_ID",
+                                    "SUPER_ADMIN_IDS", "SECRETS_KEY"]
     assert report["log_sha256"] and report["bot_log_lines"] == 1
 
 
@@ -626,3 +627,67 @@ def test_report_states_the_delta_from_350_minutes(tmp_path, monkeypatch):
     assert code == 1
     assert report["configured_duration_s"] == 340 * 60
     assert report["delta_vs_350_s"] == -600
+
+
+# ── Phase 9 / Task 2: سوزانده تا سقف، مرزها و گزارشِ بدونِ نشت ───────────────────
+def test_duration_scenario_holds_to_budget_even_when_all_checks_pass(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300, scenario="duration"), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 0 and report["scenario_mode"] == "hold_to_budget"
+    assert report["active_duration_s"] == 300
+
+
+def test_core_scenario_still_exits_early(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 0 and report["scenario_mode"] == "early_exit"
+    assert report["active_duration_s"] == 10
+
+
+def test_duration_mode_still_fails_when_ready_never_appears(tmp_path):
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300, scenario="duration"), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "",
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 2 and "BOT_NOT_READY" in report["problems"] and proc.terminated
+
+
+def test_report_carries_boundaries_without_any_secret_value(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    cfg = _cfg(tmp_path,
+               secret_values=acc.supervised_secret_values(
+                   {"BOT_TOKEN": TOKEN, "SUPER_ADMIN_IDS": "987654321"}),
+               env={"PROVIDER_CREDENTIALS_PRESENT": "0"})
+    _, report = acc.supervise(
+        cfg, spawn=lambda: FakeProc(), snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "در حال اجرا…", clock=FakeTime().clock,
+        sleep=lambda s: None, resolve=lambda s: (-100111, -555))
+    surfaces = {row["surface"] for row in report["boundaries"]}
+    assert surfaces == {"telegram_bot", "temporary_db", "provider_ai",
+                        "real_channel_publication", "runner_hard_cap"}
+    assert report["provider_credentials_present"] is False
+    body = json.dumps(report, ensure_ascii=False)
+    assert TOKEN not in body and "987654321" not in body and "TEXT_OF_ANSWER" not in body
+
+
+def test_short_super_id_is_not_a_false_positive(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    short = acc.supervised_secret_values({"BOT_TOKEN": TOKEN, "SUPER_ADMIN_IDS": "1"})
+    long = acc.supervised_secret_values({"BOT_TOKEN": TOKEN, "SUPER_ADMIN_IDS": "987654321"})
+    assert all(v != "1" for v in short.values()) and "987654321" in long.values()
+    cfg = _cfg(tmp_path, secret_values=short)
+    _, report = acc.supervise(
+        cfg, spawn=lambda: FakeProc(), snapshot=lambda p: acc.EMPTY_SNAPSHOT,
+        read_log=lambda p: "در حال اجرا… chat=1 msg=44", clock=FakeTime().clock,
+        sleep=lambda s: None, resolve=lambda s: (-100111, -555))
+    leak = next(c for c in report["checks"] if c["name"] == "no_secret_in_log")
+    assert leak["status"] == "OBSERVED"

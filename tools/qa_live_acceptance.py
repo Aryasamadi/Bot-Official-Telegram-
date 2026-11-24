@@ -692,6 +692,7 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
     db_reused = bool(cfg.db_path and os.path.isfile(cfg.db_path))
     problems, checks, proc, log_text = [], [], None, ""
     code = 1
+    observed = False
     t0 = clock()
     ready_t, ready_at = None, None
 
@@ -745,7 +746,9 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
                 code = 2
                 break
             required = REQUIRED.get(cfg.scenario, REQUIRED["core"])
-            if all((by_name.get(n) or {}).get("status") == "OBSERVED" for n in required):
+            observed = all((by_name.get(n) or {}).get("status") == "OBSERVED" for n in required)
+            # `duration` یک burn-in است: وظیفهاش پرکردنِ زمانِ فعال است، نه خروجِ زودهنگام.
+            if observed and cfg.scenario != "duration":
                 code = 0
                 break
             if clock() - ready_t >= cfg.duration_s:
@@ -753,7 +756,7 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
                     problems.append(resolve_error or "CHANNEL_NOT_REGISTERED")
                     code = 2
                 else:
-                    code = 1
+                    code = 0 if observed else 1
                 break
     except Precondition as e:
         problems.append(e.code)
@@ -771,6 +774,21 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
 
     report_t = clock()
     active_s = stop_t - ready_t
+    provider_credentials_present = _env_flag(cfg.env, "PROVIDER_CREDENTIALS_PRESENT")
+    boundaries = [
+        {"surface": "telegram_bot", "status": "real",
+         "note": "real token, real client traffic"},
+        {"surface": "temporary_db", "status": "real",
+         "note": "throwaway data, never uploaded"},
+        {"surface": "provider_ai",
+         "status": "real" if provider_credentials_present else "simulated",
+         "note": "the workflow supplies no provider keys, so a normal Phase 9 dispatch is "
+                 "simulated; a D-7 dispatch with explicit provider credentials reports real"},
+        {"surface": "real_channel_publication", "status": "not_performed",
+         "note": "needs explicit owner authorization"},
+        {"surface": "runner_hard_cap", "status": "real",
+         "note": "platform limit; timeout-minutes: 360"},
+    ]
     report = {
         "schema": SCHEMA,
         "started_at": started_at,
@@ -779,7 +797,11 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
         "db_reused": db_reused,
         "checks": checks,
         "exit_code": code,
-        "redactions": ["BOT_TOKEN", "SECRETS_KEY"],
+        "scenario_mode": "hold_to_budget" if cfg.scenario == "duration" else "early_exit",
+        "provider_credentials_present": provider_credentials_present,
+        "boundaries": boundaries,
+        "redactions": ["BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "SUPER_ADMIN_ID",
+                       "SUPER_ADMIN_IDS", "SECRETS_KEY"],
         "bot_log_lines": len((log_text or "").splitlines()),
         "log_sha256": hashlib.sha256((log_text or "").encode("utf-8")).hexdigest(),
         "problems": problems,
@@ -798,12 +820,27 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
 
 
 
+def _env_flag(env, name):
+    """فقط پرچمِ نامدار، نه مقدارِ کلید: 1/true/yes به معنای حضورِ اعتبار است."""
+    return str((env or {}).get(name) or "").strip().lower() in ("1", "true", "yes")
+
+
+def supervised_secret_values(env):
+    """مقدارهای بررسیِ نشت: توکن، کلید و فقط شناسهٔ سوپرِ شش رقمی یا بیشتر."""
+    values = {"BOT_TOKEN": (env or {}).get("BOT_TOKEN") or "",
+              "SECRETS_KEY": (env or {}).get("SECRETS_KEY") or ""}
+    for super_id in admin_ids((env or {}).get("SUPER_ADMIN_IDS")):
+        if len(str(super_id)) >= 6:
+            values["SUPER_ADMIN_ID_%d" % super_id] = str(super_id)
+    return values
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="پذیرشِ زندهٔ Q&A فاز ۴")
     ap.add_argument("--check", action="store_true", help="فقط پیش‌شرط‌ها")
     ap.add_argument("--supervise", action="store_true", help="اجرای کاملِ نظارت‌شده")
     ap.add_argument("--duration", type=int, default=350, help="سقفِ مدت به دقیقه (۵ تا ۳۵۵)")
-    ap.add_argument("--scenario", choices=("core", "full"), default="core")
+    ap.add_argument("--scenario", choices=("core", "full", "duration"), default="core")
     ap.add_argument("--report", default="", help="مسیرِ گزارشِ JSON")
     ap.add_argument("--log", default="", help="مسیرِ لاگِ فرزند")
     ap.add_argument("--env-file", default=os.environ.get("NEWSBOT_ENV_FILE", ""),
@@ -825,13 +862,15 @@ def main(argv=None):
         print(json.dumps(check_out, ensure_ascii=False, indent=2))
         return check_code
 
+    # پرچمِ اعتبارِ ارائهدهنده بهصورتِ نامِ متغیر منتقل میشود، نه مقدارِ کلید.
+    env["PROVIDER_CREDENTIALS_PRESENT"] = (
+        "1" if _env_flag(env, "PROVIDER_CREDENTIALS_PRESENT") else "0")
     db_path = (env.get("DB_FILE") or "").strip()
     log_path = args.log or os.path.join(os.path.dirname(os.path.abspath(db_path)), "bot.log")
     cfg = SuperviseConfig(db_path=db_path, log_path=log_path,
                           duration_s=int(args.duration) * 60, scenario=args.scenario,
                           super_ids=admin_ids(env.get("SUPER_ADMIN_IDS")),
-                          secret_values={"BOT_TOKEN": env.get("BOT_TOKEN") or "",
-                                         "SECRETS_KEY": env.get("SECRETS_KEY") or ""},
+                          secret_values=supervised_secret_values(env),
                           env=env, report_path=args.report)
     code, report = supervise(cfg, spawn=lambda: spawn_bot(env, log_path),
                              resolve=lambda snap: default_resolve(env, snap))

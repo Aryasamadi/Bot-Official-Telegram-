@@ -3,7 +3,10 @@
 NEW v4: پیشوند ref_ در /start انتساب ارجاع را ثبت می‌کند (قبل از r_؛ «ref_» هرگز با «r_» collide نمی‌کند).
 """
 import html
+from telegram import InlineKeyboardMarkup
+
 from newsbot import config
+from newsbot.core_channels import channel_by_chat, post_url
 from newsbot.logutils import log
 from newsbot.ratelimit import rate_ok, global_rate_ok
 from newsbot.core_users import ensure_user, is_super, user_lang, can_admin
@@ -12,7 +15,7 @@ from newsbot.net_http import load_deeplink
 from newsbot.text_format import fit_html, preview_text
 from newsbot import rich_send
 from newsbot.ui_i18n import tr, gtext
-from newsbot.ui_widgets import B, render, popup, operation_text, run_user_operation, go_home
+from newsbot.ui_widgets import B, U, render, popup, operation_text, run_user_operation, go_home
 from newsbot.ui_views_user import view_lang, view_plans, view_referral, view_onboarding_welcome
 from newsbot.ui_views_admin import view_admin_home
 from newsbot.ui_views_super import view_super_home
@@ -51,15 +54,27 @@ async def _prep(update, context, keep_await=False):
 
 async def send_deeplink(update, context, key):
     data = await load_deeplink(key); chat_id = update.effective_chat.id; lang = user_lang(update.effective_user.id) or "fa"
+    if not isinstance(data, dict): data = None
     if not data: return await update.message.reply_text(tr(lang, "dl_notfound"))
     short = data.get("short") or ""; full = data.get("full"); media = data.get("media") or {}
     body = full if full and str(full).lower() != "null" else short
     if len(body) > config.BOT_FULL_MAX: body, _ = fit_html(body, config.BOT_FULL_MAX)
+    src = data.get("src") if isinstance(data.get("src"), dict) else None
+    post_chat = src.get("chat_id") if src else None
+    message_id = src.get("message_id") if src else None
+    ch = channel_by_chat(post_chat) if post_chat else None
+    name = (ch["username"] if ch else "") or (src.get("username") if src else "") or ""
+    url = post_url(post_chat, message_id, name)
+    kb = InlineKeyboardMarkup([[U(tr(lang, "dl_back"), url)]]) if url else None
     if data.get("url") and data.get("show_source", True): body += f'\n\n<a href="{html.escape(data["url"], quote=True)}">{tr(lang, "dl_source")}</a>'
+    if url and not name:
+        # تنها وقتی که نشانی عمومی نداریم، کاربر را از محدودیتِ تلگرام آگاه میکنیم
+        body += "\n\n" + tr(lang, "dl_private_note" if ch else "dl_unknown_note")
     if media.get("kind") in ("photo", "video", "animation"):
         try: await getattr(context.bot, f"send_{media['kind']}")(chat_id, media["url"], caption=preview_text(short, 100), parse_mode="HTML")
         except Exception as e: log.warning(f"deeplink media: {e}")
-    await rich_send.send_content(context.bot, chat_id, body)
+    await rich_send.send_content(context.bot, chat_id, body, reply_markup=kb,
+                                 markup_last_only=True)
 
 async def cmd_start(update, context):
     lang = await _prep(update, context)

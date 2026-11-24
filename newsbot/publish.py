@@ -19,7 +19,7 @@ from newsbot.net_http import http, public_url_strict, UA_BROWSER, UA_FEED, gen_d
 from newsbot.concurrency import FETCH_SEM, publish_sem, ch_lock
 from newsbot.db import arun
 from newsbot.discover import _ext_kind
-from newsbot.core_channels import get_channel, get_settings, msg_link
+from newsbot.core_channels import get_channel, get_settings, msg_link, update_channel_meta
 from newsbot.core_articles import (get_article, article_update, get_pub_journal, set_pub_journal, reserve_publication,
                                    release_publication, settle_publication, posted_before, PublicationTransport)
 from newsbot.text_format import clean_ai_text, strip_source_url, split_post_html, hard_html, downgrade_html, strip_tags
@@ -28,6 +28,17 @@ from newsbot import rich_format
 from newsbot.generate import signature_of
 from newsbot.opctx import operation_checkpoint, _current_operation
 from newsbot.ui_widgets import esc
+
+
+def _note_channel_handle(ch, msg):
+    """تلگرام در پاسخِ ارسال، یوزرنیمِ واقعیِ کانال را می‌دهد؛ rename را همان‌جا ترمیم می‌کنیم."""
+    handle = str(getattr(getattr(msg, "chat", None), "username", "") or "").lstrip("@").strip()
+    if not handle or handle == (ch["username"] or ""):
+        return
+    try:
+        update_channel_meta(ch["id"], username=handle)
+    except Exception as e:
+        log.warning("channel username refresh failed: %s", type(e).__name__)
 
 
 def _media_headers(media):
@@ -436,6 +447,13 @@ async def _publish_article_locked(bot, aid, count_usage=True, test_user=None):
             if op: op.published_count += 1
             link = msg_link(ch, msg)
             journal.update(phase="ack", link=link)
+            _note_channel_handle(ch, msg)
+            if dl_key and dl_payload:
+                dl_payload["src"] = {
+                    "chat_id": int(ch["chat_id"]),
+                    "message_id": int(msg.message_id),
+                    "username": str(getattr(getattr(msg, "chat", None), "username", "") or ch["username"] or ""),
+                }
             await _settle_with_retry(aid, ch, journal)   # PUB-002: خطای گذرای DB بعد از ارسال، پست را گم نکند
             if dl_key and dl_payload:
                 # PUB-04: ردیف دیپ‌لینک فقط پس از موفقیت ارسال نوشته می‌شود تا شکست قطعی ردیف یتیم نسازد

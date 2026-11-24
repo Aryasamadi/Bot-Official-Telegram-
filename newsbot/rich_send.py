@@ -260,7 +260,8 @@ async def send_rich_raw(bot, chat_id, rich_html, *, reply_to_message_id=None, re
 
 
 async def send_legacy(bot, chat_id, text, *, reply_to_message_id=None, reply_markup=None,
-                      disable_web_page_preview=True, split=True, delay=0.3):
+                      disable_web_page_preview=True, split=True, delay=0.3,
+                      markup_last_only=False):
     """مسیرِ کلاسیکِ فعلیِ پروژه: تکه‌تکه، HTML و در صورت رد شدنِ پارس، تنزل به HTML ساده.
 
     ``split=False`` متن را دقیقاً همان‌طور که هست (بدون پاک‌سازیِ دوباره) می‌فرستد؛
@@ -271,7 +272,7 @@ async def send_legacy(bot, chat_id, text, *, reply_to_message_id=None, reply_mar
     chunks = text_format.split_html(text or "") if split else [text or ""]
     for n, chunk in enumerate(chunks):
         kwargs = dict(extra)
-        if reply_markup is not None:
+        if reply_markup is not None and (not markup_last_only or n == len(chunks) - 1):
             kwargs["reply_markup"] = reply_markup
         try:
             last = await bot.send_message(chat_id, chunk, parse_mode="HTML",
@@ -290,7 +291,7 @@ async def send_legacy(bot, chat_id, text, *, reply_to_message_id=None, reply_mar
 async def send_content(bot, chat_id, text, *, kind=None, doc=None, reply_to_message_id=None,
                        reply_markup=None, disable_web_page_preview=True, protect_content=False,
                        disable_notification=False, split_legacy=True, media_html="",
-                       fallback_legacy=True):
+                       fallback_legacy=True, markup_last_only=False):
     """ارسالِ محتوا با موتور مشترک.
 
     ابتدا پیام بومی تلگرام (تیتر/جدول/فهرست واقعی) امتحان می‌شود؛ اگر سرور یا
@@ -312,30 +313,30 @@ async def send_content(bot, chat_id, text, *, kind=None, doc=None, reply_to_mess
     if config.RICH_MESSAGES == "off":
         note_fallback(FALLBACK_MODE_OFF, "RICH_MESSAGES=off")
         return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
-                                     split_legacy, disable_web_page_preview, fallback_legacy)
+                                     split_legacy, disable_web_page_preview, fallback_legacy, markup_last_only)
     if _state["disabled"]:
         note_fallback(FALLBACK_CIRCUIT, _state.get("last_error") or "rich circuit open")
         return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
-                                     split_legacy, disable_web_page_preview, fallback_legacy)
+                                     split_legacy, disable_web_page_preview, fallback_legacy, markup_last_only)
     if not document.blocks:
         note_fallback(FALLBACK_NO_BLOCKS, "no native blocks in the content")
         return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
-                                     split_legacy, disable_web_page_preview, fallback_legacy)
+                                     split_legacy, disable_web_page_preview, fallback_legacy, markup_last_only)
     if not document.faithful:
         note_fallback(FALLBACK_UNFAITHFUL, "the parsed document lost content")
         return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
-                                     split_legacy, disable_web_page_preview, fallback_legacy)
+                                     split_legacy, disable_web_page_preview, fallback_legacy, markup_last_only)
     if not can_raw_send(bot):
         note_fallback(FALLBACK_NO_API, "the bot cannot call the Bot API directly")
         return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
-                                     split_legacy, disable_web_page_preview, fallback_legacy)
+                                     split_legacy, disable_web_page_preview, fallback_legacy, markup_last_only)
     rich_html = rich_format.render_rich(document)
     parts = rich_format.split_doc(document, config.RICH_MAX_CHARS, rich_format.render_rich)
     if len(parts) > 1 or len(rich_html) + len(media_html) > rich_format.RICH_CHAR_LIMIT:
         # محتوا باید به چند پیام شکسته می‌شد ⇒ پیامِ بومیِ تک‌پیام ممکن نیست
         note_fallback(FALLBACK_TOO_LONG, "content needs %d part(s)" % len(parts))
         return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
-                                     split_legacy, disable_web_page_preview, fallback_legacy)
+                                     split_legacy, disable_web_page_preview, fallback_legacy, markup_last_only)
     payload_html = ("%s\n%s" % (media_html, rich_html)) if media_html else rich_html
     # جهتِ نوشتن از روی متنِ اصلی سنجیده می‌شود (نه از روی تگ‌های HTML)
     is_rtl = rich_format.detect_rtl(raw) if raw else rich_format.detect_rtl(rich_html)
@@ -366,7 +367,7 @@ async def send_content(bot, chat_id, text, *, kind=None, doc=None, reply_to_mess
         _note_failure(e, unsupported=unsupported)
         note_fallback(FALLBACK_NOT_SUPPORTED if unsupported else FALLBACK_REJECTED, str(e))
         return await _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
-                                     split_legacy, disable_web_page_preview, fallback_legacy)
+                                     split_legacy, disable_web_page_preview, fallback_legacy, markup_last_only)
     except (RetryAfter, Forbidden, NetworkError):
         raise
     except Exception as e:
@@ -377,10 +378,11 @@ async def send_content(bot, chat_id, text, *, kind=None, doc=None, reply_to_mess
 
 
 async def _legacy_or_none(bot, chat_id, raw, reply_to_message_id, reply_markup,
-                          split_legacy, disable_web_page_preview, fallback_legacy):
+                          split_legacy, disable_web_page_preview, fallback_legacy, markup_last_only=False):
     """مسیر کلاسیک؛ اگر فراخوان اجازه نداده، فقط ``None`` برمی‌گردد."""
     if not fallback_legacy:
         return None
     return await send_legacy(bot, chat_id, raw, reply_to_message_id=reply_to_message_id,
                              reply_markup=reply_markup, split=split_legacy,
-                             disable_web_page_preview=disable_web_page_preview)
+                             disable_web_page_preview=disable_web_page_preview,
+                             markup_last_only=markup_last_only)

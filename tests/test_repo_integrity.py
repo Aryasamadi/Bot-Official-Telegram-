@@ -28,6 +28,7 @@ PROPOSED_PATHS = {
     "deploy/systemd/newsbot.service",   # OPS-001 — پیشنهادِ فایل واحد سرویس
     "deploy/env.example",               # OPS-001 — پیشنهادِ تک‌منبعِ APP_DIR/SERVICE
     "tests/test_deploy_gate.py",        # OPS-032 — در PR #21 (نگهبانِ دروازهٔ تأییدِ استقرار)
+    "tests/test_phase8_deeplink_back.py",  # فاز ۸ — مسیرِ پیشنهادیِ طراحی/نقشه؛ در PRِ کد ساخته و از این فهرست حذف می‌شود.
     # فاز ۵ و ۶: مسیرهای پیشنهادیِ طراحی/نقشه ساخته شدند و از این فهرست حذف شدند.
 }
 

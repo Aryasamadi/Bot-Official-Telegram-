@@ -172,7 +172,7 @@ CREATE INDEX IF NOT EXISTS idx_qa_answers_channel ON qa_answers(channel_id);
 | `newsbot/qa.py` | **جدید**: تشخیصِ پست، claim، prompt، تحویل، هندلر |
 | `newsbot/ai_quota.py` | **جدید**: گرانتِ پلن، مصرفِ اتمیک، نمایشِ مانده |
 | `newsbot/db.py` | اسکیمای v12: `qa_answers`, `ai_plan_grants`, `plans.ai_quota` (sqlite + D1) |
-| `newsbot/__init__.py` | `SCHEMA_VERSION = 12` |
+| `newsbot/__init__.py` | `SCHEMA_VERSION = 13` (Phase 7: `onboarding_state` column) |
 | `newsbot/config.py` | `QA_ENABLED`, `QA_CONTEXT_MAX_CHARS`, `QA_QUESTION_MAX_CHARS`, `QA_ANSWER_MAX_CHARS`, `QA_LINK_CACHE_MIN` |
 | `newsbot/core_users.py` | `ai_claim` ⇒ تراکنشِ واحدِ (سقفِ روزانه + سهمیهٔ پلن) |
 | `newsbot/core_plans.py` | `create_plan`/`update_plan` ⇒ ستونِ `ai_quota` |

@@ -693,6 +693,7 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
     problems, checks, proc, log_text = [], [], None, ""
     code = 1
     t0 = clock()
+    ready_t, ready_at = None, None
 
     try:
         if not (MIN_DURATION_MIN * 60 <= int(cfg.duration_s) <= MAX_DURATION_MIN * 60):
@@ -705,6 +706,7 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
             log_text = read_log(cfg.log_path)
             if READY_MARKER in log_text:
                 ready = True
+                ready_t, ready_at = clock(), now()
                 break
             sleep(READY_INTERVAL_S)
         if not ready:
@@ -746,7 +748,7 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
             if all((by_name.get(n) or {}).get("status") == "OBSERVED" for n in required):
                 code = 0
                 break
-            if clock() - t0 >= cfg.duration_s:
+            if clock() - ready_t >= cfg.duration_s:
                 if channel_chat_id is None:
                     problems.append(resolve_error or "CHANNEL_NOT_REGISTERED")
                     code = 2
@@ -759,9 +761,16 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
     finally:
         if proc is not None:
             _stop(proc)
+        stop_t = clock()
+        stopped_at = now()
+        if ready_t is None:
+            # READY دیده نشد: کل زمانِ سپریشده راهاندازی است و زمانِ فعال صفر.
+            ready_t = stop_t
         log_text = read_log(cfg.log_path) or log_text
         blank_answers(cfg.db_path)
 
+    report_t = clock()
+    active_s = stop_t - ready_t
     report = {
         "schema": SCHEMA,
         "started_at": started_at,
@@ -774,6 +783,14 @@ def supervise(cfg, *, spawn, snapshot=read_snapshot, read_log=read_text,
         "bot_log_lines": len((log_text or "").splitlines()),
         "log_sha256": hashlib.sha256((log_text or "").encode("utf-8")).hexdigest(),
         "problems": problems,
+        "ready_at": ready_at,
+        "stopped_at": stopped_at,
+        "startup_duration_s": round(ready_t - t0),
+        "active_duration_s": round(active_s),
+        "cleanup_duration_s": round(report_t - stop_t),
+        "configured_duration_s": round(cfg.duration_s),
+        "delta_vs_350_s": round(active_s - 350 * 60),
+        "duration_basis": "ready_to_shutdown",
     }
     write_report(cfg.report_path, report)
     return code, report

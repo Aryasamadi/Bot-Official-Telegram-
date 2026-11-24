@@ -578,3 +578,51 @@ def test_a_debug_only_ignore_line_does_not_satisfy_the_security_check():
 def test_the_db_cache_save_tolerates_a_missing_db():
     block = _wf().split("name: Save the test DB", 1)[1]
     assert "continue-on-error: true" in block
+
+
+# ── Phase 9 / Task 1: زمانِ فعال از READY ────────────────────────────────────────
+def test_active_time_starts_at_ready_not_spawn(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [PASS])
+    ft, proc = FakeTime(), FakeProc()
+    reads = {"n": 0}
+
+    def log(_path):
+        reads["n"] += 1
+        return "" if reads["n"] <= 3 else "در حال اجرا…"
+
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=log,
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 0
+    assert report["duration_basis"] == "ready_to_shutdown"
+    assert report["startup_duration_s"] == 6
+    assert report["active_duration_s"] == 10
+    assert report["cleanup_duration_s"] == 0
+
+
+def test_timeout_counts_only_the_active_budget(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [WAIT])
+    ft, proc = FakeTime(), FakeProc()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=300), spawn=lambda: proc,
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 1 and proc.terminated
+    assert report["active_duration_s"] == 300 and report["startup_duration_s"] == 0
+
+
+def test_report_states_the_delta_from_350_minutes(tmp_path, monkeypatch):
+    _scripted(monkeypatch, [WAIT])
+    class BigStep:
+        now = 0.0
+        def clock(self): return self.now
+        def sleep(self, _s): self.now += 600
+    ft = BigStep()
+    code, report = acc.supervise(
+        _cfg(tmp_path, duration_s=340 * 60), spawn=lambda: FakeProc(),
+        snapshot=lambda p: acc.EMPTY_SNAPSHOT, read_log=lambda p: "در حال اجرا…",
+        clock=ft.clock, sleep=ft.sleep, resolve=lambda s: (-100111, -555))
+    assert code == 1
+    assert report["configured_duration_s"] == 340 * 60
+    assert report["delta_vs_350_s"] == -600

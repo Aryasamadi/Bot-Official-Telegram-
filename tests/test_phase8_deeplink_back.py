@@ -104,3 +104,128 @@ def test_a_renamed_handle_is_refreshed_fail_safely(monkeypatch):
         raise RuntimeError("db down")
     monkeypatch.setattr(pub_mod, "update_channel_meta", boom)
     pub_mod._note_channel_handle(channel_by_chat(822), msg)   # must not raise
+
+
+from telegram import InlineKeyboardMarkup
+
+from newsbot import rich_send
+from newsbot import ui_commands as uc
+from newsbot.ui_i18n import tr
+from newsbot.ui_widgets import U
+
+
+class _Reply:
+    def __init__(self): self.calls = []
+    async def reply_text(self, text, **kw): self.calls.append((text, kw))
+
+
+class _Upd:
+    def __init__(self, uid=77):
+        self.effective_chat = type("C", (), {"id": uid})()
+        self.effective_user = type("U", (), {"id": uid})()
+        self.message = _Reply()
+
+
+class _Ctx:
+    bot = type("B", (), {})()
+
+
+def _render(monkeypatch, payload, lang="fa"):
+    sent = []
+    async def fake_send(bot, chat_id, text, **kw): sent.append((text, kw))
+    async def fake_load(key): return payload
+    monkeypatch.setattr(uc.rich_send, "send_content", fake_send)
+    monkeypatch.setattr(uc, "load_deeplink", fake_load)
+    upd = _Upd()
+    asyncio.run(uc.send_deeplink(upd, _Ctx(), "k1"))
+    return sent, upd
+
+
+def test_public_channel_gets_one_url_button(monkeypatch):
+    payload = {"short": "s", "full": "full body", "url": "https://x.test/a", "show_source": True,
+               "src": {"chat_id": -1001234567890, "message_id": 42, "username": "mychan"}}
+    sent, _ = _render(monkeypatch, payload)
+    text, kw = sent[0]
+    btn = kw["reply_markup"].inline_keyboard[0][0]
+    assert btn.url == "https://t.me/mychan/42"
+    assert btn.text == tr("fa", "dl_back")
+    assert tr("fa", "dl_private_note") not in text and tr("fa", "dl_unknown_note") not in text
+    assert kw["markup_last_only"] is True
+
+
+def test_old_payload_has_no_button_and_no_note(monkeypatch):
+    payload = {"short": "s", "full": "full body", "url": "https://x.test/a", "show_source": True}
+    sent, _ = _render(monkeypatch, payload)
+    text, kw = sent[0]
+    assert kw["reply_markup"] is None
+    assert tr("fa", "dl_private_note") not in text and tr("fa", "dl_unknown_note") not in text
+    assert "t.me/c/" not in text
+
+
+def test_private_channel_gets_member_note(monkeypatch):
+    _chan(-100000830)                            # row exists, username empty ⇒ private
+    payload = {"short": "s", "full": "full body",
+               "src": {"chat_id": -100000830, "message_id": 9, "username": ""}}
+    sent, _ = _render(monkeypatch, payload)
+    text, kw = sent[0]
+    assert kw["reply_markup"].inline_keyboard[0][0].url == "https://t.me/c/830/9"
+    assert text.count(tr("fa", "dl_private_note")) == 1
+
+
+def test_row_deleted_uses_snapshot_then_unknown_note(monkeypatch):
+    payload = {"short": "s", "full": "full body",
+               "src": {"chat_id": -100777, "message_id": 3, "username": "ghost"}}
+    sent, _ = _render(monkeypatch, payload)      # no row for -100777
+    text, kw = sent[0]
+    assert kw["reply_markup"].inline_keyboard[0][0].url == "https://t.me/ghost/3"
+    assert tr("fa", "dl_unknown_note") not in text
+
+    payload["src"]["username"] = ""
+    sent, _ = _render(monkeypatch, payload)
+    text, kw = sent[0]
+    assert kw["reply_markup"].inline_keyboard[0][0].url == "https://t.me/c/777/3"
+    assert text.count(tr("fa", "dl_unknown_note")) == 1
+
+
+def test_corrupt_payload_never_crashes(monkeypatch):
+    for bad in ({"src": {"chat_id": None, "message_id": "x"}},
+                {"src": {"chat_id": -1001, "message_id": 0}},
+                {"src": "oops"}):
+        sent, _ = _render(monkeypatch, bad)
+        assert sent[0][1]["reply_markup"] is None
+    sent, upd = _render(monkeypatch, ["not", "a", "dict"])
+    assert sent == [] and upd.message.calls[0][0] == tr("fa", "dl_notfound")
+
+
+def test_split_legacy_body_has_one_button(monkeypatch):
+    calls = []
+    class Bot:
+        async def send_message(self, chat_id, text, **kw):
+            calls.append((text, kw))
+            return type("M", (), {"message_id": len(calls)})()
+    monkeypatch.setattr(rich_send.text_format, "split_html", lambda t: ["a", "b", "c"])
+    kb = InlineKeyboardMarkup([[U("back", "https://t.me/mychan/42")]])
+    asyncio.run(rich_send.send_legacy(Bot(), 1, "abc", reply_markup=kb,
+                                      markup_last_only=True, delay=0))
+    assert "reply_markup" not in calls[0][1] and "reply_markup" not in calls[1][1]
+    assert calls[2][1]["reply_markup"] is kb
+
+
+def test_split_default_still_marks_every_chunk(monkeypatch):
+    calls = []
+    class Bot:
+        async def send_message(self, chat_id, text, **kw):
+            calls.append((text, kw))
+            return type("M", (), {"message_id": len(calls)})()
+    monkeypatch.setattr(rich_send.text_format, "split_html", lambda t: ["a", "b"])
+    kb = InlineKeyboardMarkup([[U("back", "https://t.me/mychan/42")]])
+    asyncio.run(rich_send.send_legacy(Bot(), 1, "ab", reply_markup=kb, delay=0))
+    assert all("reply_markup" in kw for _, kw in calls)
+
+
+def test_url_and_ids_never_reach_the_logs(monkeypatch, caplog):
+    payload = {"short": "s", "full": "full body",
+               "src": {"chat_id": -100424242, "message_id": 7, "username": "quietchan"}}
+    with caplog.at_level("DEBUG"):
+        _render(monkeypatch, payload)
+    assert "quietchan" not in caplog.text and "424242" not in caplog.text

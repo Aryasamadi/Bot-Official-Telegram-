@@ -172,7 +172,10 @@ def post_url(chat_id, message_id, username=""):
     raw = str(chat_id if chat_id is not None else "")
     if not raw.startswith("-100") or len(raw) <= 4:
         return ""
-    return f"https://t.me/c/{raw[4:]}/{mid}"
+    internal = raw[4:]
+    if internal.isdigit():
+        internal = str(int(internal))   # شناسهٔ عددی: صفرهای پیشرو بخشی از شناسه نیستند
+    return f"https://t.me/c/{internal}/{mid}"
 
 
 def msg_link(ch, msg): return post_url(ch["chat_id"], msg.message_id, ch["username"])

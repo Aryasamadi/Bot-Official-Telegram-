@@ -76,7 +76,21 @@ Phase 5 day-window determinism defect found by that PR's CI was fixed in **#95 �
 **#96 → `5eb8fea`**. Phase 6's live scenario joins the single Phase 10 run (D-7); this phase does
 **not** claim a live verification.
 
-**Exact next action:** Phase 7 — authorization boundaries, on explicit owner instruction only. Phase 6 is code-complete with its live scenario deferred to Phase 10 together with Phases 4 and 5 (D-7).
+**Phase 7 result:** the first-run flow is **code-complete**. A new user picks a language,
+sees a one-time welcome, taps `onb:start`, and reaches the add-channel form **without pressing a
+separate free-plan button**: the seeded free plan is granted once through the existing `free_claim`
+→ `assign_plan` → `free_release` path; paid users keep their caps; a lost concurrent claim or a
+stale button cannot grant twice or throw an onboarded user back into add-channel. `onboarding_state`
+(`''` / `welcome` / `adding_channel` / `done`) lives in an ADD-only `users` column, and
+`SCHEMA_VERSION` is 13 in both the base DDL and the migration path. The normal user home no longer
+offers plans / support / invite / help buttons — all slash commands still work, admins and super
+admins never enter onboarding, and Reply→Q&A is unchanged. Design/plan **#98 → `7482146`**; code
+**#99 → `987a84f`**. The independent whole-branch review first returned `CHANGES_REQUIRED` (two
+state traps plus four schema-test regressions found by the full suite); all were fixed test-first
+(`0bd9e54`, `4ffd2a7`) and it then returned `APPROVED`. Phase 7's live scenario joins the single
+Phase 10 run (D-7); this phase does **not** claim a live verification.
+
+**Exact next action:** Phase 8 — deeplink «back to channel», on explicit owner instruction only. Phase 7 is code-complete with its live scenario deferred to Phase 10 together with Phases 4–6 (D-7).
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -93,7 +107,7 @@ Phase 5 day-window determinism defect found by that PR's CI was fixed in **#95 �
 | 4 | Reply-to-channel-post Q&A core | Answer questions replied to a channel post, with controlled post context and idempotent delivery | **`IN_PROGRESS`** — code merged 2026-11-16 (#83, #84, #82; key hardening #88); live acceptance **deferred to Phase 10** by the owner on 2026-11-20 (D-7) | 2, 3 |
 | 5 | Q&A quotas | Per-post/day, cooldown, per-user daily cap — enforced atomically in the backend | **`IN_PROGRESS`** — code/design/tests merged 2026-11-20 (design+plan #91 → `7adb0da`, code #92 → `1e6e8eb`); the live scenario is covered by the single Phase 10 run (D-7), so no live verification is claimed here | 4 |
 | 6 | Typing lifecycle | Show `typing` while waiting; always stop it; no orphan tasks | **`IN_PROGRESS`** — code merged 2026-11-22 (#94 design/plan, #95 Phase 5 determinism fix, #96 code); whole-branch review APPROVED after a P1 shutdown hole was fixed; live scenario **deferred to Phase 10** (D-7) | 4 |
-| 7 | Onboarding, home menu, message routing | Language → welcome → "start" → add channel; free plan without an extra button; stable state | `NOT_STARTED` | 1 (4 for reply routing) |
+| 7 | Onboarding, home menu, message routing | Language → welcome → "start" → add channel; free plan without an extra button; stable state | **`IN_PROGRESS`** — code merged 2026-11-24 (#98 design/plan, #99 code); `onboarding_state` + schema v13; whole-branch review APPROVED after a fix wave; live scenario **deferred to Phase 10** (D-7) | 1 (4 for reply routing) |
 | 8 | Deeplink "back to channel" | Return the user to the exact source post, or explain the platform limit honestly | `NOT_STARTED` | 1 |
 | 9 | Temporary GitHub Actions harness | Manual-only workflow: token + super-admin id, READY, run for the target duration, clean shutdown | `NOT_STARTED` | 1 |
 | 10 | Hardening, cleanup, release gate | Rotate secrets, dependency/secret scans, remove proven-dead code, full green suite, release runbook | `NOT_STARTED` | 1–9 |
@@ -306,7 +320,7 @@ path that does not exist yet).
 - no question text and no answer text is logged — log lines carry ids and lengths only.
 
 **Task P4-1 (#83, `f850d44`)** — schema v12 (`qa_answers`, `ai_plan_grants`, `plans.ai_quota`,
-`SCHEMA_VERSION = 12`, D1 `TABLES`), `newsbot/qa.py` (pure helpers + claim + link validation + handler),
+`SCHEMA_VERSION = 13` (bumped in Phase 7), D1 `TABLES`), `newsbot/qa.py` (pure helpers + claim + link validation + handler),
 the `ChatType.GROUPS & REPLY & ~COMMAND` registration in `app.py`, the per-channel toggle, and the four
 schema-version guards bumped 11 → 12.
 **Task P4-2 (#84, `0985e3e`)** — `newsbot/ai_quota.py`, the atomic plan-grant consumption inside `ai_claim`,
@@ -402,6 +416,26 @@ secrets are ready; the last completed attempt (`44506386031`, on `74abc16`) ende
 `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered in the runner's
 bot. Phase 10 runs this live acceptance **once**, together with the release checks (**D-7**), and records
 the green report artifact in §5 before the release is declared.
+
+---
+
+## 4.6 Phase 7 — scope, decisions and acceptance criteria
+
+- **Source of truth:** the roadmap table above plus `PHASE0_AUDIT_REPORT.md` (outside this repo,
+  section «فاز ۷» and AUD-006). The owner confirmed on 2026-11-23 that the roadmap row — not the
+  stale §1 label that said "authorization boundaries" — governs this phase.
+- **Binding architecture:** maximum reuse of `admin_limits` / `assign_plan` / `free_claim`
+  (no parallel quota or role logic); `ch_add` security guards untouched; ADD-only schema with a
+  rollback that reverts code while leaving the unused column.
+- **Binding decisions:** `SCHEMA_VERSION` 12 → 13 (a new column must stop an older build from
+  opening a newer DB); the four PH-05 home buttons are replaced by their slash commands; a stale
+  `onb:start` after completion goes home; admins/super admins bypass onboarding.
+- **Acceptance:** a fresh user reaches add-channel without a plan button; the free grant happens
+  once; a paid user keeps their plan; a fresh referred user still registers correctly; plain PM
+  and Reply route correctly; all existing commands remain registered; schema v13 is asserted by
+  the four guards and by the D1 introspection suite.
+- **Evidence discipline:** 17 phase-7 tests ×5 green; 21 phase-7 tests total; full Windows suite
+  back to the known 19 failures only. Live acceptance remains owned by Phase 10 (D-7).
 
 ---
 
@@ -582,6 +616,13 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-22 | branch **phase6/typing-lifecycle** @ `e4cc30f` | `ruff check .` / `mypy newsbot` / `tools/final_verification.py` / `run.py --check` (dummy env) | clean / 52 files clean / **17/17 exit 0** / exit 0, config healthy |
 | 2026-11-22 | branch **phase6/typing-lifecycle** @ `e4cc30f` | `pytest -q --tb=line -rf` (full Windows suite) | **19 failed, 1113 passed in 1210.22s (0:20:10)** — exactly the 19 known Windows-only failures from §5.1 (4 in `test_deploy_script.py`, 15 in `test_session3_cicd_docker_deploy_docs.py`); **no new failure**, Linux CI is green |
 | 2026-11-22 | `main` @ `5eb8fea` (PR #96) | `gh pr merge 96 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (3m14s), **all 15 fields identical** to both backups |
+| 2026-11-23 | branch **docs/phase7-design-plan** | GitHub CI `test` on PR #98 | **SUCCESS** (3m22s) |
+| 2026-11-24 | branch **phase7/onboarding** @ `9b04268` | `pytest tests/test_phase7_onboarding.py -q -x` × 5 | **17 passed** on each of five consecutive runs (4.07–5.14 s); no flake |
+| 2026-11-24 | branch **phase7/onboarding** | focused suites during Tasks 1–3 and the fix wave | 62 passed (schema+guards) · 52 passed (flow) · 113 passed (six routing/UI suites) · 66 passed after the P2/P3 fix · 30 passed D1 introspection · 4 passed PH-01 migration |
+| 2026-11-24 | branch **phase7/onboarding** @ `9b04268` | `pytest -q --collect-only -p no:cacheprovider` | **1155 tests collected**; README badge and Persian count updated; `test_phase1_10_state_alignment.py` 6 passed |
+| 2026-11-24 | branch **phase7/onboarding** @ `9b04268` | `ruff check .` / `mypy newsbot` / `final_verification.py` / `run.py --check` (dummy env) | clean / 52 files clean / **17/17 exit 0** / exit 0, config healthy |
+| 2026-11-24 | branch **phase7/onboarding** @ `9b04268` | `pytest -q --tb=line -rf` (final Windows suite) | **19 failed, 1136 passed in 661.62s (0:11:01)** — only the §5.1 Windows-only failures; the four mid-phase schema regressions were fixed and are gone |
+| 2026-11-24 | `main` @ `987a84f` (PR #99) | `gh pr merge 99 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (3m18s), **all 15 fields identical** to both backups |
 
 **Not run / unavailable:** the live `qa-live` run itself (Phase 4 acceptance **and** Phase 5's quota
 scenario, both deferred to the single Phase 10 run — D-7 / §4.5), coverage percentage (no coverage tool
@@ -641,6 +682,9 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 6 design + plan | **PR #94 — MERGED** as `2bedda471eb7b3da06b6b14a111ac993c88f944d` · spec `docs/superpowers/specs/2026-11-21-phase6-typing-lifecycle-design.md` · plan `docs/superpowers/plans/2026-11-21-phase6-typing-lifecycle.md` · CI `test: SUCCESS` (2m52s) · gate restored with **all 15 fields identical** |
 | Phase 6 code | Branch **phase6/typing-lifecycle** from `main` @ `2bedda4` — commits **206fd56** (config), **f7d98ed** (context manager), **ec30cd3** (mute window + exception drain), **cd40add** (shutdown), **34d5d8a** (install sites), **fb254f1** + **e4cc30f** (README count), **2b9548f** (P1 shutdown-hole fix). Merged as **PR #96 → `5eb8fea562d956735975f01f8ef65ff99c626599`** · CI `test: SUCCESS` (3m14s) · gate restored with **all 15 fields identical** |
 | Phase 6 result | **CODE COMPLETE — no live verification claimed**: 23 new tests, 1132 collected, five consecutive green repeat runs, full Windows suite measured below, `ruff`/`mypy`/`final_verification.py`/`run.py --check` clean. The independent whole-branch reviewer found one P1 G3 hole (post-shutdown registration), fixed test-first in `2b9548f` and re-approved (`WHOLE_BRANCH_VERDICT: APPROVED`). Phase 6's live scenario joins Phase 4 and 5 in the single Phase 10 run (D-7) |
+| Phase 7 design + plan | **PR #98 — MERGED** as `7482146870800195548dea7c704b4f6f4e244a8b` · spec `docs/superpowers/specs/2026-11-23-phase7-onboarding-closure-design.md` · plan `docs/superpowers/plans/2026-11-23-phase7-onboarding.md` · CI `test: SUCCESS` (3m22s) · gate restored with **all 15 fields identical**. The first draft of the spec was rejected by the builder check for treating already-fixed UI findings as the whole phase; the approved version implements AUD-006 |
+| Phase 7 code | Branch **phase7/onboarding** from `main` @ `7482146` — commits **988b0d4** (schema v13 + state helpers), **a7d824d** (stateful `/start` + free grant), **ad63238** (home menu + completion), **9a02426** + **9b04268** (README counts), **0bd9e54** (admin bypass + `adding_channel` resume), **4ffd2a7** (base DDL + PH-01 v13 fixture). Merged as **PR #99 → `987a84ff88c28d6d2f5382e58c0062f3eda66446`** · CI `test: SUCCESS` (3m18s) · gate restored with **all 15 fields identical** |
+| Phase 7 result | **CODE COMPLETE — no live verification claimed**: 21 new tests, 1155 collected, final Windows suite 1136 passed / the known 19 failures, `ruff`/`mypy`/`final_verification.py`/`run.py --check` clean. Whole-branch review first `CHANGES_REQUIRED` (two state traps + four D1/PH-01 regressions), then `APPROVED` after the fix wave. Phase 7's live scenario joins Phases 4–6 in the single Phase 10 run (D-7) |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)
@@ -709,7 +753,8 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 | D-5 | `qa_answers` has **no retention or pruning policy**: at-most-once needs the row keyed by `(chat_id, msg_id)` forever, so the table grows with every answered question (one small row per answer; no question or answer text is stored) | deferred; revisit in Phase 10 with a measured row-count/age threshold if volume justifies it — **deleting rows would re-open the at-most-once guarantee**, so any pruning must keep the key |
 | D-6 | The Actions cache used by `qa-live` holds the **test** database across runs (key prefix `qa-live-db-v1-`), and that DB can contain an encrypted provider key. `qa_answers.answer` is blanked and the DB is never uploaded as an artifact, but a cached artifact still outlives the run until the cache expires | accepted for the test-only workflow; the stable `SECRETS_KEY` is mandatory (`SECRETS_KEY_REQUIRED` blocks a keyless run). Revisit in Phase 10 alongside B-5's key rotation |
 | D-8 | Subagent dispatch failed mid-Phase-6 with `Free usage limit reached`; Tasks 3 and 4 were implemented inline by the controller and are recorded as such in their task reports. Task-scoped independent review was therefore unavailable for those two tasks; the independent whole-branch review did run and returned `APPROVED` after the P1 fix | recorded; no product impact |
-| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails and Phase 6's typing lifecycle | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS`, Phase 5 stays code-complete but not live-verified, and the release is not "live-verified" |
+| D-9 | Phase 7 subagent usage limits recurred (the Task 1 implementer committed then failed to send its final report); the controller supervised inline and verified its commit directly. The **full suite**, not the focused suites, caught four real schema-test regressions (base DDL missing the new column, PH-01 pinned to v12) — all fixed test-first before the code PR | recorded; no product impact |
+| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails, Phase 6's typing lifecycle and Phase 7's onboarding flow | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS`, Phase 5 stays code-complete but not live-verified, and the release is not "live-verified" |
 
 ---
 

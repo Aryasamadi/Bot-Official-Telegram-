@@ -29,6 +29,13 @@ PROPOSED_PATHS = {
     "deploy/env.example",               # OPS-001 — پیشنهادِ تک‌منبعِ APP_DIR/SERVICE
     "tests/test_deploy_gate.py",        # OPS-032 — در PR #21 (نگهبانِ دروازهٔ تأییدِ استقرار)
     # فاز ۵ و ۶: مسیرهای پیشنهادیِ طراحی/نقشه ساخته شدند و از این فهرست حذف شدند.
+    # فاز ۱۰: مسیرهای هنوز-ساخته‌نشدهٔ طراحی/نقشه؛ پس از ساخت حذف می‌شوند.
+    "tests/_shell.py",                      # W1 — helperِ مشترکِ Git Bash
+    "tests/test_phase10_secrets_rotation.py",  # W2 — تست‌های چرخشِ راز
+    "tools/rotate_secrets_key.py",          # W2 — ابزارِ چرخشِ SECRETS_KEY
+    "docs/OPS_SECRET_ROTATION.md",          # W4 — runbookِ چرخشِ راز
+    "docs/RELEASE_RUNBOOK.md",              # W4 — دروازهٔ انتشار/rollback
+    "docs/PHASE10_FINAL_REPORT.md",         # W4 — گزارشِ نهایی
 }
 
 # فایل‌های سطح ریشه که مراجعه به آن‌ها باید معتبر باشد

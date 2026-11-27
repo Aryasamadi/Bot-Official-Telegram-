@@ -10,13 +10,14 @@ FROM python:3.13-slim@sha256:09a17cad02668ae61ece136b4fd36ac3849e14f670ebedb637e
 
 WORKDIR /app
 
-# امنیت: CVE-2026-76844 / CVE-2026-85091 (zlib1g) در digest پین‌شدهٔ بالا هنوز رفع نشده؛
-# نسخهٔ اصلاح‌شده (1.3.1-1+deb13u1) در Debian 13 موجود است. فقط همین بسته ارتقا می‌یابد
+# امنیت: CVE-2026-76844 / CVE-2026-85091 (zlib1g) و CVE-2026-124851 (libzstd1) در digest
+# پین‌شدهٔ بالا هنوز رفع نشده‌اند؛ نسخه‌های اصلاح‌شده (zlib1g 1.3.1-1+deb13u1 و
+# libzstd1 1.5.7+dfsg-1+deb13u1) در Debian 13 موجود است. فقط همین بسته‌ها ارتقا می‌یابند
 # (نه upgrade کامل) تا ایمیج قابل‌پیش‌بینی بماند. با bump بعدیِ digest می‌توان این بلوک را حذف کرد.
-# عمداً بدون پین: هدف دریافت جدیدترین build امنیتیِ zlib1g است و پینِ دقیق با آپدیت بعدی Debian build را می‌شکند.
+# عمداً بدون پین: هدف دریافت جدیدترین build امنیتی است و پینِ دقیق با آپدیت بعدی Debian build را می‌شکند.
 # hadolint ignore=DL3008
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade zlib1g \
+    && apt-get install -y --no-install-recommends --only-upgrade zlib1g libzstd1 \
     && rm -rf /var/lib/apt/lists/*
 
 # نسخهٔ کد (SHA) هنگامِ build تزریق می‌شود تا پنلِ «نسخهٔ در حال اجرا» درست باشد.

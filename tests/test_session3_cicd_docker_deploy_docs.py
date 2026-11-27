@@ -278,6 +278,15 @@ class TestDockerfile:
         assert "python -m newsbot.healthcheck" in src
         assert "DB_FILE=/app/data/newsbot.db" in src
 
+    def test_known_debian_cves_are_upgraded_in_the_image(self):
+        """base imageِ پین‌شده هنوز CVE-2026-124851 (libzstd1) و CVE-2026-76844/85091
+        (zlib1g) را دارد ⇒ هر دو بسته باید در build ارتقا یابند (شاهد: CI run 46016985685)."""
+        src = _src("deploy/Dockerfile")
+        assert re.search(r"--only-upgrade[^\n]*zlib1g", src), "zlib1g باید ارتقا یابد"
+        assert re.search(r"--only-upgrade[^\n]*libzstd1", src), \
+            "libzstd1 باید ارتقا یابد (CVE-2026-124851)"
+        assert "CVE-2026-124851" in src, "دلیلِ ارتقا باید در Dockerfile مستند باشد"
+
     def test_db_path_matches_compose(self):
         assert _src("deploy/Dockerfile").count("/app/data/newsbot.db") >= 1
         assert "DB_FILE: /app/data/newsbot.db" in _src("docker-compose.yml")

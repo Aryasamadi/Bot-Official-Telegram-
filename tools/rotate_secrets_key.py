@@ -232,7 +232,9 @@ def run(args):
                     conn.execute("ROLLBACK")
                 except Exception:
                     pass
-                raise DataError("the transaction failed; nothing was written")
+                # «from None»: متنِ خطای اصلی (که ممکن است SQL و در نتیجه مقدارِ
+                # کلید را در خود داشته باشد) نباید زنجیرهٔ خطا لو برود.
+                raise DataError("the transaction failed; nothing was written") from None
     finally:
         conn.close()
     return counts

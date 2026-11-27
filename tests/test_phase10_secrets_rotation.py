@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import InvalidToken
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools" / "rotate_secrets_key.py"
@@ -112,7 +113,8 @@ def test_apply_rotates_both_tables_with_the_new_key(db_file, tmp_path):
     models, providers = _values(db_file)
     assert _dec(NEW_KEY, models[0]) == "model-key"
     assert _dec(NEW_KEY, providers[0]) == "provider-key"
-    with pytest.raises(Exception):
+    # کلیدِ قدیمی دیگر باز نمی‌کند ⇒ InvalidToken (نه «استثنای کور»)
+    with pytest.raises(InvalidToken):
         _dec(OLD_KEY, models[0])
 
     counts = _counts(r)

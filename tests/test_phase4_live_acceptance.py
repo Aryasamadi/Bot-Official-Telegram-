@@ -45,6 +45,26 @@ def test_secret_presence_reports_names_only():
     assert names == ["BOT_TOKEN"]
 
 
+def test_a_hash_that_merely_contains_the_super_id_is_not_a_leak():
+    """F-3: لاگ، شناسه را هش می‌کند؛ رقم‌های شناسه ممکن است تصادفاً داخلِ هش hex بیفتند.
+
+    شاهد: اجرای زندهٔ 46013627630 — ۲۶۱ خط فقط به‌خاطرِ وجودِ رقم‌های شناسه در
+    هشِ ``actor:`` به‌عنوان «نشت» علامت خورد، درحالی‌که خودِ شناسه هرگز چاپ نشده.
+    """
+    super_id = "3521685885"
+    digest = "a" + super_id + "f"          # پیشوندِ sha256، همان شکلی که logutils می‌نویسد
+    names = acc.secret_values_present("[actor:%s] operation start" % digest,
+                                      {"SUPER_ADMIN_ID#1": super_id})
+    assert names == [], "رقم‌های شناسه داخلِ هش، نشت نیست"
+
+
+def test_a_standalone_super_id_is_still_reported_as_a_leak():
+    super_id = "3521685885"
+    names = acc.secret_values_present("chat=%s" % super_id,
+                                      {"SUPER_ADMIN_ID#1": super_id})
+    assert names == ["SUPER_ADMIN_ID#1"], "شناسهٔ مستقل هنوز نشت حساب می‌شود"
+
+
 def test_check_rejects_a_missing_token(tmp_path):
     env = {"BOT_TOKEN": "", "SUPER_ADMIN_IDS": "1", "DB_FILE": str(tmp_path / "db.sqlite")}
     code, out = acc.run_check(env, http_get=lambda url, timeout=10: {"ok": True})
@@ -476,8 +496,8 @@ def test_the_workflow_has_the_required_settings():
     assert 'default: "340"' in src
     assert "name: Validate secure inputs" in src
     assert "TELEGRAM_BOT_TOKEN" in src and "SUPER_ADMIN_ID" in src
-    assert "qa-live-db-v1-${{ github.run_id }}" in src
-    assert "restore-keys: qa-live-db-v1-" in src
+    assert "qa-live-db-v2-${{ github.run_id }}" in src
+    assert "restore-keys: qa-live-db-v2-" in src
     assert "actions/cache/restore@" in src and "actions/cache/save@" in src
     assert "name: Save the test DB for the next run" in src
     assert "retention-days: 14" in src

@@ -579,6 +579,38 @@ class TestRuntimeDrain:
 
 # ══════════════════════ DEVOPS-07 — هم‌خوانیِ مستندات با کد ═════════════════════
 
+class TestDeployEnvExample:
+    """نمونهٔ محیطِ استقرار (OPS-001) — فقط placeholder، هرگز رازِ واقعی."""
+
+    def test_the_example_exists_and_is_ascii(self):
+        path = os.path.join(ROOT, "deploy", "env.example")
+        assert os.path.isfile(path), "deploy/env.example باید وجود داشته باشد"
+        raw = open(path, "rb").read()
+        raw.decode("ascii")  # فایل باید ASCII باشد (بدونِ متنِ فارسی/یونیکد)
+
+    def test_the_required_keys_are_present_and_empty(self):
+        src = _src("deploy/env.example")
+        pairs = {}
+        for line in src.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            pairs[key.strip()] = value.strip()
+        for key in ("BOT_TOKEN", "SUPER_ADMIN_IDS", "SECRETS_KEY"):
+            assert key in pairs, "کلیدِ %s باید در نمونه باشد" % key
+            assert pairs[key] == "", "مقدارِ %s باید خالی باشد (فقط placeholder)" % key
+        assert pairs.get("DB_BACKEND") == "sqlite"
+        assert pairs.get("DB_FILE") == "/app/data/newsbot.db"
+
+    def test_no_real_secret_shape_is_present(self):
+        src = _src("deploy/env.example")
+        # توکنِ واقعیِ تلگرام: «<digits>:<base64ish>» — هرگز نباید در نمونه باشد
+        assert not re.search(r"\d{5,}:[A-Za-z0-9_-]{20,}", src), "شکلِ توکنِ واقعی دیده شد"
+        # شناسهٔ عددیِ سوپرادمین هم نباید پر شده باشد
+        assert not re.search(r"^SUPER_ADMIN_IDS=[ \t]*\S+", src, flags=re.M)
+
+
 class TestDocsConsistency:
     def test_vps_deployment_doc_matches_the_real_layout(self):
         doc = _src("docs/VPS_DEPLOYMENT.md")

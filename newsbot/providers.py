@@ -103,13 +103,6 @@ def provider_model_count(pid) -> int:
     return int(row["n"]) if row else 0
 
 
-def provider_models(pid, active_only: bool = False):
-    sql = "SELECT id, name, model, priority, active, status FROM ai_models WHERE provider_id=?"
-    if active_only:
-        sql += " AND active=1"
-    return q(sql + " ORDER BY priority, id", (pid,))
-
-
 def find_provider(base_url: str, owner_id=None):
     """تشخیصِ تکراری‌نبودن: یک (محدوده × میزبان) فقط یک فراهم‌کننده دارد."""
     return q("SELECT * FROM ai_providers WHERE base_url=? AND " + ("owner_id=?" if owner_id else "owner_id IS NULL"),

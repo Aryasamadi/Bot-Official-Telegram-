@@ -68,16 +68,3 @@ def alert_counts():
     total = int(row["total"] or 0) if row is not None else 0
     dead = int(row["dead"] or 0) if row is not None else 0
     return total - dead, dead
-
-
-def alert_dead(limit=20):
-    """سطرهای مرده — برای نمایش/پاک‌سازی."""
-    return q("SELECT * FROM notifications WHERE delivered_at IS NULL AND dead=1 ORDER BY id LIMIT ?", (int(limit),))
-
-
-def alert_purge_delivered(older_than_days=30):
-    """پاک‌سازیِ اعلان‌های تحویل‌شدهٔ قدیمی (نگهداریِ ۳۰ روزه)."""
-    from newsbot.timeutils import now_utc
-    from datetime import timedelta
-    dtx = (now_utc() - timedelta(days=int(older_than_days))).isoformat()
-    q("DELETE FROM notifications WHERE delivered_at IS NOT NULL AND delivered_at<?", (dtx,), commit=True)

@@ -34,11 +34,6 @@ def super_queue_size():
     return _super_q.qsize() if _super_q is not None else 0
 
 
-def is_inflight(nid):
-    """آیا همین id در حال ارسال است؟ زمان‌بند برای جلوگیری از ارسال موازی می‌پرسد."""
-    return int(nid) in _inflight
-
-
 def ensure_super_worker():
     """worker را (دوباره) راه می‌اندازد — در post_init اپلیکیشن صدا زده می‌شود."""
     global _super_worker

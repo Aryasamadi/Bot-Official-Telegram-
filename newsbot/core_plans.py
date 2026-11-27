@@ -183,8 +183,6 @@ def fmt_amt(v, lang="fa"):
     from newsbot.ui_i18n import ltr
     return ltr(s + " تومان") if lang == "fa" else ltr("$" + s)
 
-def _fmt_price(v): return fmt_amt(v, "en")
-
 def _user_credit(uid, cur=None):
     """موجودیِ کیف پولِ کاربر در واحدِ داده‌شده (بدون واحد ⇒ مجموعِ نمایشی، غیرقابل‌خرج)."""
     if cur: return wallet_get(uid, cur)

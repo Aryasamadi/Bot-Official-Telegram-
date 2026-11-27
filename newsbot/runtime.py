@@ -35,7 +35,6 @@ NOTIFY_USER: Optional[Callable[..., Any]] = None     # async fn(uid, text, kb=No
 # ── Graceful drain (DEVOPS-08) ───────────────────────────────────────────────────
 _drain_lock = threading.Lock()
 _draining = False
-_drain_reason = ""
 _in_flight = 0
 
 
@@ -64,16 +63,6 @@ def _flag_exists() -> bool:
         return False
 
 
-def drain_flag_file() -> str:
-    """مسیرِ فایلِ نشانگرِ «تخلیه فعال است»."""
-    return config.DRAIN_FLAG_FILE
-
-
-def drained_flag_file() -> str:
-    """مسیرِ فایلِ نشانگرِ «تخلیه کامل شد»."""
-    return config.DRAINED_FLAG_FILE
-
-
 def is_draining() -> bool:
     """True اگر تخلیه فعال باشد: پرچمِ درون‌فرایندی یا فایلِ نشانگرِ روی دیسک."""
     if _draining:
@@ -81,22 +70,18 @@ def is_draining() -> bool:
     return _flag_exists()
 
 
-def drain_reason() -> str:
-    """دلیلِ فعال‌شدنِ تخلیه (برای لاگ)."""
-    return _drain_reason
-
-
 def request_drain(reason: str = "") -> bool:
     """فعال‌کردنِ حالتِ تخلیه. برگشتی: True اگر همین حالا تازه فعال شد.
 
     از این پس هیچ انتشارِ تازه‌ای آغاز نمی‌شود؛ انتشارهای در حالِ پرواز ادامه می‌یابند.
+
+    ``reason`` فقط برای سازگاریِ فراخوانی‌های عمومی (``app.py`` و
+    ``drain_watch_loop``) پذیرفته می‌شود؛ هیچ مصرف‌کننده‌ای ندارد.
     """
-    global _draining, _drain_reason
+    global _draining
     with _drain_lock:
         already = _draining
         _draining = True
-        if reason:
-            _drain_reason = reason
     _unlink(config.DRAINED_FLAG_FILE)
     _touch(config.DRAIN_FLAG_FILE)
     return not already
@@ -104,10 +89,9 @@ def request_drain(reason: str = "") -> bool:
 
 def cancel_drain() -> None:
     """برگرداندنِ حالتِ عادی (استفاده در تست‌ها و در راه‌اندازیِ تازه)."""
-    global _draining, _drain_reason
+    global _draining
     with _drain_lock:
         _draining = False
-        _drain_reason = ""
     _unlink(config.DRAIN_FLAG_FILE)
     _unlink(config.DRAINED_FLAG_FILE)
 
@@ -118,10 +102,9 @@ def clear_stale_drain() -> None:
     یک پروسهٔ تازه هیچ انتشارِ در حالِ پروازی ندارد ⇒ نشانگرِ بازمانده فقط می‌تواند
     ربات را در حالتِ «همیشه در حالِ تخلیه» گیر بیندازد. هنگام راه‌اندازی پاک می‌شود.
     """
-    global _draining, _drain_reason
+    global _draining
     with _drain_lock:
         _draining = False
-        _drain_reason = ""
     _unlink(config.DRAIN_FLAG_FILE)
     _unlink(config.DRAINED_FLAG_FILE)
 

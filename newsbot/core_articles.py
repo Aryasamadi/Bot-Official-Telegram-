@@ -102,12 +102,6 @@ def mark_ai_rejected(aid, reason, score=None, provider=""):
     return {"id": aid, "state": AI_STATE_REJECTED}
 
 
-def retryable_candidates(cid, limit=20):
-    """مقاله‌هایی که شکستِ موقت داشته‌اند و زمانِ تلاشِ بعدی‌شان رسیده است."""
-    return q("SELECT id,title,score,reason,status,ai_state,ai_attempts,ai_next_retry,ai_last_error,created_at "
-             "FROM articles WHERE channel_id=? AND ai_state=? AND COALESCE(ai_next_retry,'')<=? "
-             "ORDER BY id DESC LIMIT ?", (cid, AI_STATE_RETRYABLE, now_iso(), limit))
-
 class PublicationQuotaExceeded(Exception): pass
 
 def get_pub_journal(aid):

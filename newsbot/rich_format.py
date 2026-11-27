@@ -702,14 +702,6 @@ def split_doc(doc, limit=SAFE_RICH_CHARS, render=render_rich, block_limit=RICH_B
     return out or [Doc([], kind=doc.kind, faithful=doc.faithful)]
 
 
-def rich_html_for(text, kind=None):
-    """میان‌بر: متن → HTML پیام بومی (یا رشتهٔ خالی اگر تجزیه وفادار نبود)."""
-    doc = parse_content(text, kind=kind)
-    if not doc.faithful or not doc.blocks:
-        return ""
-    return render_rich(doc)
-
-
 # ── رسانه درونِ پیامِ بومی ──────────────────────────────────────────────────────
 # طبق مستنداتِ رسمیِ تلگرام، «رسانه فقط به‌صورت یک بلوکِ جداگانه» می‌آید و
 # «بلوک‌های رسانه فقط URLهای HTTP و HTTPS را می‌پذیرند». یعنی می‌شود *همان یک
@@ -736,8 +728,3 @@ def media_block(url, kind="photo"):
     if tag == "audio":
         return '<audio src="%s"></audio>' % src
     return '<tg-document src="%s"></tg-document>' % src
-
-
-def legacy_html_for(text, kind=None):
-    """میان‌بر: متن → HTML کلاسیک."""
-    return render_legacy(parse_content(text, kind=kind))

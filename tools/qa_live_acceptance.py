@@ -79,10 +79,19 @@ def admin_ids(value):
 
 
 def secret_values_present(text, values):
-    """نامِ رازهایی که مقدارشان در متن آمده — هرگز خودِ مقدار برنمی‌گردد."""
+    """نامِ رازهایی که مقدارشان در متن آمده — هرگز خودِ مقدار برنمی‌گردد.
+
+    شناسهٔ عددی فقط وقتی «نشت» حساب می‌شود که **مستقل** باشد: لاگ، شناسهٔ
+    سوپرادمین را به‌صورت هش (sha256) می‌نویسد و یک هشِ hex ممکن است تصادفاً
+    شاملِ رقم‌های همان شناسه باشد؛ آن وقت «نشت» کاذب گزارش می‌شد (F-3 —
+    شاهد: اجرای زندهٔ 46013627630 که ۲۶۱ بار هش، «نشتِ» کاذب گزارش کرد).
+    """
     names = []
     for name, value in values.items():
-        if value and len(value) >= 8 and value in text:
+        if not value or len(value) < 8:
+            continue
+        pattern = r"(?<![0-9A-Za-z])%s(?![0-9A-Za-z])" % re.escape(value)
+        if re.search(pattern, text):
             names.append(name)
     return sorted(names)
 

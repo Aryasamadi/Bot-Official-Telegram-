@@ -37,8 +37,14 @@ def clean_api_key(value):
     return key
 
 
-def _fernet():
-    key = (config.SECRETS_KEY or "").strip()
+def fernet_for(key):
+    """ساختِ Fernet از یک کلیدِ دلخواه (خالی یا بدونِ cryptography ⇒ None).
+
+    این تابع خالص است: فقط به کلیدِ داده‌شده نگاه می‌کند و به پیکربندیِ سراسری
+    وابسته نیست؛ به همین دلیل ابزارِ چرخشِ راز می‌تواند کلیدِ قدیم و کلیدِ نو را
+    همزمان بسازد. کلیدِ خالی یعنی «رمزنگاری غیرفعال» (سازگار با نصب‌های قدیمی).
+    """
+    key = (key or "").strip()
     if not key:
         return None
     try:
@@ -47,6 +53,10 @@ def _fernet():
     except ImportError:
         log.warning("رمزنگاری رازها: بستهٔ cryptography نصب نیست (pip install -r requirements.txt)")
         return None
+
+
+def _fernet():
+    return fernet_for(config.SECRETS_KEY)
 
 
 def is_encrypted(value):
@@ -85,24 +95,40 @@ def decrypt(value):
         return ""
 
 
+# جدول‌هایی که کلیدِ API در آن‌ها رمزنگاری می‌شود (SEC-09 + فاز ۱۰).
+AI_KEY_TABLES = ("ai_models", "ai_providers")
+
+
 def migrate_ai_keys():
-    """مهاجرت یک‌بارهٔ استارت: کلیدهای متن سادهٔ جدول ai_models رمزنگاری می‌شوند (idempotent).
-    خروجی: تعداد ردیف‌های رمزنگاری‌شده. بدون SECRETS_KEY فقط هشدار (بدون تغییر داده)."""
+    """مهاجرت یک‌بارهٔ استارت: کلیدهای متن سادهٔ جدول‌های ai_models و ai_providers
+    رمزنگاری می‌شوند (idempotent).
+
+    خروجی: تعدادِ ردیف‌های رمزنگاری‌شده. بدون SECRETS_KEY فقط هشدار (بدون تغییر داده).
+    """
     from newsbot.db import q
     if not (config.SECRETS_KEY or "").strip():
-        n = q("SELECT COUNT(*) c FROM ai_models WHERE api_key IS NOT NULL AND api_key != ''", one=True)
-        if n and n["c"]:
-            log.warning("SEC-09: %d کلید AI متن ساده در دیتابیس است؛ برای رمزنگاری SECRETS_KEY را تنظیم کنید", n["c"])
+        pending = 0
+        for table in AI_KEY_TABLES:
+            if not q("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,), one=True):
+                continue
+            n = q("SELECT COUNT(*) c FROM %s WHERE api_key IS NOT NULL AND api_key != ''" % table, one=True)
+            if n and n["c"]:
+                pending += n["c"]
+        if pending:
+            log.warning("SEC-09: %d کلید AI متن ساده در دیتابیس است؛ برای رمزنگاری SECRETS_KEY را تنظیم کنید", pending)
         return 0
-    rows = q("SELECT id, api_key FROM ai_models WHERE api_key IS NOT NULL AND api_key != ''")
     done = 0
-    for r in rows:
-        if is_encrypted(r["api_key"]):
+    for table in AI_KEY_TABLES:
+        if not q("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,), one=True):
             continue
-        enc = encrypt(r["api_key"])
-        if enc != r["api_key"]:
-            q("UPDATE ai_models SET api_key=? WHERE id=?", (enc, r["id"]), commit=True)
-            done += 1
+        rows = q("SELECT id, api_key FROM %s WHERE api_key IS NOT NULL AND api_key != ''" % table)
+        for r in rows:
+            if is_encrypted(r["api_key"]):
+                continue
+            enc = encrypt(r["api_key"])
+            if enc != r["api_key"]:
+                q("UPDATE %s SET api_key=? WHERE id=?" % table, (enc, r["id"]), commit=True)
+                done += 1
     if done:
         log.info("SEC-09: %d کلید AI رمزنگاری شد (enc:v1)", done)
     return done

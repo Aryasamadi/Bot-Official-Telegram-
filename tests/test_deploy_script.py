@@ -19,21 +19,11 @@ from pathlib import Path
 
 import pytest
 
+from _shell import BASH
+
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SH = ROOT / "deploy" / "deploy.sh"
 
-
-def _find_bash():
-    # Git Bash مقدم است؛ bash سیستمی WSL (system32) مسیرهای ویندوزی را نمی‌فهمد
-    for cand in (r"C:\Program Files\Git\bin\bash.exe",
-                 r"C:\Program Files\Git\usr\bin\bash.exe",
-                 shutil.which("bash")):
-        if cand and Path(cand).exists() and "system32" not in cand.lower():
-            return cand
-    return None
-
-
-BASH = _find_bash()
 
 pytestmark = pytest.mark.skipif(
     BASH is None or shutil.which("git") is None,
@@ -53,6 +43,17 @@ def _run(args, cwd, env=None, check=True):
 
 def _git(app, *args, env=None):
     return _run(["git", "-C", str(app), *args], cwd=app, env=env).stdout
+
+
+def test_find_bash_never_returns_a_wsl_path(monkeypatch):
+    import _shell
+
+    monkeypatch.setattr(
+        _shell.shutil, "which",
+        lambda _name: r"C:\WINDOWS\system32\bash.exe",
+    )
+    found = _shell.find_bash()
+    assert not found or "system32" not in found.lower()
 
 
 class Sandbox:
@@ -201,6 +202,10 @@ def sandbox(tmp_path):
         "STUB_LOG": str(tmp_path / "stub.log").replace("\\", "/"),
         "STUB_DIR": str(sbin).replace("\\", "/"),
         "STUB_SERVICE_NAME": "sandbox-service",
+        # Git Bash مسیرهای POSIX را برای برنامه‌های native (استابِ docker) به
+        # C:/Program Files/Git/... تبدیل می‌کند؛ فقط مسیرهای /app باید دست‌نخورده
+        # به کانتینر برسند. خاموش‌کردنِ کلِ تبدیل، اجرای خودِ استاب را می‌شکند.
+        "MSYS2_ARG_CONV_EXCL": "/app",
     })
     return Sandbox(tmp_path, app, env, origin)
 
@@ -626,6 +631,10 @@ import os
 import subprocess
 import sys
 
+# Git Bash's `read` keeps a CR from Windows text-mode stdout; the stub must emit LF.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(newline="\\n")
+
 args = sys.argv[1:]
 with open(os.environ["STUB_LOG"], "a", encoding="utf-8") as fh:
     fh.write("docker " + " ".join(args) + "\\n")
@@ -724,10 +733,15 @@ if args and args[0] == "exec":
         # ولی مسیرِ دیتابیس باید همان مسیرِ داخلِ کانتینر بماند (و بعداً نگاشت شود).
         cmd[2] = host_path(cmd[2])
         code = sys.stdin.read()
-        helper = ("import os\\n\\n"
+        helper = ("import os\\n"
+                  "import posixpath\\n\\n"
                   "def _host_path(p):\\n"
-                  "    return p.replace('%s', '%s', 1) if p.startswith('%s') else p\\n" % (MOUNT, APP, MOUNT))
+                  "    p = p.replace(os.sep, '/')\\n"
+                  "    return p.replace('%s', '%s', 1) if p.startswith('%s') else p\\n"
+                  "def _posix_normpath(p):\\n"
+                  "    return posixpath.normpath(p.replace(os.sep, '/'))\\n" % (MOUNT, APP, MOUNT))
         code = code.replace("import os\\n", helper, 1)
+        code = code.replace("os.path.normpath", "_posix_normpath")
         code = code.replace("os.path.isfile(path)", "os.path.isfile(_host_path(path))")
         sys.exit(subprocess.run(cmd, cwd=APP, env=env, input=code, text=True).returncode)
     if cmd[0] == "python" and len(cmd) > 1 and cmd[1] == "-c":

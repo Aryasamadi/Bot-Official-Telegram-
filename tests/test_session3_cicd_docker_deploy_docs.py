@@ -22,6 +22,8 @@ import subprocess
 
 import pytest
 
+from _shell import BASH
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 DEPLOY_SH = os.path.join(ROOT, "deploy", "deploy.sh")
@@ -32,6 +34,11 @@ COMPOSE = os.path.join(ROOT, "docker-compose.yml")
 CI_YML = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 DEPLOY_YML = os.path.join(ROOT, ".github", "workflows", "deploy-vps.yml")
 PROTECT_TOOL = os.path.join(ROOT, "tools", "verify_github_protection.py")
+
+pytestmark = pytest.mark.skipif(
+    BASH is None,
+    reason="real deploy scripts need bash (Git Bash on Windows); Linux CI always has it",
+)
 
 
 def _src(rel):
@@ -328,7 +335,7 @@ class TestAntiDowngradeGateReal:
         if extra:
             e.update(extra)
         script = 'source "$FUNCS"; anti_downgrade_gate "$1" "$2" "$3"'
-        return _run(["bash", "-c", script, "bash", target, current, origin_main], env=e)
+        return _run([BASH, "-c", script, "bash", target, current, origin_main], env=e)
 
     def test_accepts_the_tip_of_main(self, funcs_file, tmp_path):
         repo, origin, shas, env = _git_sandbox(tmp_path)
@@ -371,7 +378,7 @@ class TestPreserveDirtyTreeReal:
         (repo / "hotfix.txt").write_text("local\n", encoding="utf-8")
         e = dict(env)
         e.update({"APP_DIR": str(repo), "BACKUP_DIR": str(backup), "FUNCS": funcs_file})
-        r = _run(["bash", "-c", 'source "$FUNCS"; preserve_dirty_tree', "bash"], env=e)
+        r = _run([BASH, "-c", 'source "$FUNCS"; preserve_dirty_tree', "bash"], env=e)
         assert r.returncode == 0, r.stderr
         patches = list(backup.glob("dirty-tree-*.patch"))
         assert len(patches) == 1, "باید دقیقاً یک patch ذخیره شود"
@@ -385,7 +392,7 @@ class TestPreserveDirtyTreeReal:
         backup.mkdir()
         e = dict(env)
         e.update({"APP_DIR": str(repo), "BACKUP_DIR": str(backup), "FUNCS": funcs_file})
-        r = _run(["bash", "-c", 'source "$FUNCS"; preserve_dirty_tree', "bash"], env=e)
+        r = _run([BASH, "-c", 'source "$FUNCS"; preserve_dirty_tree', "bash"], env=e)
         assert r.returncode == 0
         assert list(backup.glob("dirty-tree-*.patch")) == []
 
@@ -407,7 +414,7 @@ class TestForcedCommand:
         })
         if extra_env:
             env.update(extra_env)
-        return _run(["bash", FORCED_SH], env=env)
+        return _run([BASH, FORCED_SH], env=env)
 
     def test_deploy_with_valid_sha_is_allowed(self, tmp_path):
         sha = "a" * 40
@@ -471,7 +478,7 @@ class TestSetupDeployUser:
             "DEPLOY_FORCED_COMMAND": str(tmp_path / "forced.sh"),
             "DEPLOY_HOME": str(tmp_path / "home"),
         })
-        r = _run(["bash", SETUP_SH, "--dry-run", "--key-file", str(key)], env=env)
+        r = _run([BASH, SETUP_SH, "--dry-run", "--key-file", str(key)], env=env)
         assert r.returncode == 0, r.stderr
         out = r.stdout + r.stderr
         assert "useradd" in out
@@ -484,10 +491,10 @@ class TestSetupDeployUser:
         assert "no-X11-forwarding" in out and "no-agent-forwarding" in out
 
     def test_help_works_and_syntax_is_valid(self):
-        r = _run(["bash", SETUP_SH, "--help"])
+        r = _run([BASH, SETUP_SH, "--help"])
         assert r.returncode == 0 and "setup-deploy-user" in r.stdout
         for f in (DEPLOY_SH, FORCED_SH, SETUP_SH):
-            assert _run(["bash", "-n", f]).returncode == 0
+            assert _run([BASH, "-n", f]).returncode == 0
 
 
 # ══════════════════════ DEVOPS-08 — ماشینِ حالتِ تخلیهٔ runtime ═════════════════

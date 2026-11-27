@@ -34,6 +34,8 @@
 | Live run | `46013627630`, job `140555102637`, started `2026-11-27T14:11:14Z`, `db_mode=fresh`, “Run the live acceptance” running | `gh run view 46013627630 --json ...` |
 | 15 Windows failures | `bash` resolves to `C:\WINDOWS\system32\bash.exe` (WSL) and fails with exit 127; Git Bash runs the same scripts correctly | direct run + `Get-Command bash` |
 | 4 docker failures | Git Bash converts the container argument `/app` to `C:/Program Files/Git/app`; the stub log shows `docker exec ... -w C:/Program Files/Git/app ...`; the DB path becomes `C:\Program Files\Git\app\newsbot.db` | `pytest ... -q --tb=long`, sandbox `stub.log` |
+| W1 result | after the fix: **97 passed** for `test_deploy_script.py` + `test_session3_cicd_docker_deploy_docs.py` (0 failed; the 19 known failures are gone) | `phase10_w1_full.txt` |
+| F-2 | CI image scan red: **HIGH — CVE-2026-124851 (libzstd1)** in the pinned base image; fixed by PR0 | CI run `46016985685` |
 | `pip-audit` local | `No known vulnerabilities found`, exit 0 | `python -m pip_audit -r requirements.txt --no-deps` |
 | docker/trivy/hadolint local | docker is not installed; these scanners are CI-only evidence | `docker --version` (missing) |
 | Branches | 50 remote heads: **36** with a MERGED PR still on origin, **13** without (11 Dependabot + 2 stale), **55** stale local tracking refs | `branch_audit10.py`, `gh pr list --state merged` |
@@ -42,11 +44,53 @@
 
 ## Delivery Sequence
 
-1. **PR1 — docs:** **docs/phase10-design-plan** (design + plan + allowlist). Merge first.
+1. **PR0 — security (F-2):** **fix/ci-libzstd-cve-2026-124851** (`libzstd1` upgrade + guard test). Merges first: the image scan runs on every PR, so no PR can be green before it.
+2. **PR1 — docs:** **docs/phase10-design-plan** (design + plan + allowlist). Merge second.
 2. **PR2 — code:** **phase10/hardening** (W1 + W2 + cache prefix v2 + `deploy/env.example` + README count). Merge second.
 3. **Server-side branch cleanup:** after PR2 merge, delete only the 36 proven-merged branches and prune local refs; record the list for PR3.
 4. **PR3 — records:** **docs/phase10-records** (runbooks, final report, state file, remaining-branch list, D-7/F-1 evidence if available). Merge third.
 5. **Owner gate:** live D-7 result and secret rotation; if they complete after PR3, a small follow-up docs PR records the evidence and sets Phase 10 `COMPLETED`. No next phase starts automatically.
+
+---
+
+## Task 0: PR0 — close the HIGH image vulnerability (F-2)
+
+**Files**
+- Modify: `deploy/Dockerfile`
+- Modify: `tests/test_session3_cicd_docker_deploy_docs.py`
+
+- [ ] **Step 1: Reproduce from CI evidence.** `test` job of run `46016985685` fails in the “Image scan (trivy)” step: `HIGH — CVE-2026-124851 (libzstd1)`, installed `1.5.7+dfsg-1`, fixed `1.5.7+dfsg-1+deb13u1`. This affects every PR, so it must land first.
+
+- [ ] **Step 2: Upgrade `libzstd1` in the image, minimal and in the existing style.**
+
+```dockerfile
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade zlib1g libzstd1 \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+Keep the digest pinned; no full `apt-get upgrade`. Document CVE-2026-124851 in the comment block so a later digest bump can drop the block.
+
+- [ ] **Step 3: Add the guard test.**
+
+```python
+def test_known_debian_cves_are_upgraded_in_the_image(self):
+    src = _src("deploy/Dockerfile")
+    assert re.search(r"--only-upgrade[^\n]*zlib1g", src), "zlib1g باید ارتقا یابد"
+    assert re.search(r"--only-upgrade[^\n]*libzstd1", src), \
+        "libzstd1 باید ارتقا یابد (CVE-2026-124851)"
+    assert "CVE-2026-124851" in src, "دلیلِ ارتقا باید در Dockerfile مستند باشد"
+```
+
+- [ ] **Step 4: Run, commit, PR, gate.**
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m pytest tests/test_session3_cicd_docker_deploy_docs.py -q -k "Dockerfile or trivy or hadolint"
+git add deploy/Dockerfile tests/test_session3_cicd_docker_deploy_docs.py
+git commit -m "fix(ci): upgrade libzstd1 for CVE-2026-124851"
+```
+
+Acceptance: the CI “Image scan (trivy)” step is SUCCESS (no CRITICAL/HIGH with `--ignore-unfixed`); merge via the gate protocol; protection 15/15.
 
 ---
 
@@ -240,16 +284,42 @@ docker exec -i -w C:/Program Files/Git/app bot-official-telegram python - C:/Pro
 
 Git Bash converts the argument `/app` before the native `docker` stub sees it. This is a test-harness problem, not a defect in `deploy.sh`: the real Docker CLI receives `/app` inside the container.
 
-- [ ] **Step 8: Disable MSYS argument conversion in the sandbox environment only.**
+- [ ] **Step 8: Keep the container paths POSIX inside the sandbox (harness only).**
 
-In `tests/test_deploy_script.py`, inside the `sandbox` fixture’s `env.update({...})` (or immediately after it), add:
+In `tests/test_deploy_script.py`:
+
+1. In the `sandbox` fixture environment add **only** a scoped exclusion:
 
 ```python
-"MSYS_NO_PATHCONV": "1",
-"MSYS2_ARG_CONV_EXCL": "*",
+"MSYS2_ARG_CONV_EXCL": "/app",
 ```
 
-Do not put this in `deploy/deploy.sh`; it is test-only. Do not change assertions or the Docker stub’s mapping logic.
+Do **not** set `MSYS_NO_PATHCONV=1`: it disables every conversion and breaks the stub itself (its `#!/usr/bin/env python3` shebang then receives an untranslated `/tmp/...` path and fails to start).
+
+2. Make the Docker stub emit LF only — Windows text-mode stdout adds `\r`, and Git Bash’s `read` keeps it, so the mount table never matches `/app`:
+
+```python
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(newline="\n")
+```
+
+3. Make the stub’s in-container path handling POSIX-like (Windows `os.path.normpath("/app/x")` yields `\app\x`):
+
+```python
+helper = ("import os\n"
+          "import posixpath\n\n"
+          "def _host_path(p):\n"
+          "    p = p.replace(os.sep, '/')\n"
+          "    return p.replace('/app', APP, 1) if p.startswith('/app') else p\n"
+          "def _posix_normpath(p):\n"
+          "    return posixpath.normpath(p.replace(os.sep, '/'))\n")
+code = code.replace("import os\n", helper, 1)
+code = code.replace("os.path.normpath", "_posix_normpath")
+```
+
+(Use the real `MOUNT`/`APP` values in the generated code, as the existing stub already does.)
+
+Do not change `deploy/deploy.sh`: the real Docker CLI receives `/app` inside the container; only the Windows test harness mangles it.
 
 - [ ] **Step 9: Run the 4 docker-runtime tests.**
 
@@ -696,7 +766,8 @@ Run the integrity/state tests + glyph scan; open **docs/phase10-closeout**; merg
 
 - [ ] `tests/_shell.py` exists; `find_bash()` never returns `system32`; both test files use it.
 - [ ] `test_session3_cicd_docker_deploy_docs.py`: 15 previously failing tests pass.
-- [ ] `test_deploy_script.py`: 4 docker-runtime tests pass with `MSYS_NO_PATHCONV=1`/`MSYS2_ARG_CONV_EXCL=*`; no `deploy.sh` change.
+- [ ] `test_deploy_script.py`: 4 docker-runtime tests pass with `MSYS2_ARG_CONV_EXCL=/app` + LF-only stub output + POSIX path normalization; no `deploy.sh` change.
+- [ ] F-2: `libzstd1` is upgraded in `deploy/Dockerfile`; the CI image scan is green.
 - [ ] Full local suite: **0 failed**; skip count documented; Linux CI green.
 - [ ] `fernet_for()` tested; `migrate_ai_keys()` encrypts both tables; second call returns 0.
 - [ ] Rotation tool: round-trip, idempotency, third-key exit 3 with no writes, plaintext encryption, missing/equal/stale backup exit 2, foreign `enc:v1:` exit 2, no secret values in output, `--check` no writes.

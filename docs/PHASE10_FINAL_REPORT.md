@@ -30,9 +30,9 @@
 | #107 | `docs(phase10): approved design and implementation plan` | `9886972` | 46061459633 ✔ | ۱۵/۱۵ |
 | #109 | `feat(phase10): harden windows tests and secrets rotation` | `b660bc3` | 46075556814 ✔ | ۱۵/۱۵ |
 | #110 | `chore(phase10): remove 11 provably dead helpers` | `ef185ca` | 46082906798 ✔ | ۱۵/۱۵ |
-| PR3 | اسنادِ فاز ۱۰ (این PR) | — | — | — |
+| PR3 (#111) | اسنادِ فاز ۱۰ | `e0698ef` | 46104240680 · main: 46105260191 ✔ | ۱۵/۱۵ |
 
-CI روی `main` بعد از هر merge: 46052671344 (#108) · 46062660874 (#107) · 46076401654 (#109) · **46083316285** (#110، آخرین، SUCCESS).
+CI روی `main` بعد از هر merge: 46052671344 (#108) · 46062660874 (#107) · 46076401654 (#109) · 46083316285 (#110) · **46105260191** (#111، آخرین، SUCCESS).
 
 ## ۳. نتیجهٔ کارهای W1 / W2 / W3 / W4
 
@@ -65,7 +65,7 @@ CI روی `main` بعد از هر merge: 46052671344 (#108) · 46062660874 (#107
 | types | `mypy newsbot` | Success: no issues found in 52 source files |
 | undefined names | `pyflakes newsbot tests tools run.py` | بدون خروجی (exit 0) |
 | بایت‌کد | `py_compile` روی `run.py` + `newsbot/` + `tools/` + `tests/` | exit 0 |
-| اسکنِ وابستگی | `pip-audit -r requirements.txt --no-deps` | SUCCESS (CI: run 46083316285) |
+| اسکنِ وابستگی | `pip-audit -r requirements.txt --no-deps` | SUCCESS (CI: run 46105260191) |
 | اسکنِ راز | `gitleaks` | SUCCESS (همان run) |
 | اسکنِ فایل‌سیستم | `trivy fs --severity CRITICAL,HIGH` | SUCCESS (همان run) |
 | اسکنِ ایمیج | `trivy image --severity CRITICAL,HIGH` | SUCCESS (همان run) |
@@ -138,5 +138,6 @@ CI روی `main` بعد از هر merge: 46052671344 (#108) · 46062660874 (#107
 - رمزنگاریِ `sources.api_key` (D-12) و بازصدورِ کلیدهای Provider (D-13).
 - ۱۱ PRِ Dependabot (D-4 — به تعویق بعد از انتشار).
 - اصلاحِ `F-1` (تغییرِ رفتارِ زمان‌بندی/timeout — خارج از دامنه).
-- استقرار به VPS: run 46083654457 برای `main` @ `ef185ca` **در انتظارِ تأییدِ دستیِ محیطِ
-  `production`** است؛ هیچ استقراری در این فاز انجام نشده و ادعایی هم نمی‌شود.
+- استقرار به VPS: run **46105550745** برای `main` @ `e0698ef` **در انتظارِ تأییدِ دستیِ محیطِ
+  `production`** است (اجرای قبلی 46083654457 برای `ef185ca` با mergeِ PR #111 **cancelled** شد)؛
+  هیچ استقراری در این فاز انجام نشده و ادعایی هم نمی‌شود.

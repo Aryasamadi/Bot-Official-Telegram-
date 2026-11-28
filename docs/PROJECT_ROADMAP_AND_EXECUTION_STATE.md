@@ -1,4 +1,4 @@
-﻿# PROJECT ROADMAP AND EXECUTION STATE
+# PROJECT ROADMAP AND EXECUTION STATE
 
 > **Source of truth for this project.** Read this file first in every session, then validate it
 > against GitHub (`git status`, `git log`, PR list, CI) before doing anything.
@@ -12,13 +12,13 @@
 |---|---|
 | **Repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Default branch** | `main` |
-| **Current working branch** | **docs/phase5-delivery-record** (records-only, from `main` @ `1e6e8eb`) |
-| **Branch base commit** | `1e6e8ebed85e79554c1302101fc3c6e390530ad4` (PR #92 squash-merge — Phase 5 code) |
-| **Last verified commit** | `1e6e8eb` on `main` (PR #92 squash-merge, 2026-11-20) |
-| **Last state update** | 2026-11-20 (UTC) |
-| **Overall status** | `IN_PROGRESS` — Phases 1–3 are `COMPLETED`; **Phase 4's code is merged and its live acceptance is deferred to Phase 10** (owner, 2026-11-20 — D-7); **Phase 5's code, tests, design and plan are merged**, its live scenario is also owned by the Phase 10 single run |
-| **Current phase** | Phase 4 of 10 — `IN_PROGRESS` (code merged; live acceptance deferred to Phase 10, D-7) · **Phase 5**: code complete and merged (D-7 covers its live scenario too) |
-| **Current sub-step** | Phase 5 delivery record: code **#92 → `1e6e8eb`**, design/plan **#91 → `7adb0da`**; next phase starts only on explicit owner instruction |
+| **Current working branch** | **docs/phase10-records** (records-only, from `main` @ `ef185ca`) |
+| **Branch base commit** | `ef185ca9aa7391ca69dec8e2cc21fcecac19ad1f` (PR #110 squash-merge — Phase 10 dead-code cleanup) |
+| **Last verified commit** | `ef185ca` on `main` (PR #110 squash-merge, 2026-11-27) · CI `test: SUCCESS` (run 46083316285) |
+| **Last state update** | 2026-11-27 (UTC) |
+| **Overall status** | `IN_PROGRESS` — Phases 1–3 are `COMPLETED`; Phases 4–9 are code-complete but **not live-verified** (the single D-7 run ended `NO_LINKED_GROUP`); **Phase 10 is `IN_PROGRESS`** — hardening, cleanup and the release gate are code-complete and documented, but two owner gates stay open: the real secret rotation and a successful live D-7 run |
+| **Current phase** | Phase 4 of 10 — `IN_PROGRESS` (code merged; live acceptance deferred to Phase 10, D-7) · **Phase 10**: `IN_PROGRESS` (PRs #107–#110 merged; D-7 and the rotation are still open) |
+| **Current sub-step** | Phase 10 close-out is **blocked on the owner**: (1) give the test channel a **linked discussion group** and re-run `qa-live` (`duration_minutes=340`, `scenario=duration`, `db_mode=fresh`); (2) execute the rotation in `docs/OPS_SECRET_ROTATION.md`; (3) approve the pending `Deploy to VPS` run 46083654457. Phase 11 starts only on explicit owner instruction |
 | **Owner authorization** | Required for every phase. Phase 1 authorized 2026-11-12. The owner ruled on 2026-11-12: every PR of a phase must be **merged** when that phase completes, and each existing PR (#46–#56) gets its disposition **inside its own phase**. |
 
 ---
@@ -112,7 +112,33 @@ for leaks without ever writing their value into the report. Design/plan **#104 �
 its open items (listed in §4.8) are carried into the single Phase 10 run (D-7). **No live dispatch is
 claimed** in this phase.
 
-**Exact next action:** Phase 10 — hardening, cleanup and release gate, on explicit owner instruction only. Phase 9 is code-complete; its live dispatch joins the single run with Phases 4–8 (D-7).
+**Phase 10 result (2026-11-27) — hardening, cleanup, release gate: `IN_PROGRESS`.** The phase's code
+and documentation work is merged: **#108** (`361a10c`) closed the `libzstd1` CVE
+(`CVE-2026-124851`), **#107** (`9886972`) carried the approved design and plan, **#109**
+(`b660bc3`) hardened the Windows test harness (19 failures → 0), delivered the atomic
+`SECRETS_KEY` rotation tool with its 18 tests, fixed the false-positive secret-leak check (F-3 —
+261 lines), moved the QA cache prefix `qa-live-db-v1-` → `qa-live-db-v2-` and added
+`deploy/env.example`; **#110** (`ef185ca`) removed 11 provably dead module-level helpers under a
+bounded three-part proof (857 → 846 module-level symbols, 11 → 0 zero-reference candidates).
+Branch hygiene: **33 merged branches deleted** under a SHA guard (36 candidates; 3 kept because the
+branch moved after its merge), 16 kept, and the stale remote-tracking refs were pruned by
+`git fetch --prune` (51 tracking refs remained after the first pass, 19 after the second). The full
+suite is green at
+**1208 passed / 0 failed**, the independent verifier is **17/17**, `run.py --check` exits 0, and
+every merge ended with **15/15 IDENTICAL** branch-protection fields. The runbooks are merged:
+`docs/OPS_SECRET_ROTATION.md` (the rotation — owner-executed), `docs/RELEASE_RUNBOOK.md` (the
+release gate) and `docs/PHASE10_FINAL_REPORT.md` (the findings table).
+**Two owner gates are still open, so the phase is not `COMPLETED`:**
+1. **D-7** — the single live run (46013627630) ended `exit_code=2` with `NO_LINKED_GROUP`: the
+   registered channel has no linked discussion group, so no live check was observable. This is a
+   prerequisite defect, not a code defect.
+2. **The actual secret rotation** — the tool and the runbook exist; the execution (BotFather
+   `/revoke`, `SECRETS_KEY` rotation, env update, restart, provider test, then deletion of
+   `newsbot-deploy-pkg\newsbot.env`) belongs to the owner and has not happened. `newsbot.env`
+   therefore stays untouched (decision **C8**). Provider keys are **not** reissued — residual risk
+   **D-13**.
+
+**Exact next action:** Phase 10 close-out — **owner action; no code is left to write.** (1) Give the test channel `Channel TechNowVpn (-1004341590425)` a **linked discussion group** with the bot as admin, then re-run `qa-live` with `duration_minutes=340`, `scenario=duration`, `db_mode=fresh`. (2) Execute `docs/OPS_SECRET_ROTATION.md` (maintenance window → backup → `--check` → `--apply` → env update → restart → provider test → BotFather `/revoke` → purge `qa-live-db-v1-*` → delete `newsbot-deploy-pkg\newsbot.env`). (3) Approve the pending `Deploy to VPS` run 46083654457 for `main` @ `ef185ca`. A records-only close-out PR then marks Phases 4–10 `COMPLETED` **only if** both gates have evidence in §5. Phase 11 starts only on explicit owner instruction.
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -132,7 +158,7 @@ claimed** in this phase.
 | 7 | Onboarding, home menu, message routing | Language → welcome → "start" → add channel; free plan without an extra button; stable state | **`IN_PROGRESS`** — code merged 2026-11-24 (#98 design/plan, #99 code); `onboarding_state` + schema v13; whole-branch review APPROVED after a fix wave; live scenario **deferred to Phase 10** (D-7) | 1 (4 for reply routing) |
 | 8 | Deeplink "back to channel" | Return the user to the exact source post, or explain the platform limit honestly | **`IN_PROGRESS`** — code merged 2026-11-25 (#101 design/plan, #102 code); one URL button + honest notes; whole-branch review `APPROVED`; live check **deferred to Phase 10** (D-7) | 1 |
 | 9 | Temporary GitHub Actions harness | Manual-only workflow: token + super-admin id, READY, run for the target duration, clean shutdown | **`IN_PROGRESS`** — code merged 2026-11-25 (#104 design/plan, #105 code); READY-based timing + `duration` burn-in + secure inputs; whole-branch review `APPROVED`; live dispatch **deferred to Phase 10** (D-7) | 1 |
-| 10 | Hardening, cleanup, release gate | Rotate secrets, dependency/secret scans, remove proven-dead code, full green suite, release runbook | `NOT_STARTED` | 1–9 |
+| 10 | Hardening, cleanup, release gate | Rotate secrets, dependency/secret scans, remove proven-dead code, full green suite, release runbook | **`IN_PROGRESS`** — code + docs merged 2026-11-27 (#108 CVE, #107 design/plan, #109 Windows+rotation+F-3, #110 dead code); **33 branches cleaned, 11 dead functions removed, suite 1208/0, verifier 17/17**; open owner gates: the real secret rotation and a successful live D-7 run | 1–9 |
 
 **Status values:** `NOT_STARTED` · `IN_PROGRESS` · `BLOCKED` · `COMPLETED`
 
@@ -156,6 +182,7 @@ claimed** in this phase.
 | 2 | #51, #52, #53, #60 | **all merged** — Phase 2 `COMPLETED` 2026-11-13 |
 | 3 | #54, #62, #66, #64 all merged | Phase 3 **`COMPLETED`** 2026-11-14 |
 | 4 | #83, #84, #82, #86 merged | Phase 4 **`IN_PROGRESS`** — code and harness merged (2026-11-16 · 2026-11-18), live acceptance `PENDING` (§4.5) · this records-only PR is not a phase PR |
+| 10 | #107, #108, #109, #110 merged | Phase 10 **`IN_PROGRESS`** — all four phase PRs are merged (2026-11-27); the phase waits on the two owner gates in §4.9 (D-7 live run + secret rotation) |
 
 ---
 
@@ -381,20 +408,24 @@ the post id; and one answer is really delivered once while the **asker's own** A
 | Piece | Path | What it does |
 |---|---|---|
 | Harness | `tools/qa_live_acceptance.py` | `--check` preconditions (token shape, numeric admin ids, non-empty `SECRETS_KEY`, writable DB dir, one `getMe`); `--supervise` starts the real bot, snapshots the DB every 10 s, attributes counter deltas to a single question row, evaluates 13 checks, stops early when every required check is `OBSERVED`, writes an atomic JSON report |
-| Workflow | `.github/workflows/qa-live.yml` | **manual only** (`workflow_dispatch`), `contents: read`, `concurrency: qa-live`, `timeout-minutes: 360`, inputs `duration_minutes` (default `350`, bounded 5–355) / `scenario` (`core`\|`full`) / `db_mode` (`reuse`\|`fresh`); pinned action SHAs; artifacts `report.json` + `bot.log` only |
+| Workflow | `.github/workflows/qa-live.yml` | **manual only** (`workflow_dispatch`), `contents: read`, `concurrency: qa-live`, `timeout-minutes: 360`, inputs `duration_minutes` (default **`340`**, bounded 5–340) / `scenario` (`core`\|`full`\|`duration`) / `db_mode` (`reuse`\|`fresh`); pinned action SHAs; artifacts `report.json` + `bot.log` only |
 | Runbook | `docs/QA_LIVE_ACCEPTANCE.md` | Persian, owner-facing: prerequisites, the three secrets, the exact in-Telegram order, exit-code meanings, troubleshooting |
 | Log line | `newsbot/qa.py` | `qa: ignored chat=… msg=… user=… reason=…` — INFO for `unregistered_channel`/`toggle_off`/`foreign_group`, DEBUG for `not_a_reply`/`not_a_post`, silent when `message`/`user` is absent. Identifiers only; never the question or post text |
 
 **Runner budget.** A GitHub-hosted job is killed at 360 minutes; the workflow sets
-`timeout-minutes: 360` and the harness defaults to **350** minutes, so a run always stops itself and
+`timeout-minutes: 360` and the harness defaults to **340** minutes (exactly 10 minutes below the old
+350 default), so a run always stops itself and
 still uploads its evidence. The duration is a ceiling, not a wait: the run exits the moment every
 required check is observed.
 
-**Database reuse.** `db_mode=reuse` restores `qa-live-db-v1-*` from the Actions cache so the channel,
+**Database reuse.** `db_mode=reuse` restores `qa-live-db-v2-*` from the Actions cache so the channel,
 provider and model registered once survive into later runs; `db_mode=fresh` starts empty. The cache is
-saved with `if: always()` under a per-run key with the `qa-live-db-v1-` prefix, so the newest run wins.
+saved with `if: always()` under a per-run key with the `qa-live-db-v2-` prefix (it was
+`qa-live-db-v1-` before Phase 10), so the newest run wins.
 `qa_answers.answer` is blanked before the job ends, the DB is **never** uploaded as an artifact, and a
 stable `SECRETS_KEY` is mandatory — a changing key makes the cached provider secret undecryptable.
+The old `qa-live-db-v1-*` caches must be deleted by the owner in the rotation window, and any run
+after the rotation must use `db_mode=fresh` (`docs/OPS_SECRET_ROTATION.md` §7).
 
 **Registration wait (post-review fix).** `supervise` resolves the channel and linked group **inside**
 the polling loop, retrying until they appear: on a `fresh` DB the owner registers the channel and model
@@ -508,6 +539,95 @@ the green report artifact in §5 before the release is declared.
      publishing the artifact externally.
   6. Negative super ids are rejected by the validation regex (fail-closed); Telegram user ids are
      positive, so this is acceptable.
+
+## 4.9 Phase 10 — hardening, cleanup and release gate
+
+**Status: `IN_PROGRESS` (2026-11-27).** Every code and documentation PR of the phase is merged and
+every automated gate is green. The phase is **not** declared `COMPLETED` because two gates are the
+owner's and have no evidence yet: the real secret rotation and a successful live D-7 run.
+
+### 4.9.1 What was merged
+
+| PR | Title | Merge SHA | CI run | Protection |
+|---|---|---|---|---|
+| **#108** | `fix(ci): upgrade libzstd1 for CVE-2026-124851` | `361a10c` | 46047560145 | 15/15 IDENTICAL |
+| **#107** | `docs(phase10): approved design and implementation plan` | `9886972` | 46061459633 | 15/15 IDENTICAL |
+| **#109** | `feat(phase10): harden windows tests and secrets rotation` | `b660bc3` | 46075556814 | 15/15 IDENTICAL |
+| **#110** | `chore(phase10): remove 11 provably dead helpers` | `ef185ca` | 46082906798 | 15/15 IDENTICAL |
+
+CI on `main` after the last merge: **46083316285 — SUCCESS**. The `Deploy to VPS` run **46083654457**
+for `main` @ `ef185ca` is **pending** — waiting for the manual approval of the `production`
+environment; no deployment has happened and none is claimed.
+
+### 4.9.2 Workstreams
+
+- **W1 — Windows test harness (D-2, AUD-012).** `tests/_shell.py` is the shared finder for Git
+  Bash (it rejects `system32` and WSL). In the sandbox only `MSYS2_ARG_CONV_EXCL=/app` is set;
+  `MSYS_NO_PATHCONV=1` is deliberately **not** set (it breaks the stub). The stub writes LF-only
+  output and the container paths are normalized to POSIX. `deploy/deploy.sh` is **untouched**.
+  Result: the 19 Windows-only failures are gone — `tests/test_deploy_script.py` +
+  `tests/test_session3_cicd_docker_deploy_docs.py` ⇒ **97 passed / 0 failed**, full suite
+  **1208 passed / 0 failed**.
+- **W2 — secret rotation (AUD-001, partially closed).** `fernet_for(key)` is pure in
+  `newsbot/secret_store.py`; `migrate_ai_keys()` now covers both `ai_providers` and `ai_models`;
+  `tools/rotate_secrets_key.py` reads the keys **only from the environment**, supports
+  `--check` / `--apply --backup`, exits 0 / 2 / 3, writes inside `BEGIN IMMEDIATE`, is idempotent
+  and prints counts only. 18 rotation tests are green. **The rotation itself has not run** — see
+  §4.9.4.
+- **W3 — hygiene (AUD-014).** 36 merged branches were candidates; **33 were deleted** (a branch is
+  deleted only when its PR is `MERGED` **and** the remote tip SHA equals that PR's head SHA),
+  **3 were kept** by that guard, 16 branches remain in total and the stale remote-tracking refs were
+  pruned by `git fetch --prune` (51 tracking refs remained after pass 1, 19 after pass 2). The
+  dead-code pass removed **11 module-level functions** with no reference anywhere in the repository
+  or outside it: the bounded scan went from 857 module-level symbols and 11 zero-reference
+  candidates to 846 symbols and **0 candidates**. The scan also ruled out dynamic dispatch (no
+  `getattr`/`globals`/`importlib`/`eval` on those names, no star-imports).
+- **W4 — release gate.** `docs/RELEASE_RUNBOOK.md` (CI gates with real run URLs, local
+  `pip-audit`, full suite, verifier 17/17, `run.py --check`, protection 15/15, owner gates, release
+  steps referencing `docs/DEPLOY_RUNBOOK.md`, post-release checks, rollback, stop criteria) and
+  `docs/OPS_SECRET_ROTATION.md` (the 10-step rotation with its own rollback). `trivy` and
+  `hadolint` are **CI-only** here because Docker is not installed locally — the claim "scanned" is
+  only valid with the run URL.
+
+### 4.9.3 Evidence of the automated gates
+
+| Gate | Command | Result |
+|---|---|---|
+| Full suite (Windows) | `pytest -q` | **1208 passed / 0 failed** (703.53 s in PR #109, 804.78 s at its final HEAD, 806.84 s in PR #110) |
+| Collection | `pytest --collect-only -q` | **1208 tests collected** — matches the README badge |
+| Independent verifier | `python tools/final_verification.py` | **17/17** (exit 0) |
+| Config self-check | `run.py --check` (dummy env) | exit 0 |
+| Lint / types / undefined names | `ruff check` · `mypy newsbot` · `pyflakes` | clean · 52 files clean · exit 0 |
+| Dependency / secret / image scans | `pip-audit` · `gitleaks` · `trivy fs` · `trivy image` · `hadolint` | SUCCESS in run 46083316285 |
+| Branch protection | backup comparison, 15 fields | **IDENTICAL** after #107, #108, #109, #110 |
+| Dead-code scan | bounded AST + text scan | 857 → 846 symbols · 11 → 0 candidates |
+
+### 4.9.4 The two open owner gates
+
+1. **D-7 — the single live run.** Run **46013627630** (2026-11-27 14:11:14Z → 19:51:47Z) ended
+   `exit_code=2` with `problems=["NO_LINKED_GROUP"]`. The scenario was `duration`
+   (`scenario_mode=hold_to_budget`) on a fresh database (`db_reused=false`), `active_duration_s=20408`
+   against a `configured_duration_s=20400`, `bot_log_lines=647`. Only `preconditions` and
+   `public_model_active` were `OBSERVED`; the ten remaining checks were `NOT_OBSERVED`. The boundary
+   table reports `telegram_bot: real`, `temporary_db: real`, `provider_ai: simulated`
+   (`provider_credentials_present=false`), `real_channel_publication: not_performed`. **This is a
+   prerequisite defect, not a code defect:** the registered channel had no linked discussion group.
+   The next run needs the linked group, `duration_minutes=340`, `scenario=duration` and
+   `db_mode=fresh`.
+2. **The actual secret rotation.** Owner-only: BotFather `/revoke`, the `SECRETS_KEY` rotation with
+   `tools/rotate_secrets_key.py`, the env update, the restart, the provider test, the purge of the
+   `qa-live-db-v1-*` caches and finally the deletion of `newsbot-deploy-pkg\newsbot.env`. The file
+   stays untouched until the rotation succeeds (decision **C8**). Provider keys are **not**
+   reissued — residual risk **D-13**.
+
+### 4.9.5 What Phase 10 did **not** do
+
+- No rotation was executed, no VPS was deployed, no live dispatch succeeded.
+- `sources.api_key` is still plaintext (**D-12**) and the provider keys were not reissued (**D-13**).
+- The 11 Dependabot PRs (#68–#78) stay open by the owner's decision (**D-4**).
+- **F-1** (HTTP 504 / slow provider probes) was observed and recorded, not fixed — a behaviour change
+  is outside this phase's scope.
+- No force-push, no tag or release deletion, no DB or provider-key change on the VPS.
 
 ---
 
@@ -709,10 +829,28 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-25 | branch **phase9/manual-harness** @ `2351d48` | `ruff check .` / `mypy newsbot` / `final_verification.py` / `run.py --check` (dummy env) | clean / 52 files clean / **17/17 exit 0** / exit 0, config healthy |
 | 2026-11-25 | branch **phase9/manual-harness** @ `2351d48` | `pytest -q --tb=line -rf` (final Windows suite) | **19 failed, 1164 passed in 662.02s (0:11:02)** — only the §5.1 Windows-only failures |
 | 2026-11-25 | `main` @ `9cd7b61` (PR #105) | `gh pr merge 105 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (3m36s), **all 15 fields identical** to both backups |
+| 2026-11-27 | `main` @ `361a10c` (PR #108) | `gh pr merge 108 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS`, **all 15 fields identical** to the backup; the `libzstd1` image scan (F-2) is green in run 46047560145 |
+| 2026-11-27 | branch **docs/phase10-design-plan** | GitHub CI `test` on PR #107 | **SUCCESS** (run 46061459633) |
+| 2026-11-27 | `main` @ `9886972` (PR #107) | `gh pr merge 107 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS`, **all 15 fields identical** to the backup |
+| 2026-11-27 | branch **phase10/hardening** | `pytest tests/test_deploy_script.py tests/test_session3_cicd_docker_deploy_docs.py -q` | **97 passed / 0 failed** — the 19 Windows-only failures are gone (W1) |
+| 2026-11-27 | branch **phase10/hardening** | `pytest tests/test_phase10_secrets_rotation.py tests/test_api_key_entry.py tests/test_phase12_config_docs.py tests/test_phase2_provider_registry.py -q` | **18 passed** (rotation, W2) + **57 passed** (the pre-existing secret suites) |
+| 2026-11-27 | branch **phase10/hardening** | `pytest -q --collect-only -p no:cacheprovider` | **1208 tests collected** — the README badge and the Persian count were updated |
+| 2026-11-27 | `main` @ `b660bc3` (PR #109) | `gh pr merge 109 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (run 46075556814), **all 15 fields identical**; `tools/final_verification.py` → **17/17** (exit 0); `run.py --check` → exit 0; ruff / mypy / pyflakes / py_compile clean |
+| 2026-11-27 | branch **chore/phase10-dead-code** @ `b855a1d` | bounded dead-code scan (AST + text, 204 tracked files) | 857 module-level symbols → **846**; zero-reference candidates **11 → 0** |
+| 2026-11-27 | branch **chore/phase10-dead-code** | `pytest -q` (final Windows suite) | **1208 passed / 0 failed** in 806.84s (0:13:26) — the test count did not change |
+| 2026-11-27 | `main` @ `ef185ca` (PR #110) | `gh pr merge 110 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (run 46082906798), **all 15 fields identical** to the backup |
+| 2026-11-27 | `main` @ `ef185ca` | GitHub CI on `main` | **run 46083316285 — SUCCESS**: pyflakes, ruff, mypy, py_compile, pip-audit, gitleaks, hadolint, trivy fs, pytest + coverage gate, `final_verification.py`, `run.py --check`, docker build + trivy image, compose config |
+| 2026-11-27 | **D-7 live run 46013627630** | `qa-live` manual dispatch (`scenario=duration`, `db_mode=fresh`, budget 20400 s) | **FAILURE — `exit_code=2`, `problems=["NO_LINKED_GROUP"]`** · 14:11:14Z → 19:51:47Z · `active_duration_s=20408` · `startup_duration_s=2` · `bot_log_lines=647` · artifact `qa-live-46013627630` (`report.json` + `bot.log` only — the DB was never uploaded) · OBSERVED: `preconditions`, `public_model_active`; the other ten checks `NOT_OBSERVED` · boundaries: `telegram_bot` real, `temporary_db` real, `provider_ai` **simulated** (`provider_credentials_present=false`), `real_channel_publication` not_performed |
+| 2026-11-27 | artifact `qa-live-46013627630` | count-only scan of `bot.log` (F-1) | **3×** `HTTP 504` · **2×** `ai_timeout` · **36×** `probe timed out after 15s` (code: `newsbot/ai_models.py:310-311`, `newsbot/net_http.py:334`, `newsbot/ai_models.py:607`) — recorded, **not fixed** in Phase 10 |
+| 2026-11-27 | branch **docs/phase10-records** | glyph scan over the five Phase 10 documents | **0 suspicious lines** |
+| 2026-11-27 | `main` @ `ef185ca` | `Deploy to VPS` run 46083654457 | **PENDING** — waiting for the manual approval of the `production` environment; **no deployment happened** and none is claimed |
 
-**Not run / unavailable:** the live `qa-live` run itself (Phase 4 acceptance **and** Phase 5's quota
-scenario, both deferred to the single Phase 10 run — D-7 / §4.5), coverage percentage (no coverage tool
-in dev requirements), live VPS deployment verification, Cloudflare D1 live migration.
+**Not run / unavailable:** a **successful** live `qa-live` run (Phase 4 acceptance **and** Phase 5's
+quota scenario, both deferred to the single Phase 10 run — D-7 / §4.5: run 46013627630 failed with
+`NO_LINKED_GROUP`), the **actual** secret rotation (the tool and the runbook exist; the execution is
+the owner's), coverage percentage (no coverage tool in dev requirements), live VPS deployment
+verification (run 46083654457 is pending the manual `production` approval), Cloudflare D1 live
+migration.
 
 ### 5.1 The 19 local failures on the final `main` (measured, not assumed)
 
@@ -777,6 +915,15 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 9 design + plan | **PR #104 — MERGED** as `c9c7f4f9b703dae75888828222b3380a1b7aa9cd` · spec `docs/superpowers/specs/2026-11-25-phase9-manual-harness-design.md` · plan `docs/superpowers/plans/2026-11-25-phase9-manual-harness.md` · CI `test: SUCCESS` (3m25s) · gate restored with **all 15 fields identical**. The builder check found five real gaps (target vs cap, id lists, cleanup seconds, id leak semantics, Provider row), all resolved in the approved design |
 | Phase 9 code | Branch **phase9/manual-harness** from `main` @ `c9c7f4f` — commits **93b33b3** (READY-based timing), **56b1bc0** (burn-in + boundaries + leak check), **eda09be** (value-free id leak labels), **b8e06e6** (secure inputs, validation, runbook), **2351d48** (README count). Merged as **PR #105 → `9cd7b6184bee336c5e802ae37b52b2279d797153`** · CI `test: SUCCESS` (3m36s) · gate restored with **all 15 fields identical** |
 | Phase 9 result | **CODE COMPLETE — no live verification claimed**: 14 new tests, 1183 collected, final Windows suite 1164 passed / the known 19 failures, `ruff`/`mypy`/`final_verification.py`/`run.py --check` clean. Whole-branch `APPROVED`; Task 2's review caught a real secret-value leak into `report['checks']`, fixed test-first in `eda09be` and re-reviewed clean. §4.8 lists the open items carried into Phase 10 |
+| Phase 10 design + plan | **PR #107 — MERGED** as `988697211cee536923ba3d1816858056f8003440` (2026-11-27) · spec `docs/superpowers/specs/2026-11-26-phase10-hardening-release-design.md` · plan `docs/superpowers/plans/2026-11-27-phase10-hardening-release.md` · CI `test: SUCCESS` (run 46061459633) · gate restored with **all 15 fields identical** |
+| Phase 10 CVE fix | **PR #108 — MERGED** as `361a10cd28dccfd85ffceefbf3840cf2baf494cb` (2026-11-27) · `deploy/Dockerfile` upgrades `zlib1g`/`libzstd1` with `--only-upgrade` (F-2 / CVE-2026-124851) · CI `test: SUCCESS` (run 46047560145) · gate restored with **all 15 fields identical** |
+| Phase 10 hardening + rotation | **PR #109 — MERGED** as `b660bc3fb299079b358091fd55dcc85bc0eac99b` (2026-11-27) · W1 (Windows harness `tests/_shell.py`), W2 (`tools/rotate_secrets_key.py` + 18 tests), F-3 (secret-leak boundary), cache prefix `qa-live-db-v1-` → `qa-live-db-v2-`, `deploy/env.example` · CI `test: SUCCESS` (run 46075556814) · gate restored with **all 15 fields identical** |
+| Phase 10 dead-code cleanup | **PR #110 — MERGED** as `ef185ca9aa7391ca69dec8e2cc21fcecac19ad1f` (2026-11-27) · 11 module-level functions removed (69 lines deleted, 6 added inside docstrings) · CI `test: SUCCESS` (run 46082906798) · gate restored with **all 15 fields identical** |
+| Phase 10 branch hygiene | **33 remote branches deleted** under the SHA guard (36 candidates; 3 kept because the branch moved after its merge), **16 kept**, and the stale remote-tracking refs pruned by `git fetch --prune` (51 tracking refs remained after pass 1, 19 after pass 2) · evidence kept outside the repository at `C:\Users\Mustafa\AppData\Local\Temp\opencode\phase10_branch_cleanup.txt` |
+| Phase 10 records (PR3) | Branch **docs/phase10-records** from `main` @ `ef185ca` — `docs/OPS_SECRET_ROTATION.md`, `docs/RELEASE_RUNBOOK.md`, `docs/PHASE10_FINAL_REPORT.md`, `docs/QA_LIVE_ACCEPTANCE.md` (§9) and this file — **records only, no behaviour change** |
+| Phase 10 result | **`IN_PROGRESS` — not `COMPLETED`**: every phase PR is merged and every automated gate is green (suite **1208/0**, verifier **17/17**, `run.py --check` exit 0, CI run 46083316285 SUCCESS, protection **15/15** after each merge), but the **secret rotation** and a **successful live D-7 run** are owner gates with no evidence yet (§4.9.4) |
+| CI on `main` after Phase 10 | **46083316285 — SUCCESS** at `ef185ca` |
+| Deployment to VPS | run **46083654457** for `main` @ `ef185ca` — **PENDING** (manual approval of the `production` environment); **no deployment has happened** and none is claimed |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)
@@ -833,21 +980,26 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 |---|---|---|
 | B-1 | Merging the stacked PR chain requires an approving review and **linear history** (squash/rebase, not merge) | **RESOLVED 2026-11-13** — owner ruled: each PR gets its disposition in its own phase, and each phase's PRs are merged when the phase completes. Dispositions in §4.1; merge mechanics in §7.1 |
 | B-2 | Production commit SHA / unit name / env permissions are unverified | needs VPS access |
-| B-3 | A 350-minute GitHub-hosted run would leave only ~10 minutes of headroom against the hard 6-hour (360-minute) job cap; the cap cannot be raised | **HANDLED** for `qa-live` — `timeout-minutes: 360` + a default duration of 350 minutes, and the harness exits early once every required check is observed (§4.5). The cap itself is still unraisable |
+| B-3 | A long GitHub-hosted run would leave only ~20 minutes of headroom against the hard 6-hour (360-minute) job cap; the cap cannot be raised | **HANDLED** for `qa-live` — `timeout-minutes: 360` + a default duration of **340** minutes (exactly 10 minutes below the old 350 default), and the harness exits early once every required check is observed (§4.5). The cap itself is still unraisable |
 | B-4 | Whether the bot is added to the channel discussion group (prerequisite for a **real end-to-end** Phase 4 test) | **HANDED TO THE RUNBOOK** — a setup step of `docs/QA_LIVE_ACCEPTANCE.md`, not a code gap. The code stays **fail-closed**: no verified link ⇒ no answer (§4.4) |
-| B-5 | A file **outside** this repository (the local `newsbot-deploy-pkg` folder) holds a bot token matching the BotFather format and a 64-char `SECRETS_KEY` in plain text (names/lengths only; values never read) | needs rotation |
+| B-5 | A file **outside** this repository (the local `newsbot-deploy-pkg` folder) holds a bot token matching the BotFather format and a 64-char `SECRETS_KEY` in plain text (names/lengths only; values never read) | **OPEN — owner gate.** The tool (`tools/rotate_secrets_key.py`) and the runbook (`docs/OPS_SECRET_ROTATION.md`) are merged; the rotation itself has **not** run, so the file stays untouched (decision **C8**). The deletion happens only after a successful rotation (§4.9.4) |
 | B-6 | ~~licence choice for #64~~ — **RESOLVED 2026-11-14**: the owner chose **proprietary / all rights reserved**; `LICENSE` merged as part of #64 `fa7f25f` | closed |
 | B-7 | The three repository secrets for the live run — `BOT_TOKEN` (**test** bot only), `SUPER_ADMIN_IDS` (numeric owner id), `SECRETS_KEY` (64 random chars, must stay stable or the cached provider key becomes undecryptable) — plus a test channel with a linked discussion group, the bot as admin in both, one **public** active AI model, and a **non-super** second account as the asker | **`PENDING` on the owner** — nothing in the repo can supply these; §4.5 and `docs/QA_LIVE_ACCEPTANCE.md` list the exact steps |
-| D-1 | 18 unmerged stale branches, 37 remote branches total | deferred to Phase 10 |
-| D-2 | 19 Windows-only failing deploy tests (4 in `tests/test_deploy_script.py`, 15 in `tests/test_session3_cicd_docker_deploy_docs.py`) degrade the local signal; §5.1 records the exact cause and why CI is unaffected | deferred to Phase 10 |
+| D-1 | 18 unmerged stale branches, 37 remote branches total | **RESOLVED 2026-11-27** — Phase 10 deleted **33** merged branches under the SHA guard and pruned the stale remote-tracking refs; 16 branches remain (11 Dependabot + 2 legacy fixes + 3 kept by the guard) and are listed in the cleanup evidence |
+| D-2 | 19 Windows-only failing deploy tests (4 in `tests/test_deploy_script.py`, 15 in `tests/test_session3_cicd_docker_deploy_docs.py`) degrade the local signal; §5.1 records the exact cause and why CI is unaffected | **RESOLVED 2026-11-27** — PR #109 (`b660bc3`): a shared Git-Bash finder `tests/_shell.py` + `MSYS2_ARG_CONV_EXCL=/app` + LF-only stub output ⇒ those two files now give **97 passed / 0 failed**, and the full suite is **1208 passed / 0 failed** (§4.9.2) |
 | D-3 | `tools/migrate_sqlite_to_d1.py` `TABLES` also omits `ai_providers` (Phase 2), so a sqlite → D1 migration loses provider rows the same way it lost the rotation tables in Phase 3 | deferred; Phase 3 fixed only its own two tables |
-| D-4 | Dependabot (enabled by #64) opened #68–#78: `python 3.13-slim → 3.15-slim`, `actions/checkout 4 → 7`, `setup-python 5 → 7`, `upload-artifact 4 → 7`, `gitleaks-action 2 → 3`, `appleboy/ssh-action 1.2.2 → 1.2.5`, `python-dateutil 2.9 → 4.0`, `tzlocal → 5.4.5`, `soupsieve → 4.1`, `regex → 2026.11.9`, `ruff 0.14 → 0.17`. Several are **major** bumps that change CI/deploy behaviour | deferred to Phase 10 (dependency and release hardening), one PR at a time with a real CI run |
+| D-4 | Dependabot (enabled by #64) opened #68–#78: `python 3.13-slim → 3.15-slim`, `actions/checkout 4 → 7`, `setup-python 5 → 7`, `upload-artifact 4 → 7`, `gitleaks-action 2 → 3`, `appleboy/ssh-action 1.2.2 → 1.2.5`, `python-dateutil 2.9 → 4.0`, `tzlocal → 5.4.5`, `soupsieve → 4.1`, `regex → 2026.11.9`, `ruff 0.14 → 0.17`. Several are **major** bumps that change CI/deploy behaviour | **DEFERRED AFTER RELEASE** by the owner's decision (2026-11-27): the 11 PRs stay open until the release gate is closed, then they are merged one PR at a time with a real CI run each |
 | D-5 | `qa_answers` has **no retention or pruning policy**: at-most-once needs the row keyed by `(chat_id, msg_id)` forever, so the table grows with every answered question (one small row per answer; no question or answer text is stored) | deferred; revisit in Phase 10 with a measured row-count/age threshold if volume justifies it — **deleting rows would re-open the at-most-once guarantee**, so any pruning must keep the key |
-| D-6 | The Actions cache used by `qa-live` holds the **test** database across runs (key prefix `qa-live-db-v1-`), and that DB can contain an encrypted provider key. `qa_answers.answer` is blanked and the DB is never uploaded as an artifact, but a cached artifact still outlives the run until the cache expires | accepted for the test-only workflow; the stable `SECRETS_KEY` is mandatory (`SECRETS_KEY_REQUIRED` blocks a keyless run). Revisit in Phase 10 alongside B-5's key rotation |
+| D-6 | The Actions cache used by `qa-live` holds the **test** database across runs (key prefix `qa-live-db-v1-`), and that DB can contain an encrypted provider key. `qa_answers.answer` is blanked and the DB is never uploaded as an artifact, but a cached artifact still outlives the run until the cache expires | **PARTIALLY RESOLVED 2026-11-27** — the prefix is now **`qa-live-db-v2-`** (PR #109), so a new cache cannot collide with the old one; the **old `qa-live-db-v1-*` caches must still be deleted by the owner** in the rotation window, and every later run must use `db_mode=fresh` after the rotation (`docs/OPS_SECRET_ROTATION.md` §7) |
 | D-8 | Subagent dispatch failed mid-Phase-6 with `Free usage limit reached`; Tasks 3 and 4 were implemented inline by the controller and are recorded as such in their task reports. Task-scoped independent review was therefore unavailable for those two tasks; the independent whole-branch review did run and returned `APPROVED` after the P1 fix | recorded; no product impact |
 | D-9 | Phase 7 subagent usage limits recurred (the Task 1 implementer committed then failed to send its final report); the controller supervised inline and verified its commit directly. The **full suite**, not the focused suites, caught four real schema-test regressions (base DDL missing the new column, PH-01 pinned to v12) — all fixed test-first before the code PR | recorded; no product impact |
 | D-11 | Phase 8 Task 1's implementer hit `Free usage limit reached` after writing its edits but before committing or reporting. The controller reconstructed the real RED failure, verified the partial diff, applied ruling R4 (a `KeyError` exposed by the stricter URL rule), committed and supervised inline. No product impact; the whole-branch review still ran independently | recorded; no product impact |
-| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails, Phase 6's typing lifecycle, Phase 7's onboarding flow, Phase 8's deeplink button (including whether the rich path honours `reply_markup`) and Phase 9's manual harness (READY, timing fields, clean shutdown) | Phase 10 must record the green report artifact in §5 and only then declare Phase 4 live-verified. Until then Phase 4 stays `IN_PROGRESS`, Phase 5 stays code-complete but not live-verified, and the release is not "live-verified" |
+| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails, Phase 6's typing lifecycle, Phase 7's onboarding flow, Phase 8's deeplink button (including whether the rich path honours `reply_markup`) and Phase 9's manual harness (READY, timing fields, clean shutdown). **The Phase 10 attempt (run 46013627630, 2026-11-27) failed `NO_LINKED_GROUP`** after its full budget — the registered channel has no linked discussion group, so no live check was observable (only `preconditions` and `public_model_active`); it is a prerequisite defect, not a code defect | **OPEN** — Phase 10 must record a green report artifact in §5 and only then declare Phase 4 live-verified. The next run needs the linked discussion group (`Channel TechNowVpn (-1004341590425)`, the bot as admin), `duration_minutes=340`, `scenario=duration` and `db_mode=fresh`. Until then Phases 4–9 stay `IN_PROGRESS` and the release is not "live-verified" |
+| D-12 | `sources.api_key` (the key of a content source) is stored **in plaintext** in the database, unlike the provider keys which are encrypted with `SECRETS_KEY` | **OPEN — out of scope for Phase 10.** Not changed: encrypting it would change the schema and the product logic. Recorded so that a later phase can pick it up |
+| D-13 | The provider keys are **not** reissued — the owner's decision (Q1) limits the rotation to `BOT_TOKEN` and `SECRETS_KEY`, so old copies of the database remain decryptable with the leaked `SECRETS_KEY` | **ACCEPTED RESIDUAL RISK** (owner decision, 2026-11-27). The runbook states it explicitly; a later phase may reissue the provider keys if the owner wants them rotated |
+| F-1 | The provider endpoint answers `HTTP 504` and the connection probe times out (observed in the live run: 3× `HTTP 504`, 2× `ai_timeout`, 36× `probe timed out after 15s`) | **OPEN OBSERVATION** — recorded, **not fixed** in Phase 10 (changing the timeouts is a behaviour change outside this phase). Code: `newsbot/ai_models.py:310-311`, `newsbot/net_http.py:334`, `newsbot/ai_models.py:607` |
+| F-2 | `CVE-2026-124851` in the base image's `libzstd1` package | **RESOLVED 2026-11-27** — PR #108 (`361a10c`) upgrades `zlib1g`/`libzstd1`; the image scan is green in run 46047560145 |
+| F-3 | The secret-leak check reported 261 false positives because the super-admin id's digits appeared inside a hex hash | **RESOLVED 2026-11-27** — the check now requires an independent boundary (`(?<![0-9A-Za-z])…(?![0-9A-Za-z])`); the id itself was never printed (`newsbot/logutils.py:258`). Two new tests in PR #109 |
 
 ---
 

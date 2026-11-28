@@ -14,12 +14,12 @@
 | مورد | مقدار |
 |---|---|
 | شاخهٔ هدف | `main` |
-| SHA هدف | `e0698ef574d2de1a728222696a3816c3bac2ec22` (PR #111 — اسنادِ فاز ۱۰) |
-| CI روی `main` | **run 46105260191 — SUCCESS** · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46105260191 |
+| SHA هدف | `1d7916a031e9f97341eefe7d2dbf25a314d4401e` (PR #112 — هم‌گام‌سازیِ سندِ وضعیت) |
+| CI روی `main` | **run 46108539227 — SUCCESS** · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46108539227 |
 | CI روی PR #110 | run 46082906798 — SUCCESS · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46082906798 |
 | اجرای زندهٔ D-7 | run 46013627630 — **failure (`NO_LINKED_GROUP`)** · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46013627630 |
 | artifactِ D-7 | `qa-live-46013627630` (فقط `report.json` + `bot.log`؛ دیتابیس هرگز آپلود نمی‌شود) |
-| استقرار به VPS | run **46105550745** برای `main` @ `e0698ef` — **pending** (در انتظارِ تأییدِ دستیِ محیطِ `production`) · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46105550745 — اجرای قبلی 46083654457 برای `ef185ca` **cancelled** شد؛ هیچ استقراری انجام نشده |
+| استقرار به VPS | **تازه‌ترین** اجرای `Deploy to VPS` روی `main` — **pending** (در انتظارِ تأییدِ دستیِ محیطِ `production`). 46108808054 برای `main` @ `1d7916a` در لحظهٔ نگارش: https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46108808054 — **قاعده:** هر merge به `main` یک اجرای تازه می‌سازد و اجرای معلقِ قبلی را cancelled می‌کند، پس همیشه **تازه‌ترین** اجرا را تأیید کنید؛ هیچ استقراری انجام نشده |
 | محافظتِ شاخه | ۱۵/۱۵ فیلد **IDENTICAL** پس از هر merge |
 | تعدادِ تست | **۱۲۰۸ collected** · suite کامل: **۱۲۰۸ passed / ۰ failed** |
 | verifier | `tools/final_verification.py` ⇒ **۱۷/۱۷** |
@@ -28,9 +28,9 @@
 ## ۲. دروازه‌های CI (خودکار — همه در یک job با نامِ `test`)
 
 همهٔ این گیت‌ها داخلِ **همان** jobِ `test` هستند (چون فقط همین نام در حفاظتِ شاخه به‌عنوان
-checkِ لازم ثبت شده است) و روی `main` در run **46105260191** اجرا شده‌اند:
+checkِ لازم ثبت شده است) و روی `main` در run **46108539227** اجرا شده‌اند:
 
-| گیت | گام در CI (نامِ عینِ گام) | نتیجه در 46105260191 |
+| گیت | گام در CI (نامِ عینِ گام) | نتیجه در 46108539227 |
 |---|---|---|
 | `pyflakes` | `Static guard (pyflakes — zero undefined names)` | SUCCESS |
 | `ruff` | `Lint (ruff — the rule set lives in pyproject.toml)` | SUCCESS |

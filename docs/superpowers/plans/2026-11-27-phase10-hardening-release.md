@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **One phase at a time.** Do not start Phase 11 or a new phase; Phase 10 stays `IN_PROGRESS` until D-7 and owner rotation evidence are recorded.
+- **One phase at a time.** Do not start any phase beyond Phase 10 (the roadmap has exactly ten phases); Phase 10 stays `IN_PROGRESS` until D-7 and owner rotation evidence are recorded.
 - **Evidence before claims.** Never write “green”, “rotated”, “scanned” or “released” without the command output / run URL / artifact that proves it.
 - **Secrets:** read only from environment. Never pass a secret in argv, never print it, never write it to a report, state file, PR body, commit or artifact. Counts and variable names only.
 - **Two live runs must not overlap.** The current run `46013627630` is in progress. Do not rotate `BOT_TOKEN`/`SECRETS_KEY`, do not delete the v1 cache, and do not touch `newsbot-deploy-pkg\newsbot.env` until it finishes.
@@ -758,7 +758,7 @@ Set §2 row 10 and §4.9 to `COMPLETED`; add the final evidence rows; update the
 
 - [ ] **Step 3: Verify, commit, PR, gate.**
 
-Run the integrity/state tests + glyph scan; open **docs/phase10-closeout**; merge via the gate protocol; confirm protection 15/15. Then stop — do not start Phase 11.
+Run the integrity/state tests + glyph scan; open **docs/phase10-closeout**; merge via the gate protocol; confirm protection 15/15. Then stop — the roadmap ends at Phase 10.
 
 ---
 

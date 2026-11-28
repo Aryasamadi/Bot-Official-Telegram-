@@ -47,10 +47,12 @@ Two operational notes. First, **#55 was closed by GitHub**, not by a decision: m
 `--delete-branch` removed #55's base branch, and a PR whose base disappears is closed; it could not be
 reopened, so its content was rebased onto `main` and re-opened as **#64**. Second, `#64` also enabled
 Dependabot, which opened **#68–#78** (dependency bumps, several major). Those are recorded as **D-4**.
-**Remaining in Phase 4:** only the live run, now owned by Phase 10 (D-7). The last completed attempt
-(`44506386031`, on `74abc16`) ended `exit 2 / CHANNEL_NOT_REGISTERED` after the full budget because the
-channel was never registered in the runner's bot (`get_chat` answered `Chat not found`); no code change
-is pending from it.
+**Remaining in Phase 4:** only the live run, now owned by Phase 10 (D-7). The **earlier Phase 4
+attempt** (`44506386031`, on `74abc16`) ended `exit 2 / CHANNEL_NOT_REGISTERED` after the full budget
+because the channel was never registered in the runner's bot (`get_chat` answered `Chat not found`); no
+code change is pending from it. The **Phase 10 attempt** (run `46013627630`, 2026-11-27, on `967afde`)
+ended `exit 2 / NO_LINKED_GROUP` after its full budget because the channel had no linked discussion
+group — again no code change is pending, but a further run is needed (§4.9.4).
 **Phase 5 result:** the guardrails are merged. One atomic `INSERT … SELECT … WHERE … ON CONFLICT DO
 NOTHING` on `qa_answers` enforces the per-user cooldown (default 30 s), the per-user daily cap
 (default 30) and the per-post daily cap (default 50) at claim time — no counter table, no schema
@@ -413,8 +415,9 @@ the post id; and one answer is really delivered once while the **asker's own** A
 | Log line | `newsbot/qa.py` | `qa: ignored chat=… msg=… user=… reason=…` — INFO for `unregistered_channel`/`toggle_off`/`foreign_group`, DEBUG for `not_a_reply`/`not_a_post`, silent when `message`/`user` is absent. Identifiers only; never the question or post text |
 
 **Runner budget.** A GitHub-hosted job is killed at 360 minutes; the workflow sets
-`timeout-minutes: 360` and the harness defaults to **340** minutes (exactly 10 minutes below the old
-350 default), so a run always stops itself and
+`timeout-minutes: 360` and its `duration_minutes` input defaults to **340** minutes (exactly 10
+minutes below the old 350 default; the harness CLI itself still accepts 5–355 and defaults to 350), so a
+run always stops itself and
 still uploads its evidence. The duration is a ceiling, not a wait: the run exits the moment every
 required check is observed.
 
@@ -465,10 +468,16 @@ not exist` ⇒ the model id is wrong; pick one from `/providers discover <id>`. 
 that stay 🔴 — `AI_MAX_MODEL_ATTEMPTS=2` lets two dead rows starve a healthy third.
 
 **Status:** `DEFERRED TO PHASE 10` (owner decision, 2026-11-20). The harness, the runbook and the three
-secrets are ready; the last completed attempt (`44506386031`, on `74abc16`) ended with exit `2` /
+secrets are ready; the **earlier Phase 4 attempt** (`44506386031`, on `74abc16`) ended with exit `2` /
 `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered in the runner's
 bot. Phase 10 runs this live acceptance **once**, together with the release checks (**D-7**), and records
 the green report artifact in §5 before the release is declared.
+**The Phase 10 attempt happened and failed on a prerequisite:** run `46013627630` (2026-11-27, on
+`967afde`) ended with exit `2` / `NO_LINKED_GROUP` after its full budget — the registered channel has
+no linked discussion group, so no live check was observable (only `preconditions` and
+`public_model_active`; the remaining checks were `NOT_OBSERVED`, plus `no_text_no_ai` =
+`NOT_APPLICABLE`). No code change is pending; a further run is needed once the channel has a linked
+discussion group — see §4.9.4 and the D-7 row in §8.
 
 ---
 
@@ -604,11 +613,13 @@ environment; no deployment has happened and none is claimed.
 
 ### 4.9.4 The two open owner gates
 
-1. **D-7 — the single live run.** Run **46013627630** (2026-11-27 14:11:14Z → 19:51:47Z) ended
+1. **D-7 — the single live run.** Run **46013627630** (head SHA `967afde`, the Phase 9 code — **before**
+   PR #109/#110; 2026-11-27 14:11:14Z → 19:51:47Z) ended
    `exit_code=2` with `problems=["NO_LINKED_GROUP"]`. The scenario was `duration`
    (`scenario_mode=hold_to_budget`) on a fresh database (`db_reused=false`), `active_duration_s=20408`
    against a `configured_duration_s=20400`, `bot_log_lines=647`. Only `preconditions` and
-   `public_model_active` were `OBSERVED`; the ten remaining checks were `NOT_OBSERVED`. The boundary
+   `public_model_active` were `OBSERVED`; the ten remaining checks were `NOT_OBSERVED` and the optional
+   `no_text_no_ai` stage was `NOT_APPLICABLE` (13 checks in total). The boundary
    table reports `telegram_bot: real`, `temporary_db: real`, `provider_ai: simulated`
    (`provider_credentials_present=false`), `real_channel_publication: not_performed`. **This is a
    prerequisite defect, not a code defect:** the registered channel had no linked discussion group.
@@ -840,8 +851,8 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-27 | branch **chore/phase10-dead-code** | `pytest -q` (final Windows suite) | **1208 passed / 0 failed** in 806.84s (0:13:26) — the test count did not change |
 | 2026-11-27 | `main` @ `ef185ca` (PR #110) | `gh pr merge 110 --squash --delete-branch`; protection verified | **MERGED**, CI `test: SUCCESS` (run 46082906798), **all 15 fields identical** to the backup |
 | 2026-11-27 | `main` @ `ef185ca` | GitHub CI on `main` | **run 46083316285 — SUCCESS**: pyflakes, ruff, mypy, py_compile, pip-audit, gitleaks, hadolint, trivy fs, pytest + coverage gate, `final_verification.py`, `run.py --check`, docker build + trivy image, compose config |
-| 2026-11-27 | **D-7 live run 46013627630** | `qa-live` manual dispatch (`scenario=duration`, `db_mode=fresh`, budget 20400 s) | **FAILURE — `exit_code=2`, `problems=["NO_LINKED_GROUP"]`** · 14:11:14Z → 19:51:47Z · `active_duration_s=20408` · `startup_duration_s=2` · `bot_log_lines=647` · artifact `qa-live-46013627630` (`report.json` + `bot.log` only — the DB was never uploaded) · OBSERVED: `preconditions`, `public_model_active`; the other ten checks `NOT_OBSERVED` · boundaries: `telegram_bot` real, `temporary_db` real, `provider_ai` **simulated** (`provider_credentials_present=false`), `real_channel_publication` not_performed |
-| 2026-11-27 | artifact `qa-live-46013627630` | count-only scan of `bot.log` (F-1) | **3×** `HTTP 504` · **2×** `ai_timeout` · **36×** `probe timed out after 15s` (code: `newsbot/ai_models.py:310-311`, `newsbot/net_http.py:334`, `newsbot/ai_models.py:607`) — recorded, **not fixed** in Phase 10 |
+| 2026-11-27 | **D-7 live run 46013627630** (head SHA `967afde`, the Phase 9 code — **before** PR #109/#110) | `qa-live` manual dispatch (`scenario=duration`, `db_mode=fresh`, budget 20400 s) | **FAILURE — `exit_code=2`, `problems=["NO_LINKED_GROUP"]`** · 14:11:14Z → 19:51:47Z · `active_duration_s=20408` · `startup_duration_s=2` · `bot_log_lines=647` · artifact `qa-live-46013627630` (`report.json` + `bot.log` only — the DB was never uploaded) · OBSERVED: `preconditions`, `public_model_active`; the other ten checks `NOT_OBSERVED`; `no_text_no_ai` = `NOT_APPLICABLE` (13 checks in total) · boundaries: `telegram_bot` real, `temporary_db` real, `provider_ai` **simulated** (`provider_credentials_present=false`), `real_channel_publication` not_performed |
+| 2026-11-27 | artifact `qa-live-46013627630` | count-only scan of `bot.log` (F-1) | **3×** `HTTP 504` · **2×** `ai_timeout` · **28×** `probe timed out after 15s` (28 probe-timeout warnings out of 36 `WARNING` lines; code: `newsbot/ai_models.py:310-311`, `newsbot/net_http.py:334`, `newsbot/ai_models.py:607`) — recorded, **not fixed** in Phase 10 |
 | 2026-11-27 | branch **docs/phase10-records** | glyph scan over the five Phase 10 documents | **0 suspicious lines** |
 | 2026-11-27 | `main` @ `ef185ca` | `Deploy to VPS` run 46083654457 | **PENDING** — waiting for the manual approval of the `production` environment; **no deployment happened** and none is claimed |
 
@@ -994,10 +1005,10 @@ comparison returned *"GATE RESTORED - all 15 fields identical to backup"* every 
 | D-8 | Subagent dispatch failed mid-Phase-6 with `Free usage limit reached`; Tasks 3 and 4 were implemented inline by the controller and are recorded as such in their task reports. Task-scoped independent review was therefore unavailable for those two tasks; the independent whole-branch review did run and returned `APPROVED` after the P1 fix | recorded; no product impact |
 | D-9 | Phase 7 subagent usage limits recurred (the Task 1 implementer committed then failed to send its final report); the controller supervised inline and verified its commit directly. The **full suite**, not the focused suites, caught four real schema-test regressions (base DDL missing the new column, PH-01 pinned to v12) — all fixed test-first before the code PR | recorded; no product impact |
 | D-11 | Phase 8 Task 1's implementer hit `Free usage limit reached` after writing its edits but before committing or reporting. The controller reconstructed the real RED failure, verified the partial diff, applied ruling R4 (a `KeyError` exposed by the stricter URL rule), committed and supervised inline. No product impact; the whole-branch review still ran independently | recorded; no product impact |
-| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The last attempt (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails, Phase 6's typing lifecycle, Phase 7's onboarding flow, Phase 8's deeplink button (including whether the rich path honours `reply_markup`) and Phase 9's manual harness (READY, timing fields, clean shutdown). **The Phase 10 attempt (run 46013627630, 2026-11-27) failed `NO_LINKED_GROUP`** after its full budget — the registered channel has no linked discussion group, so no live check was observable (only `preconditions` and `public_model_active`); it is a prerequisite defect, not a code defect | **OPEN** — Phase 10 must record a green report artifact in §5 and only then declare Phase 4 live-verified. The next run needs the linked discussion group (`Channel TechNowVpn (-1004341590425)`, the bot as admin), `duration_minutes=340`, `scenario=duration` and `db_mode=fresh`. Until then Phases 4–9 stay `IN_PROGRESS` and the release is not "live-verified" |
+| D-7 | **The Phase 4 live acceptance is deferred to Phase 10** (owner decision, 2026-11-20): run `qa-live` once there, in the release pass, with the channel/model registration done inside the runner's bot and a non-super asker. The **earlier Phase 4 attempt** (`44506386031`, on `74abc16`) failed `CHANNEL_NOT_REGISTERED` after the full budget because the channel was never registered (`get_chat: Chat not found`). The same single run also exercises Phase 5's quota guardrails, Phase 6's typing lifecycle, Phase 7's onboarding flow, Phase 8's deeplink button (including whether the rich path honours `reply_markup`) and Phase 9's manual harness (READY, timing fields, clean shutdown). **The Phase 10 attempt (run 46013627630, 2026-11-27) failed `NO_LINKED_GROUP`** after its full budget — the registered channel has no linked discussion group, so no live check was observable (only `preconditions` and `public_model_active`); it is a prerequisite defect, not a code defect | **OPEN** — Phase 10 must record a green report artifact in §5 and only then declare Phase 4 live-verified. The next run needs the linked discussion group (`Channel TechNowVpn (-1004341590425)`, the bot as admin), `duration_minutes=340`, `scenario=duration` and `db_mode=fresh`. Until then Phases 4–9 stay `IN_PROGRESS` and the release is not "live-verified" |
 | D-12 | `sources.api_key` (the key of a content source) is stored **in plaintext** in the database, unlike the provider keys which are encrypted with `SECRETS_KEY` | **OPEN — out of scope for Phase 10.** Not changed: encrypting it would change the schema and the product logic. Recorded so that a later phase can pick it up |
 | D-13 | The provider keys are **not** reissued — the owner's decision (Q1) limits the rotation to `BOT_TOKEN` and `SECRETS_KEY`, so old copies of the database remain decryptable with the leaked `SECRETS_KEY` | **ACCEPTED RESIDUAL RISK** (owner decision, 2026-11-27). The runbook states it explicitly; a later phase may reissue the provider keys if the owner wants them rotated |
-| F-1 | The provider endpoint answers `HTTP 504` and the connection probe times out (observed in the live run: 3× `HTTP 504`, 2× `ai_timeout`, 36× `probe timed out after 15s`) | **OPEN OBSERVATION** — recorded, **not fixed** in Phase 10 (changing the timeouts is a behaviour change outside this phase). Code: `newsbot/ai_models.py:310-311`, `newsbot/net_http.py:334`, `newsbot/ai_models.py:607` |
+| F-1 | The provider endpoint answers `HTTP 504` and the connection probe times out (observed in the live run: 3× `HTTP 504`, 2× `ai_timeout`, 28× `probe timed out after 15s` — 28 probe-timeout warnings out of 36 `WARNING` lines) | **OPEN OBSERVATION** — recorded, **not fixed** in Phase 10 (changing the timeouts is a behaviour change outside this phase). Code: `newsbot/ai_models.py:310-311`, `newsbot/net_http.py:334`, `newsbot/ai_models.py:607` |
 | F-2 | `CVE-2026-124851` in the base image's `libzstd1` package | **RESOLVED 2026-11-27** — PR #108 (`361a10c`) upgrades `zlib1g`/`libzstd1`; the image scan is green in run 46047560145 |
 | F-3 | The secret-leak check reported 261 false positives because the super-admin id's digits appeared inside a hex hash | **RESOLVED 2026-11-27** — the check now requires an independent boundary (`(?<![0-9A-Za-z])…(?![0-9A-Za-z])`); the id itself was never printed (`newsbot/logutils.py:258`). Two new tests in PR #109 |
 

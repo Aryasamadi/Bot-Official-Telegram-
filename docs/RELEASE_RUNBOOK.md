@@ -30,21 +30,24 @@
 همهٔ این گیت‌ها داخلِ **همان** jobِ `test` هستند (چون فقط همین نام در حفاظتِ شاخه به‌عنوان
 checkِ لازم ثبت شده است) و روی `main` در run **46083316285** اجرا شده‌اند:
 
-| گیت | گام در CI | نتیجه در 46083316285 |
+| گیت | گام در CI (نامِ عینِ گام) | نتیجه در 46083316285 |
 |---|---|---|
-| `pyflakes` | Static guard (zero undefined names) | SUCCESS |
-| `ruff` | Lint | SUCCESS |
-| `mypy` | Types (gradual, `newsbot` only) | SUCCESS |
-| `py_compile` | Syntax check (all modules) | SUCCESS |
-| `pip-audit` | Dependency audit (`-r requirements.txt --no-deps`) | SUCCESS |
-| `gitleaks` | Secret scan | SUCCESS |
-| `hadolint` | Dockerfile lint | SUCCESS |
-| `trivy` | Filesystem scan (`--severity CRITICAL,HIGH --ignore-unfixed`) | SUCCESS |
-| `pytest` | Unit + integration tests + coverage gate (`--cov-fail-under=68`) | SUCCESS |
-| `final_verification.py` | Independent verification (Phase 10) | SUCCESS |
-| `run.py --check` | Config self-check (dummy env) | SUCCESS |
-| `docker build` + `trivy image` | Build the production image → Image scan | SUCCESS |
-| `docker compose config` | Compose config is valid | SUCCESS |
+| `pyflakes` | `Static guard (pyflakes — zero undefined names)` | SUCCESS |
+| `ruff` | `Lint (ruff — the rule set lives in pyproject.toml)` | SUCCESS |
+| `mypy` | `Types (mypy — gradual, newsbot only)` | SUCCESS |
+| `py_compile` | `Syntax check (all modules)` | SUCCESS |
+| `pip-audit` | `Dependency audit (pip-audit — pinned requirements)` | SUCCESS |
+| `gitleaks` | `Secret scan (gitleaks)` | SUCCESS |
+| `hadolint` | `Dockerfile lint (hadolint)` | SUCCESS |
+| `trivy` | `Filesystem scan (trivy)` | SUCCESS |
+| `pytest` | `Unit + integration tests (with the coverage gate)` — `--cov-fail-under=68` | SUCCESS |
+| `final_verification.py` | `Independent verification (Phase 10)` | SUCCESS |
+| `run.py --check` | `Config self-check (dummy env)` | SUCCESS |
+| `docker build` | `Build the production image` | SUCCESS |
+| `trivy image` | `Image scan (trivy)` | SUCCESS |
+| `docker compose config` | `Compose config is valid` | SUCCESS |
+| حفاظتِ شاخه/محیط | `Verify the branch and environment protection` — `tools/verify_github_protection.py`؛ اگر `GH_ADMIN_TOKEN` تنظیم نباشد، گام با پیامِ «skipping» تمام می‌شود | SUCCESS (با پیامِ skip) |
+| شواهد | `Upload the coverage and the test report` (`coverage.xml` · `coverage.json` · `junit.xml`) | SUCCESS |
 
 > **`trivy` و `hadolint` فقط در CI اجرا می‌شوند**: روی این ماشینِ محلی `docker` نصب نیست،
 > پس اجرای محلیِ آن‌ها ممکن نیست. ادعای «اسکن شد» فقط با URLِ run بالا معتبر است.

@@ -81,7 +81,7 @@ export SECRETS_KEY='...'              # بدون echo
 | Exit | معنی | اقدام |
 |---|---|---|
 | `0` | موفق | ادامه به گام ۵ |
-| `2` | پیش‌شرط نامعتبر (بکاپِ کهنه/همان‌فایل/نبودِ کلید/مقدارِ `enc:v1:` بیرون از دو جدول) | **هیچ چیز نوشته نشده**؛ علت را از پیامِ خطا بخوانید و اصلاح کنید |
+| `2` | پیش‌شرط نامعتبر (بکاپِ کهنه/همان‌فایل/خالی/اختلافِ شمارِ ردیف‌ها با دیتابیسِ زنده/نبودِ کلید/مقدارِ `enc:v1:` بیرون از دو جدول/نبودِ `--backup` در حالتِ `--apply`) | **هیچ چیز نوشته نشده**؛ علت را از پیامِ خطا بخوانید و اصلاح کنید |
 | `3` | داده با کلیدِ قدیم باز نمی‌شود | **هیچ چیز نوشته نشده**؛ کلیدِ `OLD_SECRETS_KEY` را بررسی کنید |
 
 - نوشتن در یک تراکنشِ `BEGIN IMMEDIATE` انجام می‌شود: یا همهٔ ردیف‌ها با کلیدِ نو، یا هیچ.
@@ -101,8 +101,9 @@ sudo systemctl start newsbot
 # بررسیِ پیکربندی (بدونِ چاپِ راز)
 /opt/newsbot/.venv/bin/python run.py --check
 
-# یک تستِ اتصالِ Provider (فقطِ نتیجه؛ نه کلید)
-/opt/newsbot/.venv/bin/python -c "from newsbot import providers; print(providers.test_connection(<provider_id>))"
+# یک تستِ اتصالِ Provider (فقطِ نتیجه؛ نه کلید).
+# test_connection یک coroutine است ⇒ باید با asyncio اجرا شود.
+/opt/newsbot/.venv/bin/python -c "import asyncio; from newsbot import providers; print(asyncio.run(providers.test_connection(<provider_id>)))"
 ```
 
 - اگر `run.py --check` خطا داد: **متوقف شوید** و به گام ۹ (rollback) بروید.
@@ -150,6 +151,9 @@ sudo systemctl stop newsbot
 # ۱) envِ قبلی را برگردانید (SECRETS_KEY و BOT_TOKENِ قدیمی)
 sudoedit /etc/newsbot/env
 # ۲) دیتابیسِ پشتِ‌بان را برگردانید
+#    اول WAL/SHMِ کهنه را پاک کنید، وگرنه SQLite ممکن است داده را از روی آن‌ها بخواند
+#    و بازگرداندنِ فایلِ اصلی به‌تنهایی کافی نباشد.
+rm -f "$DB-wal" "$DB-shm"
 cp "$BAK" "$DB"      # پشتِ‌بانِ گام ۳
 # ۳) بالا بیاورید و بررسی کنید
 sudo systemctl start newsbot

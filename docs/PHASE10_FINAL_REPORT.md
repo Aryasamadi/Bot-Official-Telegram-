@@ -17,7 +17,7 @@
 | **D-4** (۱۱ PRِ Dependabot) | **به تعویق بعد از انتشار** (تصمیمِ مالک: Q3=الف) | #68–#78: `python 3.13-slim → 3.15-slim` · `actions/checkout 4 → 7` · `setup-python 5 → 7` · `upload-artifact 4 → 7` · `gitleaks-action 2 → 3` · `appleboy/ssh-action 1.2.2 → 1.2.5` · `python-dateutil 2.9 → 4.0` · `tzlocal → 5.4.5` · `soupsieve → 4.1` · `regex → 2026.11.9` · `ruff 0.14 → 0.17` |
 | **D-12** (`sources.api_key` متنی) | **باز** — خارج از دامنهٔ فاز ۱۰ | `newsbot/core_sources.py` (کلیدِ منبع به‌صورت متنی ذخیره می‌شود) |
 | **D-13** (بازصدورنشدنِ کلیدهای Provider) | **باز** — تصمیمِ مالک: فقط `BOT_TOKEN` + `SECRETS_KEY` چرخش می‌کنند؛ نسخه‌های قدیمیِ دیتابیس با کلیدِ لو رفته همچنان رمزگشایی‌پذیرند | تصمیمِ Q1 در §8 فایلِ وضعیت |
-| **F-1** (504 / تستِ اتصالِ کند) | **مشاهدهٔ باز** — بدونِ اصلاح در فاز ۱۰ (تغییرِ رفتار خارج از دامنه) | اجرای زندهٔ 46013627630: **۳×** `HTTP 504` · **۲×** `ai_timeout` · **۳۶×** `probe timed out after 15s` · کد: `newsbot/ai_models.py:310-311`، `newsbot/net_http.py:334`، `ai_models.py:607` |
+| **F-1** (504 / تستِ اتصالِ کند) | **مشاهدهٔ باز** — بدونِ اصلاح در فاز ۱۰ (تغییرِ رفتار خارج از دامنه) | اجرای زندهٔ 46013627630: **۳×** `HTTP 504` · **۲×** `ai_timeout` · **۲۸×** `probe timed out after 15s` (۲۸ هشدارِ probe-timeout از مجموعِ ۳۶ خطِ `WARNING`) · کد: `newsbot/ai_models.py:310-311`، `newsbot/net_http.py:334`، `ai_models.py:607` |
 | **F-2** (`CVE-2026-124851` در `libzstd1`) | **بسته** | PR #108 (`361a10c`) · `--only-upgrade zlib1g libzstd1` در `deploy/Dockerfile` · گام «Image scan (trivy)» سبز در run 46047560145 |
 | **F-3** (نشتِ کاذبِ سنجشِ لاگ) | **بسته** | `secret_values_present` حالا مرزِ مستقل می‌خواهد ⇒ **۲۶۱ خط** دیگر «نشت» گزارش نمی‌شود (خودِ شناسه هرگز چاپ نشده بود) · ۲ تستِ تازه · PR #109 |
 | **D-6** (کشِ `qa-live`) | **بسته در سطحِ کد** — پیشوند `qa-live-db-v1-` ⇒ `qa-live-db-v2-`؛ کش‌های v1 باید در پنجرهٔ مالک حذف شوند و اجرای بعدی `fresh` باشد | `.github/workflows/qa-live.yml` · PR #109 · `docs/OPS_SECRET_ROTATION.md` §7 |
@@ -32,7 +32,7 @@
 | #110 | `chore(phase10): remove 11 provably dead helpers` | `ef185ca` | 46082906798 ✔ | ۱۵/۱۵ |
 | PR3 | اسنادِ فاز ۱۰ (این PR) | — | — | — |
 
-CI روی `main` بعد از هر merge: 46062660874 · 46076401654 · **46083316285** (آخرین، SUCCESS).
+CI روی `main` بعد از هر merge: 46052671344 (#108) · 46062660874 (#107) · 46076401654 (#109) · **46083316285** (#110، آخرین، SUCCESS).
 
 ## ۳. نتیجهٔ کارهای W1 / W2 / W3 / W4
 
@@ -78,7 +78,7 @@ CI روی `main` بعد از هر merge: 46062660874 · 46076401654 · **4608331
 
 | مورد | مقدار |
 |---|---|
-| run | **46013627630** · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46013627630 |
+| run | **46013627630** · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46013627630 · head SHA `967afde` (کدِ فاز ۹ — **پیش از** PR #109 و #110) |
 | زمان | 2026-11-27 14:11:14Z → 19:51:47Z |
 | نتیجه | **failure** · `exit_code=2` · `problems=["NO_LINKED_GROUP"]` |
 | سناریو | `duration` (`scenario_mode=hold_to_budget`) · `db_mode=fresh` (`db_reused=false`) |
@@ -86,10 +86,13 @@ CI روی `main` بعد از هر merge: 46062660874 · 46076401654 · **4608331
 | artifact | `qa-live-46013627630` ⇒ فقط `report.json` + `bot.log` (۶۴۷ خط) · دیتابیس آپلود نشده |
 | چک‌های OBSERVED | `preconditions` · `public_model_active` (count=1) |
 | چک‌های NOT_OBSERVED | `channel_registered` · `answer_delivered` · `channel_id_is_telegram_chat_id` · `asker_charged_only` · `answered_exactly_once` · `ignored_with_a_reason` · `unrelated_group_silent` · `toggle_off_silent` · `quota_exhausted_message` · `no_secret_in_log` |
+| چکِ NOT_APPLICABLE | `no_text_no_ai` (مرحلهٔ اختیاری انجام نشد) — مجموعاً **۱۳ چک** |
 | سطح‌ها | `telegram_bot`: real · `temporary_db`: real · `provider_ai`: **simulated** (`provider_credentials_present=false`) · `real_channel_publication`: not_performed · `runner_hard_cap`: real |
 
 **تفسیر:** این شکست **نقصِ کد نیست**. کانالِ ثبت‌شده **linked discussion group** نداشت، پس
-هیچ چکِ زنده‌ای قابلِ مشاهده نبود و ابزار fail-closed خروج داد. برای اجرای بعدی لازم است:
+هیچ چکِ زنده‌ای قابلِ مشاهده نبود و ابزار fail-closed خروج داد. توجه: این اجرا روی head SHA
+`967afde` (کدِ فاز ۹) انجام شد، یعنی **پیش از** PR #109 و #110 — پس نتیجهٔ آن دربارهٔ کدِ
+فاز ۱۰ چیزی نمی‌گوید. برای اجرای بعدی لازم است:
 
 1. کانال `Channel TechNowVpn (-1004341590425)` در تلگرام **گروهِ بحثِ لینک‌شده** داشته باشد
    (و ربات در آن admin باشد).

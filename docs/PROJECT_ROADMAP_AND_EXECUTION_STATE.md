@@ -12,13 +12,13 @@
 |---|---|
 | **Repository** | `Aryasamadi/Bot-Official-Telegram-` |
 | **Default branch** | `main` |
-| **Current working branch** | **docs/phase10-records** (records-only, from `main` @ `ef185ca`) |
-| **Branch base commit** | `ef185ca9aa7391ca69dec8e2cc21fcecac19ad1f` (PR #110 squash-merge — Phase 10 dead-code cleanup) |
-| **Last verified commit** | `ef185ca` on `main` (PR #110 squash-merge, 2026-11-27) · CI `test: SUCCESS` (run 46083316285) |
+| **Current working branch** | **docs/phase10-deploy-refresh** (records-only, from `main` @ `e0698ef`) |
+| **Branch base commit** | `e0698ef574d2de1a728222696a3816c3bac2ec22` (PR #111 squash-merge — Phase 10 records) |
+| **Last verified commit** | `e0698ef` on `main` (PR #111 squash-merge, 2026-11-28) · CI `test: SUCCESS` (run 46105260191) |
 | **Last state update** | 2026-11-27 (UTC) |
 | **Overall status** | `IN_PROGRESS` — Phases 1–3 are `COMPLETED`; Phases 4–9 are code-complete but **not live-verified** (the single D-7 run ended `NO_LINKED_GROUP`); **Phase 10 is `IN_PROGRESS`** — hardening, cleanup and the release gate are code-complete and documented, but two owner gates stay open: the real secret rotation and a successful live D-7 run |
 | **Current phase** | Phase 4 of 10 — `IN_PROGRESS` (code merged; live acceptance deferred to Phase 10, D-7) · **Phase 10**: `IN_PROGRESS` (PRs #107–#110 merged; D-7 and the rotation are still open) |
-| **Current sub-step** | Phase 10 close-out is **blocked on the owner**: (1) give the test channel a **linked discussion group** and re-run `qa-live` (`duration_minutes=340`, `scenario=duration`, `db_mode=fresh`); (2) execute the rotation in `docs/OPS_SECRET_ROTATION.md`; (3) approve the pending `Deploy to VPS` run 46083654457. Phase 11 starts only on explicit owner instruction |
+| **Current sub-step** | Phase 10 close-out is **blocked on the owner**: (1) give the test channel a **linked discussion group** and re-run `qa-live` (`duration_minutes=340`, `scenario=duration`, `db_mode=fresh`); (2) execute the rotation in `docs/OPS_SECRET_ROTATION.md`; (3) approve the pending `Deploy to VPS` run 46105550745. Phase 11 starts only on explicit owner instruction |
 | **Owner authorization** | Required for every phase. Phase 1 authorized 2026-11-12. The owner ruled on 2026-11-12: every PR of a phase must be **merged** when that phase completes, and each existing PR (#46–#56) gets its disposition **inside its own phase**. |
 
 ---
@@ -121,7 +121,8 @@ and documentation work is merged: **#108** (`361a10c`) closed the `libzstd1` CVE
 `SECRETS_KEY` rotation tool with its 18 tests, fixed the false-positive secret-leak check (F-3 —
 261 lines), moved the QA cache prefix `qa-live-db-v1-` → `qa-live-db-v2-` and added
 `deploy/env.example`; **#110** (`ef185ca`) removed 11 provably dead module-level helpers under a
-bounded three-part proof (857 → 846 module-level symbols, 11 → 0 zero-reference candidates).
+bounded three-part proof (857 → 846 module-level symbols, 11 → 0 zero-reference candidates); and
+**#111** (`e0698ef`) merged the phase's records — the two runbooks, the final report and this file.
 Branch hygiene: **33 merged branches deleted** under a SHA guard (36 candidates; 3 kept because the
 branch moved after its merge), 16 kept, and the stale remote-tracking refs were pruned by
 `git fetch --prune` (51 tracking refs remained after the first pass, 19 after the second). The full
@@ -140,7 +141,7 @@ release gate) and `docs/PHASE10_FINAL_REPORT.md` (the findings table).
    therefore stays untouched (decision **C8**). Provider keys are **not** reissued — residual risk
    **D-13**.
 
-**Exact next action:** Phase 10 close-out — **owner action; no code is left to write.** (1) Give the test channel `Channel TechNowVpn (-1004341590425)` a **linked discussion group** with the bot as admin, then re-run `qa-live` with `duration_minutes=340`, `scenario=duration`, `db_mode=fresh`. (2) Execute `docs/OPS_SECRET_ROTATION.md` (maintenance window → backup → `--check` → `--apply` → env update → restart → provider test → BotFather `/revoke` → purge `qa-live-db-v1-*` → delete `newsbot-deploy-pkg\newsbot.env`). (3) Approve the pending `Deploy to VPS` run 46083654457 for `main` @ `ef185ca`. A records-only close-out PR then marks Phases 4–10 `COMPLETED` **only if** both gates have evidence in §5. Phase 11 starts only on explicit owner instruction.
+**Exact next action:** Phase 10 close-out — **owner action; no code is left to write.** (1) Give the test channel `Channel TechNowVpn (-1004341590425)` a **linked discussion group** with the bot as admin, then re-run `qa-live` with `duration_minutes=340`, `scenario=duration`, `db_mode=fresh`. (2) Execute `docs/OPS_SECRET_ROTATION.md` (maintenance window → backup → `--check` → `--apply` → env update → restart → provider test → BotFather `/revoke` → purge `qa-live-db-v1-*` → delete `newsbot-deploy-pkg\newsbot.env`). (3) Approve the pending `Deploy to VPS` run **46105550745** for `main` @ `e0698ef` (the earlier run 46083654457 for `ef185ca` was cancelled when this SHA was merged). A records-only close-out PR then marks Phases 4–10 `COMPLETED` **only if** both gates have evidence in §5. Phase 11 starts only on explicit owner instruction.
 
 **Do not repeat** the Phase 0 audit — it is recorded in the owner's report `PHASE0_AUDIT_REPORT.md`
 (outside this repository; not committed).
@@ -563,10 +564,12 @@ owner's and have no evidence yet: the real secret rotation and a successful live
 | **#107** | `docs(phase10): approved design and implementation plan` | `9886972` | 46061459633 | 15/15 IDENTICAL |
 | **#109** | `feat(phase10): harden windows tests and secrets rotation` | `b660bc3` | 46075556814 | 15/15 IDENTICAL |
 | **#110** | `chore(phase10): remove 11 provably dead helpers` | `ef185ca` | 46082906798 | 15/15 IDENTICAL |
+| **PR3 (#111)** | `docs(phase10): record hardening, rotation and release gate` | `e0698ef` | 46104240680 · main: 46105260191 | 15/15 IDENTICAL |
 
-CI on `main` after the last merge: **46083316285 — SUCCESS**. The `Deploy to VPS` run **46083654457**
-for `main` @ `ef185ca` is **pending** — waiting for the manual approval of the `production`
-environment; no deployment has happened and none is claimed.
+CI on `main` after the last merge: **46105260191 — SUCCESS**. The `Deploy to VPS` run **46105550745**
+for `main` @ `e0698ef` is **pending** — waiting for the manual approval of the `production`
+environment; the earlier run 46083654457 for `ef185ca` was **cancelled** when this SHA was merged.
+**No deployment has happened and none is claimed.**
 
 ### 4.9.2 Workstreams
 
@@ -607,7 +610,7 @@ environment; no deployment has happened and none is claimed.
 | Independent verifier | `python tools/final_verification.py` | **17/17** (exit 0) |
 | Config self-check | `run.py --check` (dummy env) | exit 0 |
 | Lint / types / undefined names | `ruff check` · `mypy newsbot` · `pyflakes` | clean · 52 files clean · exit 0 |
-| Dependency / secret / image scans | `pip-audit` · `gitleaks` · `trivy fs` · `trivy image` · `hadolint` | SUCCESS in run 46083316285 |
+| Dependency / secret / image scans | `pip-audit` · `gitleaks` · `trivy fs` · `trivy image` · `hadolint` | SUCCESS in run 46105260191 |
 | Branch protection | backup comparison, 15 fields | **IDENTICAL** after #107, #108, #109, #110 |
 | Dead-code scan | bounded AST + text scan | 857 → 846 symbols · 11 → 0 candidates |
 
@@ -854,13 +857,15 @@ deletes them. The chain PRs above are the only branches merged before then.
 | 2026-11-27 | **D-7 live run 46013627630** (head SHA `967afde`, the Phase 9 code — **before** PR #109/#110) | `qa-live` manual dispatch (`scenario=duration`, `db_mode=fresh`, budget 20400 s) | **FAILURE — `exit_code=2`, `problems=["NO_LINKED_GROUP"]`** · 14:11:14Z → 19:51:47Z · `active_duration_s=20408` · `startup_duration_s=2` · `bot_log_lines=647` · artifact `qa-live-46013627630` (`report.json` + `bot.log` only — the DB was never uploaded) · OBSERVED: `preconditions`, `public_model_active`; the other ten checks `NOT_OBSERVED`; `no_text_no_ai` = `NOT_APPLICABLE` (13 checks in total) · boundaries: `telegram_bot` real, `temporary_db` real, `provider_ai` **simulated** (`provider_credentials_present=false`), `real_channel_publication` not_performed |
 | 2026-11-27 | artifact `qa-live-46013627630` | count-only scan of `bot.log` (F-1) | **3×** `HTTP 504` · **2×** `ai_timeout` · **28×** `probe timed out after 15s` (28 probe-timeout warnings out of 36 `WARNING` lines; code: `newsbot/ai_models.py:310-311`, `newsbot/net_http.py:334`, `newsbot/ai_models.py:607`) — recorded, **not fixed** in Phase 10 |
 | 2026-11-27 | branch **docs/phase10-records** | glyph scan over the five Phase 10 documents | **0 suspicious lines** |
-| 2026-11-27 | `main` @ `ef185ca` | `Deploy to VPS` run 46083654457 | **PENDING** — waiting for the manual approval of the `production` environment; **no deployment happened** and none is claimed |
+| 2026-11-27 | `main` @ `ef185ca` | `Deploy to VPS` run 46083654457 | **CANCELLED** — superseded when PR #111 was merged (a newer SHA on `main` queues a new deploy run); it never reached the VPS |
+| 2026-11-28 | `main` @ `e0698ef` (PR #111) | GitHub CI on `main` | **run 46105260191 — SUCCESS** |
+| 2026-11-28 | `main` @ `e0698ef` | `Deploy to VPS` run 46105550745 | **PENDING** — waiting for the manual approval of the `production` environment; **no deployment happened** and none is claimed |
 
 **Not run / unavailable:** a **successful** live `qa-live` run (Phase 4 acceptance **and** Phase 5's
 quota scenario, both deferred to the single Phase 10 run — D-7 / §4.5: run 46013627630 failed with
 `NO_LINKED_GROUP`), the **actual** secret rotation (the tool and the runbook exist; the execution is
 the owner's), coverage percentage (no coverage tool in dev requirements), live VPS deployment
-verification (run 46083654457 is pending the manual `production` approval), Cloudflare D1 live
+verification (run 46105550745 is pending the manual `production` approval), Cloudflare D1 live
 migration.
 
 ### 5.1 The 19 local failures on the final `main` (measured, not assumed)
@@ -931,10 +936,10 @@ documented rollback. Legacy `users.credit` balances are frozen, never auto-conve
 | Phase 10 hardening + rotation | **PR #109 — MERGED** as `b660bc3fb299079b358091fd55dcc85bc0eac99b` (2026-11-27) · W1 (Windows harness `tests/_shell.py`), W2 (`tools/rotate_secrets_key.py` + 18 tests), F-3 (secret-leak boundary), cache prefix `qa-live-db-v1-` → `qa-live-db-v2-`, `deploy/env.example` · CI `test: SUCCESS` (run 46075556814) · gate restored with **all 15 fields identical** |
 | Phase 10 dead-code cleanup | **PR #110 — MERGED** as `ef185ca9aa7391ca69dec8e2cc21fcecac19ad1f` (2026-11-27) · 11 module-level functions removed (69 lines deleted, 6 added inside docstrings) · CI `test: SUCCESS` (run 46082906798) · gate restored with **all 15 fields identical** |
 | Phase 10 branch hygiene | **33 remote branches deleted** under the SHA guard (36 candidates; 3 kept because the branch moved after its merge), **16 kept**, and the stale remote-tracking refs pruned by `git fetch --prune` (51 tracking refs remained after pass 1, 19 after pass 2) · evidence kept outside the repository at `C:\Users\Mustafa\AppData\Local\Temp\opencode\phase10_branch_cleanup.txt` |
-| Phase 10 records (PR3) | Branch **docs/phase10-records** from `main` @ `ef185ca` — `docs/OPS_SECRET_ROTATION.md`, `docs/RELEASE_RUNBOOK.md`, `docs/PHASE10_FINAL_REPORT.md`, `docs/QA_LIVE_ACCEPTANCE.md` (§9) and this file — **records only, no behaviour change** |
-| Phase 10 result | **`IN_PROGRESS` — not `COMPLETED`**: every phase PR is merged and every automated gate is green (suite **1208/0**, verifier **17/17**, `run.py --check` exit 0, CI run 46083316285 SUCCESS, protection **15/15** after each merge), but the **secret rotation** and a **successful live D-7 run** are owner gates with no evidence yet (§4.9.4) |
-| CI on `main` after Phase 10 | **46083316285 — SUCCESS** at `ef185ca` |
-| Deployment to VPS | run **46083654457** for `main` @ `ef185ca` — **PENDING** (manual approval of the `production` environment); **no deployment has happened** and none is claimed |
+| Phase 10 records (PR3) | Branch **docs/phase10-records** from `main` @ `ef185ca` — `docs/OPS_SECRET_ROTATION.md`, `docs/RELEASE_RUNBOOK.md`, `docs/PHASE10_FINAL_REPORT.md`, `docs/QA_LIVE_ACCEPTANCE.md` (§9) and this file — **records only, no behaviour change**. Merged as **PR #111 → `e0698ef574d2de1a728222696a3816c3bac2ec22`** (2026-11-28) · CI `test: SUCCESS` (run 46104240680; on `main` 46105260191) · gate restored with **all 15 fields identical**; the independent whole-branch review's findings (a wrong F-1 count, an async provider-test command, stale "last attempt" wording and six smaller items) were fixed in the follow-up commit `50fe109` before the merge |
+| Phase 10 result | **`IN_PROGRESS` — not `COMPLETED`**: every phase PR is merged and every automated gate is green (suite **1208/0**, verifier **17/17**, `run.py --check` exit 0, CI run 46105260191 SUCCESS, protection **15/15** after each merge), but the **secret rotation** and a **successful live D-7 run** are owner gates with no evidence yet (§4.9.4) |
+| CI on `main` after Phase 10 | **46105260191 — SUCCESS** at `e0698ef` |
+| Deployment to VPS | run **46105550745** for `main` @ `e0698ef` — **PENDING** (manual approval of the `production` environment); the earlier run 46083654457 for `ef185ca` was **cancelled** when PR #111 was merged. **No deployment has happened** and none is claimed |
 
 **Branch protection on `main` (read from the GitHub API on 2026-11-13):**
 - Required status checks: `test` (strict = branch must be up to date)

@@ -14,12 +14,12 @@
 | مورد | مقدار |
 |---|---|
 | شاخهٔ هدف | `main` |
-| SHA هدف | `ef185ca9aa7391ca69dec8e2cc21fcecac19ad1f` (PR #110) |
-| CI روی `main` | **run 46083316285 — SUCCESS** · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46083316285 |
+| SHA هدف | `e0698ef574d2de1a728222696a3816c3bac2ec22` (PR #111 — اسنادِ فاز ۱۰) |
+| CI روی `main` | **run 46105260191 — SUCCESS** · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46105260191 |
 | CI روی PR #110 | run 46082906798 — SUCCESS · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46082906798 |
 | اجرای زندهٔ D-7 | run 46013627630 — **failure (`NO_LINKED_GROUP`)** · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46013627630 |
 | artifactِ D-7 | `qa-live-46013627630` (فقط `report.json` + `bot.log`؛ دیتابیس هرگز آپلود نمی‌شود) |
-| استقرار به VPS | run 46083654457 — **pending** (در انتظارِ تأییدِ دستیِ محیطِ `production`) · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46083654457 |
+| استقرار به VPS | run **46105550745** برای `main` @ `e0698ef` — **pending** (در انتظارِ تأییدِ دستیِ محیطِ `production`) · https://github.com/Aryasamadi/Bot-Official-Telegram-/actions/runs/46105550745 — اجرای قبلی 46083654457 برای `ef185ca` **cancelled** شد؛ هیچ استقراری انجام نشده |
 | محافظتِ شاخه | ۱۵/۱۵ فیلد **IDENTICAL** پس از هر merge |
 | تعدادِ تست | **۱۲۰۸ collected** · suite کامل: **۱۲۰۸ passed / ۰ failed** |
 | verifier | `tools/final_verification.py` ⇒ **۱۷/۱۷** |
@@ -28,9 +28,9 @@
 ## ۲. دروازه‌های CI (خودکار — همه در یک job با نامِ `test`)
 
 همهٔ این گیت‌ها داخلِ **همان** jobِ `test` هستند (چون فقط همین نام در حفاظتِ شاخه به‌عنوان
-checkِ لازم ثبت شده است) و روی `main` در run **46083316285** اجرا شده‌اند:
+checkِ لازم ثبت شده است) و روی `main` در run **46105260191** اجرا شده‌اند:
 
-| گیت | گام در CI (نامِ عینِ گام) | نتیجه در 46083316285 |
+| گیت | گام در CI (نامِ عینِ گام) | نتیجه در 46105260191 |
 |---|---|---|
 | `pyflakes` | `Static guard (pyflakes — zero undefined names)` | SUCCESS |
 | `ruff` | `Lint (ruff — the rule set lives in pyproject.toml)` | SUCCESS |
